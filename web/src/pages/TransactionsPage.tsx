@@ -28,7 +28,8 @@ import {
   type SimpleEntryInput,
 } from '../lib/api'
 import { parseMajorToMinor } from '../lib/amountParse'
-import { bookCurrency, minorToInputText } from '../lib/money'
+import { amountProblemKey, bookCurrency, minorToInputText } from '../lib/money'
+import { useDialogError } from '../lib/useDialogError'
 import { renderUiTexts, type UiText } from '../lib/uiText'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import { beginExclusive } from '../lib/guards'
@@ -115,7 +116,6 @@ export function TransactionsPage({
   const [accounts, setAccounts] = useState<Account[]>([])
   // Which account plays which role by default; Rust decides, this only holds it.
   const [defaults, setDefaults] = useState<AccountDefaults | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const errorBannerId = useId()
   const [showForm, setShowForm] = useState(false)
 
@@ -152,6 +152,20 @@ export function TransactionsPage({
   const [accountFilter, setAccountFilter] = useState('')
   const [csvPreview, setCsvPreview] = useState<CsvImportPreview | null>(null)
   const [csvStep, setCsvStep] = useState<'closed' | 'mapping' | 'preview'>('closed')
+  // A failure is drawn in the dialog that is open, not on the page behind its scrim.
+  const openDialog = viewerDocId
+    ? 'viewer'
+    : showForm
+      ? 'form'
+      : csvStep !== 'closed'
+        ? 'csv'
+        : detailId
+          ? 'detail'
+          : voidId
+            ? 'void'
+            : null
+  const [error, setError] = useDialogError(openDialog)
+  const dismissError = () => setError(null)
   const [subview, setSubview] = useState<'journal' | 'recurring'>('journal')
   const [csvBusy, setCsvBusy] = useState<'import' | 'export' | 'post' | null>(null)
   const [csvRoles, setCsvRoles] = useState<{
@@ -560,6 +574,17 @@ export function TransactionsPage({
     return kind === 'income' && incomeUnpaid ? 'unpaid' : null
   }
 
+  // What stops the form from posting, as a catalog key, and whether it is the
+  // amount's fault. Native validation is off (its bubbles are English and
+  // unstyled), so every required field is checked here.
+  function entryFormProblem(minor: number | null): { key: string; amount: boolean } | null {
+    const amountKey = amountProblemKey(minor, 'tx.invalidAmount')
+    if (amountKey) return { key: amountKey, amount: true }
+    if (!description.trim()) return { key: 'form.fieldRequired', amount: false }
+
+    return null
+  }
+
   async function onPost(ev: FormEvent) {
     ev.preventDefault()
     if (!entity) return
@@ -570,10 +595,12 @@ export function TransactionsPage({
       return
     }
     const minor = parseMajorToMinor(amount, bookCurrency(entity))
-    if (minor === null || minor <= 0) {
+    const problem = entryFormProblem(minor)
+    // minor is only null alongside a problem; the check narrows its type.
+    if (problem || minor === null) {
       busyRef.current = false
-      setError(t('tx.invalidAmount'))
-      setAmountInvalid(true)
+      setError(t(problem?.key ?? 'tx.invalidAmount'))
+      setAmountInvalid(problem?.amount ?? true)
       return
     }
     // Role/account rules live in Rust (post_simple_entry); its Validation
@@ -764,12 +791,13 @@ export function TransactionsPage({
     <div className="space-y-4">
       <TopBar title={t('tx.title')} subtitle={`${entity.name} · ${ccy}`} actions={newEntryButton} />
 
-      <ErrorBanner id={errorBannerId} message={error} />
+      <ErrorBanner message={openDialog ? null : error} onDismiss={dismissError} />
 
       <CsvMappingModal
         open={csvStep === 'mapping'}
         preview={csvPreview}
         busy={csvBusy === 'import'}
+        error={openDialog === 'csv' ? error : null}
         onClose={closeCsvFlow}
         onContinue={(mapping, unchanged) => void onMappingContinue(mapping, unchanged)}
       />
@@ -782,6 +810,7 @@ export function TransactionsPage({
         expenseAccounts={expenseAccounts}
         incomeAccounts={incomeAccounts}
         busy={csvBusy === 'post'}
+        error={openDialog === 'csv' ? error : null}
         onClose={closeCsvFlow}
         onConfirm={(input) => void onCsvPost(input)}
       />
@@ -797,7 +826,9 @@ export function TransactionsPage({
           if (!voidBusy) setVoidId(null)
         }}
         onConfirm={() => void confirmVoid()}
-      />
+      >
+        <ErrorBanner message={openDialog === 'void' ? error : null} className="" onDismiss={dismissError} />
+      </ConfirmDialog>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.75fr)_minmax(0,1fr)]">
         <section
@@ -867,7 +898,8 @@ export function TransactionsPage({
               setError(null)
               applySuggestion(s, source)
               if (s.source === 'none' && !s.amount_minor) {
-                setError(renderUiTexts(s.notes, currency) || t('tx.couldNotReadDoc'))
+                // The form this suggestion opens is where the message belongs.
+                setError(renderUiTexts(s.notes, currency) || t('tx.couldNotReadDoc'), 'form')
               }
             }}
             onError={(msg) => setError(msg)}
@@ -911,6 +943,9 @@ export function TransactionsPage({
         open={showForm}
         title={editId ? t('tx.editTitle') : t('tx.newTitle')}
         description={editId ? t('tx.editDescription') : t('tx.newDescription')}
+        error={openDialog === 'form' ? error : null}
+        errorId={errorBannerId}
+        onDismissError={dismissError}
         onClose={closeForm}
       >
         <div className="mb-5">
@@ -962,7 +997,7 @@ export function TransactionsPage({
           </div>
         ) : null}
 
-        <form onSubmit={onPost} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <form noValidate onSubmit={onPost} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <Field label={t('tx.date')}>
             <DateInput value={date} onChange={setDate} required aria-label={t('tx.entryDate')} />
           </Field>
@@ -973,6 +1008,8 @@ export function TransactionsPage({
               value={amount}
               onChange={(e) => {
                 setAmount(e.target.value)
+                // Fixing the value is the end of its complaint.
+                if (amountInvalid) setError(null)
                 setAmountInvalid(false)
               }}
               className="tabular-nums"
@@ -1195,12 +1232,14 @@ export function TransactionsPage({
         onView={(id) => setViewerDocId(id)}
         onChanged={reload}
         onError={(msg) => setError(msg)}
+        error={openDialog === 'detail' ? error : null}
       />
 
       <DocumentViewerModal
         documentId={viewerDocId}
         onClose={() => setViewerDocId(null)}
         onError={(msg) => setError(msg)}
+        error={openDialog === 'viewer' ? error : null}
       />
 
       {visibleEntries.length === 0 && filtersActive ? (

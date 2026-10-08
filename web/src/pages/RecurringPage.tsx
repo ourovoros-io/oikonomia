@@ -21,8 +21,9 @@ import {
   type RecurringTemplate,
 } from '../lib/api'
 import { parseMajorToMinor } from '../lib/amountParse'
-import { bookCurrency, minorToInputText } from '../lib/money'
+import { amountProblemKey, bookCurrency, minorToInputText } from '../lib/money'
 import { beginExclusive } from '../lib/guards'
+import { useDialogError } from '../lib/useDialogError'
 import { kindDefaultAccounts } from '../lib/simpleEntry'
 import {
   billStatusForKind,
@@ -119,7 +120,6 @@ export function RecurringPage({ entity, onBack }: Props) {
   const [accounts, setAccounts] = useState<Account[]>([])
   // Which account plays which role by default; Rust decides, this only holds it.
   const [defaults, setDefaults] = useState<AccountDefaults | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
   const [kind, setKind] = useState<RecurringKind>('expense')
@@ -144,6 +144,10 @@ export function RecurringPage({ entity, onBack }: Props) {
   const [postAmount, setPostAmount] = useState('')
   const [postBusy, setPostBusy] = useState(false)
   const [deleting, setDeleting] = useState<RecurringTemplate | null>(null)
+  // A failure is drawn in the dialog that is open, not on the page behind its scrim.
+  const openDialog = showForm ? 'form' : posting ? 'post' : deleting ? 'delete' : null
+  const [error, setError] = useDialogError(openDialog)
+  const dismissError = () => setError(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
   const formBusyRef = useRef(false)
   const postBusyRef = useRef(false)
@@ -276,9 +280,15 @@ export function RecurringPage({ entity, onBack }: Props) {
     ev.preventDefault()
     if (!beginExclusive(formBusyRef)) return
     const minor = parseMajorToMinor(amount, currency)
-    if (minor === null || minor <= 0 || !name.trim() || !nextDate) {
+    const problem = !name.trim()
+      ? 'form.fieldRequired'
+      : !nextDate
+        ? 'date.invalid'
+        : amountProblemKey(minor, 'tx.invalidAmount')
+    // minor is only null alongside a problem; the check narrows its type.
+    if (problem || minor === null) {
       formBusyRef.current = false
-      setError(t('recurring.form.error'))
+      setError(t(problem ?? 'tx.invalidAmount'))
       return
     }
     const day = dayOfMonthForCadence(cadence, Number(dayOfMonth))
@@ -393,12 +403,14 @@ export function RecurringPage({ entity, onBack }: Props) {
         }
       />
 
-      <ErrorBanner message={error} />
+      <ErrorBanner message={openDialog ? null : error} onDismiss={dismissError} />
 
       <Modal
         open={showForm}
         title={editId ? t('recurring.form.titleEdit') : t('recurring.form.titleNew')}
         description={t('recurring.subtitle')}
+        error={openDialog === 'form' ? error : null}
+        onDismissError={dismissError}
         onClose={closeForm}
       >
         <div className="mb-5">
@@ -437,7 +449,7 @@ export function RecurringPage({ entity, onBack }: Props) {
           />
         </div>
 
-        <form onSubmit={onSave} className="grid gap-4 sm:grid-cols-2">
+        <form noValidate onSubmit={onSave} className="grid gap-4 sm:grid-cols-2">
           <Field label={t('recurring.form.name')} className="sm:col-span-2">
             <Input
               value={name}
@@ -571,6 +583,11 @@ export function RecurringPage({ entity, onBack }: Props) {
         }}
         onConfirm={() => void confirmPost()}
       >
+        <ErrorBanner
+          message={openDialog === 'post' ? error : null}
+          className="mb-4"
+          onDismiss={dismissError}
+        />
         {posting ? (
           <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] px-4 py-3">
             <div className="grid gap-3 sm:grid-cols-2">
@@ -614,7 +631,13 @@ export function RecurringPage({ entity, onBack }: Props) {
           if (!deleteBusy) setDeleting(null)
         }}
         onConfirm={() => void confirmDelete()}
-      />
+      >
+        <ErrorBanner
+          message={openDialog === 'delete' ? error : null}
+          className=""
+          onDismiss={dismissError}
+        />
+      </ConfirmDialog>
 
       <Panel
         title={t('recurring.templates')}
@@ -678,7 +701,6 @@ export function RecurringPage({ entity, onBack }: Props) {
                     size="iconSm"
                     onClick={() => openEdit(row)}
                     aria-label={t('recurring.form.titleEdit')}
-                    title={t('recurring.form.titleEdit')}
                   >
                     <Pencil className="size-4" />
                   </Button>

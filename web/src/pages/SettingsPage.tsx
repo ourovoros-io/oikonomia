@@ -43,6 +43,7 @@ import {
   Field,
   IconBadge,
   Input,
+  Notice,
   Select,
 } from '../components/ui'
 import {
@@ -57,6 +58,7 @@ import {
 } from '../lib/vaultBackupUi'
 import { useI18n } from '../lib/I18nProvider'
 import { LanguagePill } from '../components/LanguagePill'
+import { useDialogError } from '../lib/useDialogError'
 
 type Props = {
   entities: Entity[]
@@ -112,6 +114,14 @@ const LOCK_PRESETS = [
   { mins: 60, labelKey: 'settings.lock.1hour' },
 ] as const
 
+/** The password field a refusal from Rust is about, so that field is the one outlined. */
+function passwordFieldForCode(code: string | undefined): 'current' | 'new' | null {
+  if (code === 'invalid_password') return 'current'
+  if (code === 'password_too_short') return 'new'
+
+  return null
+}
+
 export function SettingsPage({
   entities,
   vaultPresent = true,
@@ -123,9 +133,13 @@ export function SettingsPage({
   appInfo = null,
 }: Props) {
   const { t, locale, setLocale, languageChangeFailed } = useI18n()
-  const [error, setError] = useState<string | null>(null)
   const errorBannerId = useId()
-  const [notice, setNotice] = useState<string | null>(null)
+  // Which confirmation to show, by catalog key, so it follows a language change.
+  const [noticeKey, setNoticeKey] = useState<
+    'settings.prefs.resetDone' | 'settings.passwordChanged' | null
+  >(null)
+  // The name of the book just created, for its confirmation.
+  const [createdBook, setCreatedBook] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [currency, setCurrency] = useState('EUR')
   const [template, setTemplate] = useState<ChartTemplate>('personal')
@@ -135,6 +149,10 @@ export function SettingsPage({
   const [lockBusy, setLockBusy] = useState(false)
   const [donations, setDonations] = useState<DonationAddress[]>([])
   const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null)
+  // A failure is drawn in the dialog that is open, not on the page behind its scrim.
+  const openDialog = showCreate ? 'create' : pendingDelete ? 'delete' : null
+  const [error, setError] = useDialogError(openDialog)
+  const dismissError = () => setError(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
   const [archived, setArchived] = useState<Entity[]>([])
   // Bumped after every change that can move a book in or out of the archive.
@@ -149,20 +167,13 @@ export function SettingsPage({
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [passwordBusy, setPasswordBusy] = useState(false)
-  const [passwordErrorField, setPasswordErrorField] = useState<'current' | 'confirm' | null>(
-    null,
-  )
-  // Single write path for the page-wide error banner: every other handler
-  // (entity create/delete, auto-lock, backup, restore) shares `error` with
-  // the password form, so routing all of them through here guarantees a
-  // non-password error clears any stale aria-invalid left on a password
-  // field by an earlier password-change failure.
-  function setPageError(
-    message: string | null,
-    passwordField: 'current' | 'confirm' | null = null,
-  ) {
+  // Drawn inside the password form, beside the field it names, not at the top of the page.
+  const [passwordProblem, setPasswordProblem] = useState<{
+    text: string
+    field: 'current' | 'new' | 'confirm' | null
+  } | null>(null)
+  function setPageError(message: string | null) {
     setError(message)
-    setPasswordErrorField(passwordField)
   }
   const [backupBusy, setBackupBusy] = useState(false)
   const [restoreOpen, setRestoreOpen] = useState(false)
@@ -234,7 +245,6 @@ export function SettingsPage({
       } catch (err) {
         if (cancelled) return
         setError(commandErrorMessage(err, 'settings.entities.archived.loadError'))
-        setPasswordErrorField(null)
       }
     }
     void loadArchived()
@@ -242,7 +252,7 @@ export function SettingsPage({
     return () => {
       cancelled = true
     }
-  }, [vaultPresent, archivedVersion])
+  }, [vaultPresent, archivedVersion, setError])
 
   // App bumps createBookIntent from the five empty-state CTAs. Pop the
   // create-entity form open and scroll to it — scrollIntoView is undefined
@@ -259,6 +269,10 @@ export function SettingsPage({
 
   async function onCreate(ev: FormEvent) {
     ev.preventDefault()
+    if (!name.trim()) {
+      setPageError(t('error.nameRequired'))
+      return
+    }
     setBusy(true)
     setPageError(null)
     try {
@@ -274,7 +288,7 @@ export function SettingsPage({
       // Stay here: adding several books should not take a trip to each
       // one's Dashboard. The new book is marked in the list instead.
       setNewBookId(entity.id)
-      setNotice(t('settings.entities.created', { name: entity.name }))
+      setCreatedBook(entity.name)
     } catch (err) {
       setPageError(commandErrorMessage(err))
     } finally {
@@ -304,7 +318,7 @@ export function SettingsPage({
     if (!pendingArchive) return
     setArchiveBusy(true)
     setPageError(null)
-    setNotice(null)
+    setNoticeKey(null)
     try {
       await api.entityArchive(pendingArchive.id)
       await onEntitiesChange()
@@ -321,7 +335,7 @@ export function SettingsPage({
   async function onRestore(book: Entity) {
     setRestoringId(book.id)
     setPageError(null)
-    setNotice(null)
+    setNoticeKey(null)
     try {
       await api.entityUnarchive(book.id)
       await onEntitiesChange()
@@ -343,11 +357,11 @@ export function SettingsPage({
   async function onResetPrefs() {
     setPrefsResetBusy(true)
     setPageError(null)
-    setNotice(null)
+    setNoticeKey(null)
     try {
       const prefs = await api.resetUiPrefs()
       setPrefsUnreadable(prefs.unreadable)
-      if (!prefs.unreadable) setNotice(t('settings.prefs.resetDone'))
+      if (!prefs.unreadable) setNoticeKey('settings.prefs.resetDone')
     } catch (err) {
       setPageError(commandErrorMessage(err, 'settings.prefs.resetFailed'))
     } finally {
@@ -374,13 +388,25 @@ export function SettingsPage({
     }
   }
 
+  // Fixing the field the complaint names ends the complaint.
+  function clearPasswordProblem(field: 'current' | 'new' | 'confirm') {
+    setPasswordProblem((prev) => (prev?.field === field ? null : prev))
+  }
+
   async function onChangePassword(ev: FormEvent) {
     ev.preventDefault()
-    setPageError(null)
-    setNotice(null)
+    setPasswordProblem(null)
+    setNoticeKey(null)
 
+    if (!oldPassword || !newPassword) {
+      setPasswordProblem({
+        text: t('form.fieldRequired'),
+        field: oldPassword ? 'new' : 'current',
+      })
+      return
+    }
     if (newPassword !== confirmPassword) {
-      setPageError(t('settings.passwordsMismatch'), 'confirm')
+      setPasswordProblem({ text: t('settings.passwordsMismatch'), field: 'confirm' })
       return
     }
     // Password strength rules live in Rust; its Validation error surfaces below.
@@ -391,16 +417,17 @@ export function SettingsPage({
       setOldPassword('')
       setNewPassword('')
       setConfirmPassword('')
-      setNotice(t('settings.passwordChanged'))
+      setNoticeKey('settings.passwordChanged')
     } catch (err) {
       // A rejection can be anything, including nothing.
       const cmd = asCommandError(err)
-      setPageError(
-        cmd.code === 'invalid_password'
-          ? t('settings.currentPasswordIncorrect')
-          : commandErrorMessage(cmd, 'settings.changePasswordFailed'),
-        'current',
-      )
+      setPasswordProblem({
+        text:
+          cmd.code === 'invalid_password'
+            ? t('settings.currentPasswordIncorrect')
+            : commandErrorMessage(cmd, 'settings.changePasswordFailed'),
+        field: passwordFieldForCode(cmd.code),
+      })
     } finally {
       setPasswordBusy(false)
     }
@@ -420,7 +447,7 @@ export function SettingsPage({
   async function onBackup() {
     if (!backupEnabled) return
     setPageError(null)
-    setNotice(null)
+    setNoticeKey(null)
     setBackupBusy(true)
     try {
       await vaultBackup()
@@ -473,15 +500,15 @@ export function SettingsPage({
     <div className="space-y-4">
       <TopBar title={t('settings.title')} subtitle={t('settings.description')} />
 
-      <ErrorBanner id={errorBannerId} message={error} />
-      {notice ? (
-        <div
-          role="status"
-          className="rounded-xl border border-[var(--color-accent)]/25 bg-[var(--color-accent-soft)] px-4 py-3 text-sm text-[var(--color-fg-secondary)]"
-        >
-          {notice}
-        </div>
-      ) : null}
+      <ErrorBanner message={openDialog ? null : error} onDismiss={dismissError} />
+      <Notice
+        message={noticeKey ? t(noticeKey) : null}
+        onDismiss={() => setNoticeKey(null)}
+      />
+      <Notice
+        message={createdBook ? t('settings.entities.created', { name: createdBook }) : null}
+        onDismiss={() => setCreatedBook(null)}
+      />
       {prefsUnreadable ? (
         <div
           role="status"
@@ -512,7 +539,13 @@ export function SettingsPage({
           if (!deleteBusy) setPendingDelete(null)
         }}
         onConfirm={() => void confirmDelete()}
-      />
+      >
+        <ErrorBanner
+          message={openDialog === 'delete' ? error : null}
+          className=""
+          onDismiss={dismissError}
+        />
+      </ConfirmDialog>
 
       <ConfirmDialog
         open={pendingArchive !== null}
@@ -624,7 +657,7 @@ export function SettingsPage({
         description={t('settings.masterPassword.description')}
         icon={<KeyRound className="size-4" />}
       >
-        <form onSubmit={onChangePassword} className="grid max-w-3xl gap-4 sm:grid-cols-3">
+        <form noValidate onSubmit={onChangePassword} className="grid max-w-3xl gap-4 sm:grid-cols-3">
           <Field label={t('settings.currentPassword')}>
             <Input
               type="password"
@@ -632,11 +665,11 @@ export function SettingsPage({
               value={oldPassword}
               onChange={(e) => {
                 setOldPassword(e.target.value)
-                setPasswordErrorField(null)
+                clearPasswordProblem('current')
               }}
               required
-              aria-invalid={passwordErrorField === 'current' || undefined}
-              aria-describedby={passwordErrorField === 'current' ? errorBannerId : undefined}
+              aria-invalid={passwordProblem?.field === 'current' || undefined}
+              aria-describedby={passwordProblem?.field === 'current' ? errorBannerId : undefined}
             />
           </Field>
           <Field label={t('settings.newPassword')}>
@@ -646,9 +679,11 @@ export function SettingsPage({
               value={newPassword}
               onChange={(e) => {
                 setNewPassword(e.target.value)
-                setPasswordErrorField(null)
+                clearPasswordProblem('new')
               }}
               required
+              aria-invalid={passwordProblem?.field === 'new' || undefined}
+              aria-describedby={passwordProblem?.field === 'new' ? errorBannerId : undefined}
             />
           </Field>
           <Field label={t('settings.confirmNewPassword')}>
@@ -658,14 +693,20 @@ export function SettingsPage({
               value={confirmPassword}
               onChange={(e) => {
                 setConfirmPassword(e.target.value)
-                setPasswordErrorField(null)
+                clearPasswordProblem('confirm')
               }}
               required
-              aria-invalid={passwordErrorField === 'confirm' || undefined}
-              aria-describedby={passwordErrorField === 'confirm' ? errorBannerId : undefined}
+              aria-invalid={passwordProblem?.field === 'confirm' || undefined}
+              aria-describedby={passwordProblem?.field === 'confirm' ? errorBannerId : undefined}
             />
           </Field>
           <div className="sm:col-span-3">
+            <ErrorBanner
+              id={errorBannerId}
+              message={passwordProblem?.text ?? null}
+              className="mb-4"
+              onDismiss={() => setPasswordProblem(null)}
+            />
             <Button type="submit" busy={passwordBusy}>
               {passwordBusy ? t('settings.reencrypting') : t('settings.changePassword')}
             </Button>
@@ -729,11 +770,13 @@ export function SettingsPage({
         open={showCreate}
         title={t('settings.newEntity.title')}
         description={t('settings.newEntity.description')}
+        error={openDialog === 'create' ? error : null}
+        onDismissError={dismissError}
         onClose={() => {
           if (!busy) setShowCreate(false)
         }}
       >
-        <form onSubmit={onCreate} className="space-y-4">
+        <form noValidate onSubmit={onCreate} className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label={t('settings.newEntity.name')}>
               <Input
@@ -852,22 +895,19 @@ export function SettingsPage({
                     size="iconSm"
                     onClick={() => setPendingArchive({ id: e.id, name: e.name })}
                     aria-label={t('settings.entities.archiveAria', { name: e.name })}
-                    title={t('settings.entities.archiveTitle')}
                   >
                     <Archive className="size-3.5" />
                   </Button>
-                  {/* Set apart from the safe actions, so it is not hit by mistake. */}
-                  <span className="ml-2 border-l border-[var(--color-border)] pl-3">
-                    <Button
-                      variant="danger"
-                      size="iconSm"
-                      onClick={() => setPendingDelete({ id: e.id, name: e.name })}
-                      aria-label={t('settings.entities.deleteAria', { name: e.name })}
-                      title={t('common.delete')}
-                    >
-                      <Trash2 className="size-3.5" />
-                    </Button>
-                  </span>
+                  <Button
+                    variant="danger"
+                    size="iconSm"
+                    // Apart from Archive: the destructive one is not a neighbour to mis-hit.
+                    className="ml-2"
+                    onClick={() => setPendingDelete({ id: e.id, name: e.name })}
+                    aria-label={t('settings.entities.deleteAria', { name: e.name })}
+                  >
+                    <Trash2 className="size-3.5" />
+                  </Button>
                 </div>
               </li>
             ))}

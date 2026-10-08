@@ -2,11 +2,11 @@
 
 import '@testing-library/jest-dom/vitest'
 import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { useState } from 'react'
 import userEvent from '@testing-library/user-event'
 
-import { AmountPill, Button, ErrorBanner, Field, IconBadge, Input, MetricCard, MoneyPill, Segmented, Select } from './ui'
+import { AmountPill, Button, ErrorBanner, Field, IconBadge, Input, MetricCard, MoneyPill, Notice, Segmented, Select } from './ui'
 
 afterEach(() => {
   cleanup()
@@ -28,6 +28,45 @@ describe('ErrorBanner', () => {
   test('accepts an id so callers can wire aria-describedby to it', () => {
     render(<ErrorBanner id="form-error" message="Bad value." />)
     expect(screen.getByRole('alert')).toHaveAttribute('id', 'form-error')
+  })
+})
+
+describe('ErrorBanner dismissal', () => {
+  test('offers a close button only when the owner can clear the message', async () => {
+    const onDismiss = vi.fn()
+    const { rerender } = render(<ErrorBanner message="Bad value." />)
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
+
+    rerender(<ErrorBanner message="Bad value." onDismiss={onDismiss} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+
+    expect(onDismiss).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('Notice', () => {
+  test('goes away by itself after the delay', () => {
+    vi.useFakeTimers()
+    const onDismiss = vi.fn()
+    render(<Notice message="Saved." onDismiss={onDismiss} autoDismissMs={5000} />)
+
+    vi.advanceTimersByTime(4999)
+    expect(onDismiss).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1)
+    expect(onDismiss).toHaveBeenCalledTimes(1)
+    vi.useRealTimers()
+  })
+
+  test('renders nothing without a message, and can be closed sooner', async () => {
+    const onDismiss = vi.fn()
+    const { rerender } = render(<Notice message={null} onDismiss={onDismiss} />)
+    expect(screen.queryByRole('status')).toBeNull()
+
+    rerender(<Notice message="Saved." onDismiss={onDismiss} />)
+    expect(screen.getByRole('status')).toHaveTextContent('Saved.')
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+
+    expect(onDismiss).toHaveBeenCalledTimes(1)
   })
 })
 

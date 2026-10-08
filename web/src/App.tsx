@@ -377,21 +377,23 @@ export default function App() {
                   onClick={() => void onLock()}
                   disabled={locking}
                   aria-label={t('app.lockVault')}
-                  title={locking ? t('app.locking') : t('app.lock')}
-                  className="glass-pane inline-flex size-10 items-center justify-center rounded-full text-[var(--color-fg)] transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
+                  // A visible word, not a tooltip: a native title outlives the button when
+                  // locking replaces the screen under the pointer.
+                  className="glass-pane inline-flex h-10 items-center justify-center gap-2 rounded-full px-4 text-sm font-medium text-[var(--color-fg)] transition hover:bg-white/[0.08] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {locking ? (
                     <Loader2 className="size-4 animate-spin" />
                   ) : (
                     <Lock className="size-4" strokeWidth={1.75} />
                   )}
+                  {locking ? t('app.locking') : t('app.lock')}
                 </button>
               </div>
             </header>
 
             <main key={active} className="flex-1 overflow-auto">
               <div className="mx-auto max-w-6xl px-7 pt-2 pb-10">
-                <ErrorBanner message={error} className="mb-5" />
+                <ErrorBanner message={error} className="mb-5" onDismiss={() => setError(null)} />
 
                 <PageErrorBoundary resetKey={`${active}:${entity?.id ?? 'none'}`}>
                   {active === 'dashboard' ? (

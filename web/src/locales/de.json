@@ -96,7 +96,7 @@
       "close": "Schließen"
     },
     "error": {
-      "mismatch": "Die Passwörter stimmen nicht überein",
+      "mismatch": "Die Passwörter stimmen nicht überein.",
       "badPassword": "Falsches Passwort — bitte noch einmal.",
       "generic": "Der Tresor ließ sich nicht entsperren."
     }
@@ -254,7 +254,7 @@
       "submit": "Passwort ändern",
       "busy": "Wird neu verschlüsselt…",
       "error": {
-        "mismatch": "Die neuen Passwörter stimmen nicht überein",
+        "mismatch": "Die neuen Passwörter stimmen nicht überein.",
         "badCurrent": "Das aktuelle Passwort ist falsch.",
         "generic": "Das Passwort konnte nicht geändert werden"
       },
@@ -1149,5 +1149,10 @@
         "transferFeeUnstated": "Auf dem Beleg steht eine Überweisungsgebühr; sie ist nicht der gebuchte Betrag."
       }
     }
+  },
+  "form": {
+    "dismiss": "Meldung schließen",
+    "fieldRequired": "Ein Pflichtfeld ist leer. Füllen Sie es aus und versuchen Sie es erneut.",
+    "passwordRequired": "Geben Sie Ihr Passwort ein."
   }
 }

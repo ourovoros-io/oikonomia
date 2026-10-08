@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { Modal } from './Modal'
-import { Button, ErrorBanner, Field, Input } from './ui'
+import { Button, Field, Input } from './ui'
 import { commandErrorMessage } from '../lib/commandError'
 import { useI18n } from '../lib/I18nProvider'
 
@@ -16,15 +16,37 @@ type Props = {
 
 /** A one-field dialog for renaming a book or an account. */
 export function RenameDialog({ current, title, label, onSave, onClose }: Props) {
+  const { t } = useI18n()
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  function close() {
+    setError(null)
+    onClose()
+  }
+
+  async function submit(name: string) {
+    setBusy(true)
+    setError(null)
+    try {
+      await onSave(name)
+      close()
+    } catch (err) {
+      setError(commandErrorMessage(err))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   return (
     <Modal
       open={current !== null}
       title={title}
       maxWidth="max-w-md"
+      error={error}
+      onDismissError={() => setError(null)}
       onClose={() => {
-        if (!busy) onClose()
+        if (!busy) close()
       }}
     >
       {/* Mounted only while the dialog is open, so each opening starts from the current name. */}
@@ -32,9 +54,10 @@ export function RenameDialog({ current, title, label, onSave, onClose }: Props) 
         current={current ?? ''}
         label={label}
         busy={busy}
-        onBusy={setBusy}
-        onSave={onSave}
-        onClose={onClose}
+        onSubmitName={submit}
+        onCancel={close}
+        cancelLabel={t('common.cancel')}
+        submitLabel={busy ? t('common.saving') : t('common.rename')}
       />
     </Modal>
   )
@@ -44,47 +67,37 @@ function RenameForm({
   current,
   label,
   busy,
-  onBusy,
-  onSave,
-  onClose,
+  onSubmitName,
+  onCancel,
+  cancelLabel,
+  submitLabel,
 }: {
   current: string
   label: string
   busy: boolean
-  onBusy: (busy: boolean) => void
-  onSave: (name: string) => Promise<void>
-  onClose: () => void
+  onSubmitName: (name: string) => Promise<void>
+  onCancel: () => void
+  cancelLabel: string
+  submitLabel: string
 }) {
-  const { t } = useI18n()
   const [name, setName] = useState(current)
-  const [error, setError] = useState<string | null>(null)
 
-  async function onSubmit(ev: FormEvent) {
+  function onSubmit(ev: FormEvent) {
     ev.preventDefault()
-    onBusy(true)
-    setError(null)
-    try {
-      await onSave(name)
-      onClose()
-    } catch (err) {
-      setError(commandErrorMessage(err))
-    } finally {
-      onBusy(false)
-    }
+    void onSubmitName(name)
   }
 
   return (
-    <form onSubmit={onSubmit} className="space-y-4">
-      <ErrorBanner message={error} />
+    <form noValidate onSubmit={onSubmit} className="space-y-4">
       <Field label={label}>
-        <Input value={name} onChange={(e) => setName(e.target.value)} required autoFocus />
+        <Input value={name} onChange={(e) => setName(e.target.value)} autoFocus />
       </Field>
       <div className="flex justify-end gap-2 border-t border-[var(--color-border)] pt-4">
-        <Button type="button" variant="secondary" disabled={busy} onClick={onClose}>
-          {t('common.cancel')}
+        <Button type="button" variant="secondary" disabled={busy} onClick={onCancel}>
+          {cancelLabel}
         </Button>
         <Button type="submit" busy={busy} disabled={name.trim() === current.trim()}>
-          {busy ? t('common.saving') : t('common.rename')}
+          {submitLabel}
         </Button>
       </div>
     </form>
