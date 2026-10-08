@@ -77,6 +77,15 @@ export function kindDefaultAccounts(
   }
 }
 
+/**
+ * The status Rust reads: a bill always has one, an income only when it is
+ * unpaid (owed on the receivable account), and nothing else has any.
+ */
+function postedBillStatus(kind: EntryKind, status: BillStatusTray): BillStatusTray | null {
+  if (kind === 'bill') return status
+  return kind === 'income' && status === 'unpaid' ? 'unpaid' : null
+}
+
 export function buildSimpleEntryInput(args: {
   entityId: string
   kind: EntryKind
@@ -93,7 +102,7 @@ export function buildSimpleEntryInput(args: {
   return {
     entity_id: args.entityId,
     kind: args.kind,
-    bill_status: args.kind === 'bill' ? args.billStatus : null,
+    bill_status: postedBillStatus(args.kind, args.billStatus),
     entry_date: args.entryDate,
     description: args.description.trim(),
     reference: null,
@@ -117,8 +126,13 @@ export function validateTrayAccounts(args: {
   toId: string
 }): string | null {
   const { kind, billStatus, categoryId, walletId, payableId, fromId, toId } = args
-  if ((kind === 'expense' || kind === 'income') && (!categoryId || !walletId)) {
+  if (kind === 'expense' && (!categoryId || !walletId)) {
     return t('quickAdd.pickAccounts')
+  }
+  if (kind === 'income') {
+    // An unpaid income is debited to the receivable account, not a wallet.
+    const holder = billStatus === 'unpaid' ? payableId : walletId
+    if (!categoryId || !holder) return t('quickAdd.pickAccounts')
   }
   if (kind === 'bill') {
     if (!categoryId) return t('quickAdd.pickCategory')

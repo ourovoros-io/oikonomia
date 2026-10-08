@@ -1,10 +1,17 @@
 /** @vitest-environment jsdom */
 
 import '@testing-library/jest-dom/vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import type { Account, AccountDefaults, Entity, PostedEntryView, UiPrefs } from '../lib/api'
+import type {
+  Account,
+  AccountDefaults,
+  DocumentSuggestion,
+  Entity,
+  PostedEntryView,
+  UiPrefs,
+} from '../lib/api'
 
 vi.mock('../lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/api')>()
@@ -17,6 +24,8 @@ vi.mock('../lib/api', async (importOriginal) => {
       accountDefaults: vi.fn(),
       getUiPrefs: vi.fn(),
       entryPostSimple: vi.fn(),
+      documentAnalyze: vi.fn(),
+      entryPostSimpleWithDocument: vi.fn(),
       entrySetHidden: vi.fn(),
       entryVoid: vi.fn(),
       rememberQuickAdd: vi.fn(),
@@ -86,6 +95,7 @@ const DEFAULTS: AccountDefaults = {
   income: null,
   bill_category: 'exp1',
   bills_payable: null,
+  receivable: null,
   transfer_source: 'w1',
   transfer_destination: 'w1',
 }
@@ -107,6 +117,7 @@ beforeEach(() => {
   })
   vi.mocked(api.rememberQuickAdd).mockReset().mockResolvedValue(undefined)
   vi.mocked(api.entryVoid).mockReset()
+  vi.mocked(api.entryPostSimpleWithDocument).mockReset().mockResolvedValue(posted)
 })
 
 const ROLL_MS = 230
@@ -306,5 +317,150 @@ describe('QuickAddPage post failures', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Something went wrong.')
     expect(screen.queryByText(/sqlcipher/)).toBeNull()
+  })
+})
+
+describe('QuickAddPage unpaid income', () => {
+  const receivable: Account = {
+    ...accounts[0]!,
+    id: 'r1',
+    code: '1200',
+    name: 'Receivables',
+    sort_order: 3,
+  }
+  const salary: Account = {
+    ...accounts[1]!,
+    id: 'inc1',
+    code: '4000',
+    name: 'Salary',
+    account_type: 'income',
+  }
+  const withReceivable: AccountDefaults = { ...DEFAULTS, income: 'inc1', receivable: 'r1' }
+  const withoutReceivable: AccountDefaults = { ...withReceivable, receivable: null }
+
+  function bookWith(list: Account[], defaults: AccountDefaults) {
+    vi.mocked(api.accountList).mockResolvedValue(list)
+    vi.mocked(api.accountDefaults).mockResolvedValue(defaults)
+  }
+
+  function postedInput() {
+    return vi.mocked(api.entryPostSimple).mock.calls[0]![0]
+  }
+
+  async function reachIncomeSaveStep() {
+    render(<QuickAddPage onPosted={() => {}} />)
+    await userEvent.click(await screen.findByRole('radio', { name: 'Income' }))
+    await afterRoll()
+    await userEvent.type(await screen.findByLabelText('Amount (EUR)'), '300')
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await waitFor(() => {
+      expect(screen.getByLabelText('Income')).toBeTruthy()
+    })
+    await afterRoll()
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await screen.findByRole('button', { name: 'Save' })
+  }
+
+  /** Drops a file whose reading is `suggestion` and waits for the confirm row. */
+  async function dropInvoice(suggestion: Partial<DocumentSuggestion>) {
+    vi.mocked(api.documentAnalyze).mockResolvedValue({
+      source: 'heuristic',
+      model: null,
+      kind: 'income',
+      amount_minor: 30000,
+      entry_date: null,
+      description: 'Invoice 7',
+      reference: null,
+      merchant: null,
+      bill_unpaid: true,
+      category_account_id: 'inc1',
+      wallet_account_id: 'w1',
+      payable_account_id: 'r1',
+      confidence: 0.9,
+      notes: [],
+      ...suggestion,
+    })
+    const { container } = render(<QuickAddPage onPosted={() => {}} />)
+    await screen.findByRole('radio', { name: 'Expense' })
+    const file = new File(['x'], 'invoice.txt', { type: 'text/plain' })
+    fireEvent.drop(container.firstElementChild!, { dataTransfer: { files: [file] } })
+    await screen.findByRole('button', { name: 'Save' })
+  }
+
+  test('an income is received by default and posts without a status', async () => {
+    bookWith([...accounts, salary, receivable], withReceivable)
+    await reachIncomeSaveStep()
+
+    expect(screen.getByRole('radio', { name: 'Received' })).toBeChecked()
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(api.entryPostSimple).toHaveBeenCalledTimes(1))
+    expect(postedInput()).toMatchObject({
+      kind: 'income',
+      bill_status: null,
+      wallet_account_id: 'w1',
+    })
+  })
+
+  test('choosing Unpaid books the income on the default receivable account', async () => {
+    bookWith([...accounts, salary, receivable], withReceivable)
+    await reachIncomeSaveStep()
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Unpaid' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(api.entryPostSimple).toHaveBeenCalledTimes(1))
+    expect(postedInput()).toMatchObject({
+      kind: 'income',
+      bill_status: 'unpaid',
+      payable_account_id: 'r1',
+      category_account_id: 'inc1',
+    })
+  })
+
+  test('with no receivable account Unpaid is not offered and the income stays received', async () => {
+    bookWith([...accounts, salary], withoutReceivable)
+    await reachIncomeSaveStep()
+
+    expect(screen.queryByRole('radio', { name: 'Unpaid' })).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(api.entryPostSimple).toHaveBeenCalledTimes(1))
+    expect(postedInput()).toMatchObject({ kind: 'income', bill_status: null })
+  })
+
+  test('a dropped invoice with credit terms preselects Unpaid', async () => {
+    bookWith([...accounts, salary, receivable], withReceivable)
+    await dropInvoice({})
+
+    expect(screen.getByRole('radio', { name: 'Unpaid' })).toBeChecked()
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(api.entryPostSimpleWithDocument).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(api.entryPostSimpleWithDocument).mock.calls[0]![0]).toMatchObject({
+      bill_status: 'unpaid',
+      payable_account_id: 'r1',
+    })
+  })
+
+  test('a dropped invoice that is already paid preselects Received', async () => {
+    bookWith([...accounts, salary, receivable], withReceivable)
+    await dropInvoice({ bill_unpaid: false })
+
+    expect(screen.getByRole('radio', { name: 'Received' })).toBeChecked()
+  })
+
+  test('a dropped invoice in a book without a receivable is booked as received', async () => {
+    bookWith([...accounts, salary], withoutReceivable)
+    await dropInvoice({ payable_account_id: null })
+
+    expect(screen.queryByRole('radio', { name: 'Unpaid' })).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(api.entryPostSimpleWithDocument).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(api.entryPostSimpleWithDocument).mock.calls[0]![0]).toMatchObject({
+      kind: 'income',
+      bill_status: null,
+    })
   })
 })
