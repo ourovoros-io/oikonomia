@@ -6,6 +6,7 @@ import { formatDate, formatMoney, type Account, type Currency, type CsvImportPre
 import {
   applyBulkAccounts,
   defaultChecked,
+  initialBulkAccounts,
   postLabel,
   previewSubtitle,
   rowSelectable,
@@ -60,8 +61,12 @@ export function CsvPreviewModal({
         checked: defaultChecked(row),
       })),
     )
-    setBulkWallet(walletAccounts[0]?.id ?? '')
-    setBulkCategory(expenseAccounts[0]?.id ?? incomeAccounts[0]?.id ?? '')
+    const bulk = initialBulkAccounts(preview.rows, {
+      wallets: walletAccounts,
+      categories: [...expenseAccounts, ...incomeAccounts],
+    })
+    setBulkWallet(bulk.walletId)
+    setBulkCategory(bulk.categoryId)
   }, [open, preview, walletAccounts, expenseAccounts, incomeAccounts])
 
   const categoryAccounts = useMemo(() => {

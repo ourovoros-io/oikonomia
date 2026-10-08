@@ -7,6 +7,7 @@ import {
   defaultChecked,
   draftFromDetected,
   draftToMapping,
+  initialBulkAccounts,
   mapNeededKey,
   mappingsEqual,
   mappingReady,
@@ -159,6 +160,35 @@ describe('applyBulkAccounts', () => {
     })
     expect(income.wallet_account_id).toBe('w2')
     expect(income.category_account_id).toBe('inc1')
+  })
+})
+
+describe('initialBulkAccounts', () => {
+  const account = (id: string) => ({ id, account_type: 'asset' as const })
+  const lists = {
+    wallets: [account('cash'), account('w1')],
+    categories: [account('exp0'), account('exp1')],
+  }
+
+  test('opens on the accounts the rows post to, not the first listed', () => {
+    const picked = initialBulkAccounts([row({})], lists)
+
+    expect(picked).toEqual({ walletId: 'w1', categoryId: 'exp1' })
+  })
+
+  test('skips rows without a suggestion and ids the lists do not hold', () => {
+    const stale = { ...suggested('expense'), wallet_account_id: 'gone' }
+    const picked = initialBulkAccounts([row({ suggested: null }), row({ suggested: stale })], lists)
+
+    expect(picked.walletId).toBe('cash')
+  })
+
+  test('falls back to the first listed account when there are no rows', () => {
+    expect(initialBulkAccounts([], lists)).toEqual({ walletId: 'cash', categoryId: 'exp0' })
+    expect(initialBulkAccounts([], { wallets: [], categories: [] })).toEqual({
+      walletId: '',
+      categoryId: '',
+    })
   })
 })
 

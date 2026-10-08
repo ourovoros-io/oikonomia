@@ -222,3 +222,27 @@ export function applyBulkAccounts(
   }
   return next
 }
+
+/**
+ * The wallet and category the bulk selectors open on: the accounts the
+ * preview rows will post to, so a selector does not show one account while
+ * the rows go to another. Falls back to the first listed account when no row
+ * carries a listed one.
+ */
+export function initialBulkAccounts(
+  rows: readonly { suggested: SimpleEntryInput | null }[],
+  lists: { wallets: readonly AccountLike[]; categories: readonly AccountLike[] },
+): { walletId: string; categoryId: string } {
+  const pick = (
+    field: 'wallet_account_id' | 'category_account_id',
+    listed: readonly AccountLike[],
+  ): string => {
+    const ids = new Set(listed.map((account) => account.id))
+    const used = rows.map((row) => row.suggested?.[field]).find((id) => id != null && ids.has(id))
+    return used ?? listed[0]?.id ?? ''
+  }
+  return {
+    walletId: pick('wallet_account_id', lists.wallets),
+    categoryId: pick('category_account_id', lists.categories),
+  }
+}
