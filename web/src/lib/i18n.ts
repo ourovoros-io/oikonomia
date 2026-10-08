@@ -350,7 +350,6 @@ export const KEY_ALIASES: Record<string, string> = {
   'rpt.fromDate': 'reports.filter.fromAria',
   'rpt.toDate': 'reports.filter.toAria',
   'rpt.asOfDate': 'reports.filter.asOfAria',
-  'rpt.refresh': 'reports.refresh',
   'rpt.amountsIn': 'reports.statement.amountsIn',
   'rpt.profitLoss': 'reports.pnl.title',
   'rpt.income': 'reports.pnl.income',

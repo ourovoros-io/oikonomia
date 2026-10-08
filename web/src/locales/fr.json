@@ -725,7 +725,6 @@
       "toAria": "Date de fin du rapport",
       "asOfAria": "Date d’arrêté du rapport"
     },
-    "refresh": "Actualiser",
     "exportPdf": "Exporter en PDF",
     "pdf": {
       "title": "Dépenses du mois",

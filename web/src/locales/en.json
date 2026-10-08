@@ -517,7 +517,6 @@
   "rpt.fromDate": "Report from date",
   "rpt.toDate": "Report to date",
   "rpt.asOfDate": "Report as-of date",
-  "rpt.refresh": "Refresh",
   "rpt.amountsIn": "{period} · All amounts in {ccy}",
   "rpt.profitLoss": "Profit & Loss",
   "rpt.income": "Income",

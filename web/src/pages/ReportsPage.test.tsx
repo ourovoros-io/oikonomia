@@ -32,6 +32,7 @@ vi.mock('../lib/expensePdf', async (importOriginal) => {
 import { api, monthEndISO, monthStartISO, todayISO } from '../lib/api'
 import { buildExpensePdfBytes, suggestedExpensePdfName } from '../lib/expensePdf'
 import { resetI18nForTests, setLocale } from '../lib/i18n'
+import { forgetReportPeriodForTests } from '../lib/reportPeriod'
 import { ReportsPage } from './ReportsPage'
 
 const entity: Entity = {
@@ -105,6 +106,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   resetI18nForTests()
+  forgetReportPeriodForTests()
 })
 
 describe('ReportsPage Export PDF', () => {
@@ -113,7 +115,7 @@ describe('ReportsPage Export PDF', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Export PDF' })).toBeTruthy()
     })
-    expect(screen.getByRole('button', { name: 'Refresh' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull()
 
     await userEvent.click(screen.getByRole('button', { name: 'Balance sheet' }))
     await waitFor(() => {
@@ -423,15 +425,48 @@ describe('ReportsPage historical dates', () => {
     })
   })
 
-  test('Refresh re-runs the current report', async () => {
+  test('a changed date runs the report by itself, with no Refresh button to press', async () => {
     const user = userEvent.setup()
     render(<ReportsPage entity={entity} />)
     await waitFor(() => {
       expect(api.reportPnl).toHaveBeenCalledTimes(1)
     })
-    await user.click(screen.getByRole('button', { name: 'Refresh' }))
+
+    const to = screen.getByLabelText('Report to date')
+    await user.clear(to)
+    await user.type(to, '31/12/2026')
+    await user.tab()
+
     await waitFor(() => {
-      expect(api.reportPnl).toHaveBeenCalledTimes(2)
+      expect(api.reportPnl).toHaveBeenLastCalledWith('e1', monthStartISO(), '2026-12-31')
+    })
+    expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull()
+  })
+
+  test('the P&L period chosen is still there after leaving Reports and coming back', async () => {
+    const user = userEvent.setup()
+    const first = render(<ReportsPage entity={entity} />)
+    await waitFor(() => {
+      expect(api.reportPnl).toHaveBeenCalled()
+    })
+    const from = screen.getByLabelText('Report from date')
+    await user.clear(from)
+    await user.type(from, '01/01/2026')
+    await user.tab()
+    const to = screen.getByLabelText('Report to date')
+    await user.clear(to)
+    await user.type(to, '31/12/2026')
+    await user.tab()
+    await waitFor(() => {
+      expect(api.reportPnl).toHaveBeenLastCalledWith('e1', '2026-01-01', '2026-12-31')
+    })
+
+    first.unmount()
+    vi.mocked(api.reportPnl).mockClear()
+    render(<ReportsPage entity={entity} />)
+
+    await waitFor(() => {
+      expect(api.reportPnl).toHaveBeenCalledWith('e1', '2026-01-01', '2026-12-31')
     })
   })
 })
