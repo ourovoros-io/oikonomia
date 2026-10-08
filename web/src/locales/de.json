@@ -885,7 +885,6 @@
       "targetAria": "Zielfeld {label}",
       "notMapped": "Nicht zugeordnet",
       "useDebitCredit": "Soll- und Haben-Spalten verwenden",
-      "useAmount": "Eine Betragsspalte verwenden",
       "autoDetected": "Automatisch erkannt",
       "mapFooter": "Nicht zugeordnete Spalten werden ignoriert. Soll/Haben können den Betrag ersetzen.",
       "mapNeeded": {

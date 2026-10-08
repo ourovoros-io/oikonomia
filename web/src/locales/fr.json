@@ -885,7 +885,6 @@
       "targetAria": "Champ cible {label}",
       "notMapped": "Non associée",
       "useDebitCredit": "Utiliser les colonnes débit et crédit",
-      "useAmount": "Utiliser une seule colonne de montant",
       "autoDetected": "Détecté automatiquement",
       "mapFooter": "Les colonnes non associées sont ignorées. Débit/crédit peut remplacer Montant.",
       "mapNeeded": {

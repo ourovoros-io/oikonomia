@@ -320,7 +320,6 @@
   "tx.csv.targetAria": "{label} target field",
   "tx.csv.notMapped": "Not mapped",
   "tx.csv.useDebitCredit": "Use debit and credit columns",
-  "tx.csv.useAmount": "Use a single amount column",
   "tx.csv.autoDetected": "Auto-detected",
   "tx.csv.mapFooter": "Unmapped columns are ignored. Debit/credit columns can replace Amount.",
   "tx.csv.mapNeeded.date": "The date column could not be found automatically, so choose it below.",

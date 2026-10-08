@@ -935,9 +935,18 @@ describe('TransactionsPage CSV direction column', () => {
   test('debit and credit columns have no direction control', async () => {
     await openMapping()
 
-    await userEvent.click(screen.getByRole('button', { name: 'Use debit and credit columns' }))
+    const useDebitCredit = screen.getByRole('checkbox', { name: 'Use debit and credit columns' })
+    expect(useDebitCredit).not.toBeChecked()
 
+    await userEvent.click(useDebitCredit)
+
+    expect(useDebitCredit).toBeChecked()
     expect(screen.queryByRole('combobox', { name: 'Debit/credit indicator source column' })).toBeNull()
+
+    await userEvent.click(useDebitCredit)
+
+    expect(useDebitCredit).not.toBeChecked()
+    expect(screen.getByRole('combobox', { name: 'Debit/credit indicator source column' })).toBeTruthy()
   })
 })
 
