@@ -52,6 +52,8 @@ pub enum UiTextCode {
     OcrFailed,
     /// An image embedded in a PDF was read with the bundled OCR.
     OcrPdfImage,
+    /// Most of the OCR text could not be read, so the amount is left empty.
+    OcrUnreadable,
     /// The invoice reader parsed the text.
     InvoiceParsed,
     /// No total could be detected with confidence.
@@ -110,6 +112,7 @@ impl UiTextCode {
         Self::OcrLittleText,
         Self::OcrFailed,
         Self::OcrPdfImage,
+        Self::OcrUnreadable,
         Self::InvoiceParsed,
         Self::InvoiceNoTotal,
         Self::InvoiceIncome,
@@ -256,6 +259,7 @@ mod tests {
             UiTextCode::OcrLittleText,
             UiTextCode::OcrFailed,
             UiTextCode::OcrPdfImage,
+            UiTextCode::OcrUnreadable,
             UiTextCode::InvoiceParsed,
             UiTextCode::InvoiceNoTotal,
             UiTextCode::InvoiceIncome,

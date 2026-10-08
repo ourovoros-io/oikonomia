@@ -837,7 +837,7 @@
       "badge": "Masquée"
     },
     "export": {
-      "whisper": "L’export laisse de côté les lignes masquées."
+      "whisper": "L’export laisse de côté les lignes masquées. Les écritures supprimées sont incluses, avec l’état voided."
     },
     "void": {
       "title": "Supprimer l’écriture ?",
@@ -894,6 +894,7 @@
       },
       "continuePreview": "Continuer vers l’aperçu",
       "previewTitle": "Aperçu de l’import",
+      "otherCurrency": "Certains montants portent la mention « {marker} », alors que ce livre est en {currency}. Vérifiez que le fichier est en {currency} avant de comptabiliser.",
       "previewSubtitle": "{rows} · {dupes} · rien n’est enregistré avant votre confirmation",
       "rowOne": "{n} ligne",
       "rowMany": "{n} lignes",
@@ -1021,6 +1022,7 @@
     "csvNotUtf8": "Ce fichier CSV n’est pas du texte UTF-8. Enregistrez-le ou exportez-le à nouveau en CSV avec l’encodage UTF-8.",
     "csvTooLarge": "Ce fichier CSV dépasse 8 Mo. Exportez une période plus courte ou scindez le fichier.",
     "csvMissingHeader": "Ce fichier CSV n’a pas de ligne d’en-tête. La première ligne doit nommer les colonnes.",
+    "csvJournalExport": "Ce fichier est un export du journal d’Oikonomia. Il contient des lignes de journal et non les mouvements d’un compte, il ne peut donc pas être importé comme relevé bancaire. Importez plutôt un CSV de votre banque.",
     "csvMissingColumn": "Ce CSV du journal n’a pas de colonne « {column} ». Utilisez un fichier exporté depuis Oikonomia avec toutes ses colonnes.",
     "csvInvalidStatus": "« {value} » n’est pas un état du journal. L’état doit être posted ou voided.",
     "csvInvalidInteger": "« {value} » n’est pas un nombre entier. Un CSV du journal contient les montants en nombre entier d’unités divisionnaires (centimes, par exemple), soit 1250 pour 12,50.",
@@ -1096,6 +1098,7 @@
       "ocrPathMissing": "Le chemin des modèles OCR n’est pas défini.",
       "ocrModelsMissing": "Les modèles OCR intégrés sont introuvables. Utilisez un PDF texte ou remplissez les champs à la main.",
       "ocrRead": "Lu avec l’OCR hors ligne intégré. Vérifiez avant d’enregistrer.",
+      "ocrUnreadable": "La plus grande partie de ce scan n’a pas pu être lue, le montant est donc laissé vide. Vérifiez le montant et tous les autres champs avec le document.",
       "ocrLittleText": "L’OCR s’est exécuté mais a trouvé peu de texte — remplissez le formulaire à la main si besoin.",
       "ocrError": "L’OCR a échoué. Vous pouvez tout de même remplir les champs.",
       "ocrPdfImage": "Image PDF lue avec l’OCR intégré. Vérifiez avant d’enregistrer."

@@ -169,7 +169,7 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
       onDrop={onHtmlDrop}
       className={cn(
         // 8px pane padding + 1.5px border + 10.5px puts content 20px in, like the panes beside it.
-        'relative h-full min-h-[7.5rem] overflow-hidden rounded-[12px] border-[1.5px] border-dashed p-[10.5px] text-left transition',
+        'relative h-full min-h-[7.5rem] rounded-[12px] border-[1.5px] border-dashed p-[10.5px] text-left transition',
         dragOver
           ? 'border-[var(--color-accent-b)] bg-[var(--color-info-soft)]'
           : 'border-[rgba(55,213,255,0.32)]',
@@ -178,7 +178,7 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
     >
       {!dragOver ? (
         <div
-          className="pointer-events-none absolute inset-0"
+          className="pointer-events-none absolute inset-0 rounded-[inherit]"
           style={{ background: 'radial-gradient(260px 120px at 50% 0%, rgba(55,213,255,0.08), transparent 70%)' }}
           aria-hidden
         />
@@ -212,7 +212,9 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
         </p>
       ) : null}
       {localError ? (
-        <p className="pointer-events-none relative mt-2 text-xs text-[var(--color-danger)]">{localError}</p>
+        <p className="pointer-events-none relative mt-2 text-xs [overflow-wrap:anywhere] text-[var(--color-danger)]">
+          {localError}
+        </p>
       ) : null}
     </div>
   )

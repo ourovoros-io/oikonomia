@@ -650,6 +650,12 @@ export type CsvImportPreview = {
    * columns have to be mapped before the file can be previewed.
    */
   missing_columns?: CsvRequiredColumn[]
+  /**
+   * The first currency marker in the amount cells that is not the book's
+   * (`HUF`, `£`, `Ft`), as written; the preview warns that the file may be
+   * in another currency.
+   */
+  other_currency?: string | null
   rows: CsvImportPreviewRow[]
 }
 

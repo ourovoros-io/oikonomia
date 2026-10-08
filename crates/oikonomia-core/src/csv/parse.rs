@@ -22,24 +22,30 @@
 //! # Column detection
 //!
 //! Without an explicit [`CsvColumnMapping`], each header is lowercased and
-//! stripped of spaces, `_` and `-`, then tested in this order. The first
+//! stripped of spaces, `_`, `-` and accents (`fold_header`), then tested in
+//! this order. Greek, German and French names are listed beside the English
+//! ones in the table; the aliases themselves are `ROLE_ALIASES`. The first
 //! test that passes names the column:
 //!
 //! | Order | Column      | Header                                               |
 //! |-------|-------------|------------------------------------------------------|
-//! | 1     | Date        | Contains `date` (`Booking date`, `ValueDate`)        |
+//! | 1     | Date        | Contains `date`, `datum`, `ημερομηνια`,              |
+//! |       |             | `buchungstag` or `wertstellung`                      |
+//! |       |             | (`Booking date`, `Buchungsdatum`, `Ημερομηνία`)      |
 //! | 2     | Amount      | `amount`, `value`, `sum`, `transactionamount`,       |
-//! |       |             | `betrag`, `montant`, `importo`                       |
-//! | 3     | Debit       | `debit`, `withdrawal`, `outflow`, `addebito`         |
-//! | 4     | Credit      | `credit`, `deposit`, `inflow`, `accredito`           |
+//! |       |             | `betrag`, `montant`, `importo`, `ποσο`               |
+//! | 3     | Debit       | `debit`, `withdrawal`, `outflow`, `addebito`,        |
+//! |       |             | `soll`, `χρεωση`                                     |
+//! | 4     | Credit      | `credit`, `deposit`, `inflow`, `accredito`,          |
+//! |       |             | `haben`, `πιστωση`                                   |
 //! | 5     | Direction   | `type`, `dc`, `d/c`, `debitcredit`, `drcr`,          |
 //! |       |             | `transactiontype`, and values that are directions    |
 //! | 6     | Reference   | `reference`, `ref`, `check`, `cheque`, `checkno`,    |
-//! |       |             | `chequeno`, `fitid`                                  |
+//! |       |             | `chequeno`, `fitid`, `referenz`, `αναφορα`           |
 //! | 7     | Description | `description`, `memo`, `narration`, `details`,       |
 //! |       |             | `payee`, `particulars`, `narrative`, `libelle`,      |
-//! |       |             | `libellé`, `beschreibung`, `descrizione`,            |
-//! |       |             | `transaction`, `name`                                |
+//! |       |             | `beschreibung`, `verwendungszweck`, `descrizione`,   |
+//! |       |             | `περιγραφη`, `αιτιολογια`, `transaction`, `name`     |
 //!
 //! Rows 2 to 7 match the whole header, not a part of it. When several
 //! headers name the same column, the leftmost wins and the others are not
@@ -157,6 +163,8 @@ use csv::{ReaderBuilder, StringRecord, Trim};
 use time::{Date, Month};
 
 use crate::csv::amount::parse_book_amount;
+use crate::csv::currency_marker::first_other_currency;
+use crate::csv::export::{CREDIT_MINOR_COLUMN, DEBIT_MINOR_COLUMN};
 use crate::csv::{
     CsvColumnMapping, CsvError, CsvMappingProblem, CsvRequiredColumn, CsvRowOutcome, MAX_CSV_BYTES,
     ParsedBankRow,
@@ -182,6 +190,10 @@ pub struct ParsedBankCsv {
     /// Not empty only when the caller gave no mapping and the headers do not
     /// name them; `rows` is then empty, because no row was read.
     pub missing_columns: Vec<CsvRequiredColumn>,
+    /// The first currency marker in the amount cells that is not the book's
+    /// currency (`HUF`, `£`, `Ft`), as written; `None` when the cells carry
+    /// none. A hint that the file may be in another currency, not a refusal.
+    pub other_currency: Option<String>,
     /// Data rows in file order.
     pub rows: Vec<CsvRowOutcome>,
 }
@@ -277,7 +289,8 @@ const YEAR_DIGITS: usize = 4;
 /// [`Error::Csv`] for a problem with the file as a whole:
 /// [`CsvError::Empty`] when the text is empty, [`CsvError::Malformed`] when
 /// the header row cannot be read, [`CsvError::MissingHeader`] when it has no
-/// name in it, and [`CsvError::InvalidMapping`] when `mapping` is
+/// name in it, [`CsvError::JournalExport`] when it is the header of
+/// Oikonomia's own journal export, and [`CsvError::InvalidMapping`] when `mapping` is
 /// incomplete, contradictory or names a header the file does not have.
 ///
 /// A malformed **row** is not an error. It is returned as
@@ -308,6 +321,9 @@ pub fn parse_bank_csv(
     if headers.is_empty() || headers.iter().all(str::is_empty) {
         return Err(CsvError::MissingHeader.into());
     }
+    if is_journal_export(&headers) {
+        return Err(CsvError::JournalExport.into());
+    }
 
     // Read whole before any column is chosen: the direction column is
     // detected from its values. The text is already in memory, and a file is
@@ -315,23 +331,76 @@ pub fn parse_bank_csv(
     let records: Vec<csv::Result<StringRecord>> = reader.records().collect();
 
     let detected = auto_map_headers(&headers, &records);
-    let (missing_columns, rows) = match mapping {
-        Some(user) => {
-            let columns = resolve_user_mapping(&headers, user)?;
-            (Vec::new(), parse_records(records, columns, currency))
-        }
-        None => match missing_required_columns(detected) {
-            missing if missing.is_empty() => (missing, parse_records(records, detected, currency)),
-            missing => (missing, Vec::new()),
-        },
-    };
+    let (missing_columns, columns) = columns_to_read(&headers, detected, mapping)?;
+    let other_currency = columns.and_then(|columns| other_currency(&records, columns, currency));
+    let rows = columns.map_or_else(Vec::new, |columns| {
+        parse_records(records, columns, currency)
+    });
 
     Ok(ParsedBankCsv {
         headers: headers.iter().map(str::to_owned).collect(),
         detected_mapping: mapping_from_headers(&headers, detected),
         missing_columns,
+        other_currency,
         rows,
     })
+}
+
+/// The columns rows are read with, and the required columns that are missing.
+///
+/// An explicit `mapping` is resolved and nothing is missing. Without one the
+/// detected columns are used when they are complete, and otherwise there is
+/// nothing to read rows with.
+///
+/// # Errors
+///
+/// [`CsvError::InvalidMapping`] as [`resolve_user_mapping`] gives it.
+fn columns_to_read(
+    headers: &StringRecord,
+    detected: ColumnMap,
+    mapping: Option<&CsvColumnMapping>,
+) -> crate::error::Result<(Vec<CsvRequiredColumn>, Option<ColumnMap>)> {
+    if let Some(user) = mapping {
+        return Ok((Vec::new(), Some(resolve_user_mapping(headers, user)?)));
+    }
+    let missing = missing_required_columns(detected);
+    let columns = missing.is_empty().then_some(detected);
+    Ok((missing, columns))
+}
+
+/// The first currency marker in the amount, debit and credit cells that is
+/// not the book's, as written.
+fn other_currency(
+    records: &[csv::Result<StringRecord>],
+    columns: ColumnMap,
+    book: CurrencyCode,
+) -> Option<String> {
+    let indexes: Vec<usize> = [columns.amount, columns.debit, columns.credit]
+        .into_iter()
+        .flatten()
+        .collect();
+    let cells = records
+        .iter()
+        .filter_map(|record| record.as_ref().ok())
+        .flat_map(|record| indexes.iter().map(|index| record_cell(record, *index)));
+    first_other_currency(cells, book)
+}
+
+/// Returns whether `headers` are those of [`export_journal_csv`]: the two
+/// integer-minor-unit columns no bank writes.
+///
+/// Such a file is refused instead of mapped. Its rows are journal lines, so
+/// a two-line entry would import as two unrelated movements, and nothing in
+/// the file says which line is the wallet.
+///
+/// [`export_journal_csv`]: crate::csv::export_journal_csv
+fn is_journal_export(headers: &StringRecord) -> bool {
+    let has = |name: &str| {
+        headers
+            .iter()
+            .any(|header| header.eq_ignore_ascii_case(name))
+    };
+    has(DEBIT_MINOR_COLUMN) && has(CREDIT_MINOR_COLUMN)
 }
 
 /// The role a column plays in a bank statement.
@@ -623,66 +692,138 @@ fn resolve_user_mapping(
 /// tests run in the order of the table in the module doc; `date` is the only
 /// one that matches a part of the header.
 fn classify_header(raw: &str) -> Option<Column> {
-    let compact: String = raw
-        .to_lowercase()
-        .chars()
-        .filter(|character| !character.is_whitespace() && !matches!(character, '_' | '-'))
-        .collect();
+    let compact = fold_header(raw);
 
-    if compact.contains("date") {
+    if DATE_WORDS.iter().any(|word| compact.contains(word)) {
         return Some(Column::Date);
     }
-    if matches!(
-        compact.as_str(),
-        "amount" | "value" | "sum" | "transactionamount" | "betrag" | "montant" | "importo"
-    ) {
-        return Some(Column::Amount);
-    }
-    if matches!(
-        compact.as_str(),
-        "debit" | "withdrawal" | "outflow" | "addebito"
-    ) {
-        return Some(Column::Debit);
-    }
-    if matches!(
-        compact.as_str(),
-        "credit" | "deposit" | "inflow" | "accredito"
-    ) {
-        return Some(Column::Credit);
-    }
-    if matches!(
-        compact.as_str(),
-        "type" | "dc" | "d/c" | "debitcredit" | "drcr" | "transactiontype"
-    ) {
-        return Some(Column::Direction);
-    }
-    if matches!(
-        compact.as_str(),
-        "reference" | "ref" | "check" | "cheque" | "checkno" | "chequeno" | "fitid"
-    ) {
-        return Some(Column::Reference);
-    }
-    if matches!(
-        compact.as_str(),
-        "description"
-            | "memo"
-            | "narration"
-            | "details"
-            | "payee"
-            | "particulars"
-            | "narrative"
-            | "libelle"
-            | "libellé"
-            | "beschreibung"
-            | "descrizione"
-            | "transaction"
-            | "name"
-    ) {
-        return Some(Column::Description);
-    }
-    None
+    ROLE_ALIASES
+        .iter()
+        .find(|(_, aliases)| aliases.contains(&compact.as_str()))
+        .map(|(column, _)| *column)
 }
 
+/// Words a date header contains: English and French `date`, German `datum`,
+/// Greek `ημερομηνια` (`Ημερομηνία`, folded), and the German `buchungstag` and
+/// `wertstellung`.
+const DATE_WORDS: [&str; 5] = ["date", "datum", "ημερομηνια", "buchungstag", "wertstellung"];
+
+/// The whole-header aliases of each role other than the date, in the order
+/// the module doc lists the tests. Each is in the form [`fold_header`]
+/// leaves a header in.
+const ROLE_ALIASES: [(Column, &[&str]); 6] = [
+    (
+        Column::Amount,
+        &[
+            "amount",
+            "value",
+            "sum",
+            "transactionamount",
+            "betrag",
+            "montant",
+            "importo",
+            "ποσο",
+            "ποσοσυναλλαγησ",
+        ],
+    ),
+    (
+        Column::Debit,
+        &[
+            "debit",
+            "withdrawal",
+            "outflow",
+            "addebito",
+            "soll",
+            "χρεωση",
+        ],
+    ),
+    (
+        Column::Credit,
+        &[
+            "credit",
+            "deposit",
+            "inflow",
+            "accredito",
+            "haben",
+            "πιστωση",
+        ],
+    ),
+    (
+        Column::Direction,
+        &[
+            "type",
+            "dc",
+            "d/c",
+            "debitcredit",
+            "drcr",
+            "transactiontype",
+        ],
+    ),
+    (
+        Column::Reference,
+        &[
+            "reference",
+            "ref",
+            "check",
+            "cheque",
+            "checkno",
+            "chequeno",
+            "fitid",
+            "referenz",
+            "αναφορα",
+            "αριθμοσαναφορασ",
+        ],
+    ),
+    (
+        Column::Description,
+        &[
+            "description",
+            "memo",
+            "narration",
+            "details",
+            "payee",
+            "particulars",
+            "narrative",
+            "libelle",
+            "beschreibung",
+            "descrizione",
+            "transaction",
+            "name",
+            "verwendungszweck",
+            "buchungstext",
+            "intitule",
+            "περιγραφη",
+            "αιτιολογια",
+        ],
+    ),
+];
+
+/// Lowercases a header and drops what banks vary freely: spaces, `_`, `-`,
+/// Greek and common Latin accents, and the final sigma.
+///
+/// Folding the accents lets one alias match `Ποσό` and an upper-case `ΠΟΣΟ`
+/// that carries none, and `Libellé` and `LIBELLE`.
+fn fold_header(raw: &str) -> String {
+    raw.to_lowercase()
+        .chars()
+        .filter(|character| !character.is_whitespace() && !matches!(character, '_' | '-'))
+        .map(|character| match character {
+            'ά' => 'α',
+            'έ' => 'ε',
+            'ή' => 'η',
+            'ί' | 'ϊ' | 'ΐ' => 'ι',
+            'ό' => 'ο',
+            'ύ' | 'ϋ' | 'ΰ' => 'υ',
+            'ώ' => 'ω',
+            'ς' => 'σ',
+            'é' | 'è' | 'ê' => 'e',
+            'ä' => 'a',
+            'ö' => 'o',
+            'ü' => 'u',
+            other => other,
+        })
+        .collect()
+}
 /// Reads every record into its outcome, in file order.
 ///
 /// A record the reader could not split becomes an unreadable row, and its
@@ -755,6 +896,7 @@ fn row_problem(source_row: u32, err: &CsvError) -> UiText {
         | CsvError::TooLarge
         | CsvError::Malformed { .. }
         | CsvError::MissingHeader
+        | CsvError::JournalExport
         | CsvError::MissingColumn { .. }
         | CsvError::InvalidStatus(_)
         | CsvError::InvalidInteger(_)
@@ -1341,6 +1483,50 @@ mod tests {
     }
 
     #[test]
+    fn the_apps_own_journal_export_is_refused_by_name_even_with_a_mapping() {
+        let export = "date,description,reference,account_code,account_name,debit_minor,\
+            credit_minor,status\n2026-03-15,Rent,,5100,Rent,80000,0,posted\n";
+        let mapping = column_mapping("date", "description", None, Some("debit_minor"), None);
+
+        let detected = parse_bank_csv(export, eur(), None).expect_err("export");
+        let mapped = parse_bank_csv(export, eur(), Some(&mapping)).expect_err("export, mapped");
+
+        assert_eq!(detected, Error::Csv(CsvError::JournalExport));
+        assert_eq!(mapped, Error::Csv(CsvError::JournalExport));
+    }
+
+    #[test]
+    fn a_statement_with_another_currencys_marker_is_reported_beside_its_rows() {
+        let csv = "Date;Description;Amount\n05.03.2026;Rent;-485.000,00\n\
+            06.03.2026;Shop;-3 990 HUF\n";
+
+        let parsed = parse_bank_csv(csv, eur(), None).expect("parse");
+
+        assert_eq!(parsed.other_currency.as_deref(), Some("HUF"));
+        assert_eq!(parsed.rows.len(), 2);
+    }
+
+    #[test]
+    fn plain_amounts_and_the_books_own_marker_report_no_other_currency() {
+        let csv = "Date,Description,Debit,Credit\n2026-03-05,Rent,800.00 EUR,\n\
+            2026-03-06,Pay,,€2500.00\n";
+
+        let parsed = parse_bank_csv(csv, eur(), None).expect("parse");
+
+        assert_eq!(parsed.other_currency, None);
+    }
+
+    #[test]
+    fn a_marker_in_a_cell_that_is_not_an_amount_is_not_reported() {
+        let csv = "Date,Description,Amount\n2026-03-05,Pay USD invoice,-8.00\n";
+
+        assert_eq!(
+            parse_bank_csv(csv, eur(), None).unwrap().other_currency,
+            None
+        );
+    }
+
+    #[test]
     fn a_file_without_a_required_column_names_it_and_reads_no_row() {
         use CsvRequiredColumn::{Amount, Date};
 
@@ -1533,6 +1719,62 @@ mod tests {
             reference: None,
             direction: None,
         }
+    }
+
+    #[test]
+    fn greek_headers_are_detected_with_or_without_accents() {
+        let csv = "Ημερομηνία;Περιγραφή;Ποσό\n15/03/2026;Καφές;-3,50\n";
+        let upper = "ΗΜΕΡΟΜΗΝΙΑ;ΑΙΤΙΟΛΟΓΙΑ;ΠΟΣΟ\n15/03/2026;Καφές;-3,50\n";
+
+        for text in [csv, upper] {
+            let parsed = parse_bank_csv(text, eur(), None).unwrap();
+
+            assert_eq!(parsed.missing_columns, vec![]);
+            let CsvRowOutcome::Parsed(row) = &parsed.rows[0] else {
+                panic!("row");
+            };
+            assert_eq!(row.signed_amount_minor, -350);
+            assert_eq!(row.description, "Καφές");
+        }
+    }
+
+    #[test]
+    fn greek_debit_and_credit_columns_are_detected() {
+        let csv = "Ημερομηνία συναλλαγής;Περιγραφή;Χρέωση;Πίστωση;Αριθμός αναφοράς\n\
+            15/03/2026;Ενοίκιο;800,00;;A1\n";
+        let detected = parse_bank_csv(csv, eur(), None).unwrap().detected_mapping;
+
+        assert_eq!(detected.debit.as_deref(), Some("Χρέωση"));
+        assert_eq!(detected.credit.as_deref(), Some("Πίστωση"));
+        assert_eq!(detected.reference.as_deref(), Some("Αριθμός αναφοράς"));
+    }
+
+    #[test]
+    fn german_and_french_headers_are_detected() {
+        let german = "Buchungstag;Verwendungszweck;Soll;Haben;Referenz\n\
+            15.03.2026;Miete;800,00;;R1\n";
+        let french = "Date;Libellé;Débit;Crédit;Référence\n15/03/2026;Loyer;800,00;;R1\n";
+        let datum = "Datum;Beschreibung;Betrag\n15.03.2026;Miete;-800,00\n";
+
+        let german = parse_bank_csv(german, eur(), None)
+            .unwrap()
+            .detected_mapping;
+        let french = parse_bank_csv(french, eur(), None)
+            .unwrap()
+            .detected_mapping;
+        let datum = parse_bank_csv(datum, eur(), None).unwrap().detected_mapping;
+
+        assert_eq!(german.date.as_deref(), Some("Buchungstag"));
+        assert_eq!(german.description.as_deref(), Some("Verwendungszweck"));
+        assert_eq!(german.debit.as_deref(), Some("Soll"));
+        assert_eq!(german.credit.as_deref(), Some("Haben"));
+        assert_eq!(german.reference.as_deref(), Some("Referenz"));
+        assert_eq!(french.description.as_deref(), Some("Libellé"));
+        assert_eq!(french.debit.as_deref(), Some("Débit"));
+        assert_eq!(french.credit.as_deref(), Some("Crédit"));
+        assert_eq!(french.reference.as_deref(), Some("Référence"));
+        assert_eq!(datum.date.as_deref(), Some("Datum"));
+        assert_eq!(datum.amount.as_deref(), Some("Betrag"));
     }
 
     #[test]

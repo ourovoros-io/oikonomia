@@ -26,6 +26,10 @@ type Props = {
 /**
  * In-memory document viewer: decrypted bytes live only in a blob URL that is
  * revoked when the viewer closes. "Save a copy" is the explicit export path.
+ *
+ * A PDF has no preview here. The webview's own PDF viewer is missing on
+ * Linux, where the frame stayed blank, and a bundled renderer would be a new
+ * dependency for a document the user can open elsewhere after Save a copy.
  */
 export function DocumentViewerModal({ documentId, onClose, onError, error = null }: Props) {
   const { t } = useI18n()
@@ -87,7 +91,6 @@ export function DocumentViewerModal({ documentId, onClose, onError, error = null
   if (!documentId) return null
 
   const isImage = meta?.mime_type.startsWith('image/') ?? false
-  const isPdf = meta?.mime_type === 'application/pdf'
   const isText = meta?.mime_type === 'text/plain'
 
   return (
@@ -113,21 +116,13 @@ export function DocumentViewerModal({ documentId, onClose, onError, error = null
             />
           ) : null}
 
-          {isPdf && blobUrl ? (
-            <iframe
-              src={blobUrl}
-              title={meta.filename}
-              className="h-[65vh] w-full rounded-xl border border-[var(--color-border)] bg-white"
-            />
-          ) : null}
-
           {isText ? (
             <pre className="max-h-[65vh] overflow-auto rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-2)] p-4 text-xs whitespace-pre-wrap text-[var(--color-fg-secondary)]">
               {new TextDecoder().decode(bytes)}
             </pre>
           ) : null}
 
-          {!isImage && !isPdf && !isText ? (
+          {!isImage && !isText ? (
             <p className="py-8 text-center text-sm text-[var(--color-muted)]">
               {t('viewer.noPreview', { mime: meta.mime_type })}
             </p>

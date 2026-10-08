@@ -61,12 +61,14 @@ fn csp_closes_plugin_base_and_form_escape_hatches() {
 }
 
 #[test]
-fn csp_allows_the_document_viewer_blob_urls_explicitly() {
+fn csp_allows_the_document_viewer_image_blob_urls_and_no_frames() {
     let directives = csp_directives();
 
     // Chromium (Windows WebView2) follows CSP3: 'self' never matches blob:.
     assert!(directives["img-src"].iter().any(|source| source == "blob:"));
-    assert_eq!(directives["frame-src"], ["blob:"]);
+    // The viewer has no PDF frame, so nothing may be framed: `frame-src`
+    // falls back to `default-src 'self'`.
+    assert!(!directives.contains_key("frame-src"));
 }
 
 #[test]
