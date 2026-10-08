@@ -228,7 +228,8 @@ export const KEY_ALIASES: Record<string, string> = {
   'dash.period.month': 'dashboard.period.word.month',
   'dash.period.year': 'dashboard.period.word.year',
   'dash.netThis': 'dashboard.hero.netLabel',
-  'dash.entriesThis': 'dashboard.hero.entryCount',
+  'dash.entriesThis.one': 'dashboard.hero.entryCount.one',
+  'dash.entriesThis.other': 'dashboard.hero.entryCount.other',
   'dash.recentActivity': 'dashboard.activity.title',
   'dash.noEntries': 'dashboard.activity.empty',
 
@@ -548,6 +549,19 @@ export function resolvesInLocale(locale: Locale, key: string): boolean {
 export function t(key: string, vars?: TranslateVars): string {
   const raw = lookup(current, key) ?? lookup('en', key) ?? key
   return interpolate(raw, vars)
+}
+
+/**
+ * Look up the plural form of `key` for `count`: `<key>.one`, `<key>.other`
+ * and so on, by the CLDR rules of the app language, falling back to
+ * `<key>.other`. `{count}` (and `{n}`) are filled in.
+ */
+export function tn(key: string, count: number, vars?: TranslateVars): string {
+  const category = new Intl.PluralRules(current).select(count)
+  const specific = `${key}.${category}`
+  const found = lookup(current, specific) ?? lookup('en', specific)
+
+  return t(found === undefined ? `${key}.other` : specific, { ...vars, count })
 }
 
 /** Apply locale in memory and mirror `oikonomia.locale`. Does not write UiPrefs. */

@@ -478,7 +478,10 @@
     },
     "hero": {
       "netLabel": "Résultat net {period}",
-      "entryCount": "{n} écritures {period}",
+      "entryCount": {
+        "one": "{n} écriture {period}",
+        "other": "{n} écritures {period}"
+      },
       "kept": "Vous avez conservé {percent} % de tout ce qui est entré."
     },
     "pill": {
@@ -940,8 +943,14 @@
     "backToEntries": "Retour aux écritures",
     "emptyTitle": "Pas encore de modèles récurrents",
     "emptyBody": "Enregistrez un loyer, une paie, des charges ou un abonnement comme modèle. Vous comptabilisez chaque occurrence le moment venu.",
-    "templatesCount": "{n} modèles",
-    "dueCount": "{n} dus",
+    "templatesCount": {
+      "one": "{n} modèle",
+      "other": "{n} modèles"
+    },
+    "dueCount": {
+      "one": "{n} dû",
+      "other": "{n} dus"
+    },
     "due": "Dû",
     "post": "Comptabiliser",
     "postConfirm": {

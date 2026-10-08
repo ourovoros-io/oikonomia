@@ -37,6 +37,7 @@ import {
 import { cn } from '../lib/cn'
 import { commandErrorMessage } from '../lib/commandError'
 import { useI18n } from '../lib/I18nProvider'
+import { tn } from '../lib/i18n'
 
 type Props = { entity: Entity | null; onCreateBook?: () => void }
 
@@ -293,10 +294,7 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
 
       <Panel
         title={t('dash.recentActivity')}
-        description={t('dash.entriesThis', {
-          count: data?.recent_entry_count ?? 0,
-          period: periodWord,
-        })}
+        description={tn('dash.entriesThis', data?.recent_entry_count ?? 0, { period: periodWord })}
         icon={<Receipt className="size-4" />}
       >
         {activity.length === 0 ? (

@@ -478,7 +478,10 @@
     },
     "hero": {
       "netLabel": "Saldo in diesem {period}",
-      "entryCount": "{n} Buchungen in diesem {period}",
+      "entryCount": {
+        "one": "{n} Buchung in diesem {period}",
+        "other": "{n} Buchungen in diesem {period}"
+      },
       "kept": "Sie haben {percent} % von allem behalten, was hereinkam."
     },
     "pill": {
@@ -940,8 +943,14 @@
     "backToEntries": "Zurück zu den Buchungen",
     "emptyTitle": "Noch keine wiederkehrenden Vorlagen",
     "emptyBody": "Legen Sie Miete, Gehalt, Nebenkosten oder ein Abo als Vorlage an. Jede Fälligkeit buchen Sie selbst.",
-    "templatesCount": "{n} Vorlagen",
-    "dueCount": "{n} fällig",
+    "templatesCount": {
+      "one": "{n} Vorlage",
+      "other": "{n} Vorlagen"
+    },
+    "dueCount": {
+      "one": "{n} fällig",
+      "other": "{n} fällig"
+    },
     "due": "Fällig",
     "post": "Buchen",
     "postConfirm": {
