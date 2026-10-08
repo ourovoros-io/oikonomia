@@ -336,7 +336,7 @@
         "title": "Buch löschen?",
         "body": "„{name}“ und alle Konten und Buchungen werden endgültig gelöscht. Das lässt sich nicht rückgängig machen."
       },
-      "deleteError": "Das Buch konnte nicht gelöscht werden",
+      "deleteError": "Das Buch konnte nicht gelöscht werden.",
       "archiveAria": "{name} archivieren",
       "archiveTitle": "Archivieren",
       "archiveConfirm": {

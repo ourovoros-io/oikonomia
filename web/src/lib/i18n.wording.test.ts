@@ -49,6 +49,50 @@ describe('settled wording', () => {
     }
   })
 
+  test('no English string says entity or entities: the user-facing term is book', () => {
+    const stray = Object.entries(catalogs.en).filter(([, text]) => /\bentit(y|ies)\b/iu.test(text))
+
+    expect(stray).toEqual([])
+  })
+
+  test('no el, fr or de string uses the word for entity either', () => {
+    const word = /οντότητ|\bentités?\b|\bEntitäten?\b/iu
+    const stray = (['el', 'fr', 'de'] as const).flatMap((locale) =>
+      Object.entries(catalogs[locale])
+        .filter(([, text]) => word.test(text))
+        .map(([key]) => `${locale} ${key}`),
+    )
+
+    expect(stray).toEqual([])
+  })
+
+  test('every English "Could not" message ends with a full stop', () => {
+    const missing = Object.entries(catalogs.en).filter(
+      ([, text]) => /^Could not/u.test(text) && !/\.$/u.test(text),
+    )
+
+    expect(missing).toEqual([])
+  })
+
+  test('the delete-book message ends with a full stop in every language', () => {
+    const keys = {
+      en: 'settings.deleteFailed',
+      el: 'settings.entities.deleteError',
+      fr: 'settings.entities.deleteError',
+      de: 'settings.entities.deleteError',
+    } as const
+
+    for (const [locale, key] of Object.entries(keys) as [keyof typeof keys, string][]) {
+      expect(catalogs[locale][key], `${locale} ${key}`).toMatch(/\.$/u)
+    }
+  })
+
+  test('Greek failure messages use "Δεν ήταν δυνατή", not the headline "Αποτυχία"', () => {
+    const stray = Object.entries(catalogs.el).filter(([, text]) => /^Αποτυχία\b/u.test(text))
+
+    expect(stray).toEqual([])
+  })
+
   test('French puts a narrow no-break space, not a plain one, before ; ? and !', () => {
     const plain = Object.entries(catalogs.fr).filter(([, text]) => / [;?!]/u.test(text))
 
