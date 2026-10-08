@@ -20,7 +20,8 @@ import {
   type RecurringKind,
   type RecurringTemplate,
 } from '../lib/api'
-import { amountProblemKey, bookCurrency, minorToInputText, parseMajorToMinor } from '../lib/money'
+import { parseMajorToMinor } from '../lib/amountParse'
+import { amountProblemKey, bookCurrency, minorToInputText } from '../lib/money'
 import { beginExclusive } from '../lib/guards'
 import { useDialogError } from '../lib/useDialogError'
 import { kindDefaultAccounts } from '../lib/simpleEntry'
@@ -52,6 +53,7 @@ import {
 import { cn } from '../lib/cn'
 import { commandErrorMessage } from '../lib/commandError'
 import { useI18n } from '../lib/I18nProvider'
+import { tn } from '../lib/i18n'
 
 type Props = {
   entity: Entity
@@ -239,7 +241,11 @@ export function RecurringPage({ entity, onBack }: Props) {
     ev.preventDefault()
     if (!beginExclusive(formBusyRef)) return
     const minor = parseMajorToMinor(amount, currency)
-    const problem = !name.trim() ? 'form.fieldRequired' : amountProblemKey(minor, 'tx.invalidAmount')
+    const problem = !name.trim()
+      ? 'form.fieldRequired'
+      : !nextDate
+        ? 'date.invalid'
+        : amountProblemKey(minor, 'tx.invalidAmount')
     // minor is only null alongside a problem; the check narrows its type.
     if (problem || minor === null) {
       formBusyRef.current = false
@@ -340,8 +346,8 @@ export function RecurringPage({ entity, onBack }: Props) {
 
   const listMeta =
     templates.length === 0
-      ? `${t('recurring.templatesCount', { n: 0 })} · ${t('recurring.whisper')}`
-      : `${t('recurring.templatesCount', { n: templates.length })} · ${t('recurring.dueCount', { n: dueCount })} · ${ccy}`
+      ? `${tn('recurring.templatesCount', 0)} · ${t('recurring.whisper')}`
+      : `${tn('recurring.templatesCount', templates.length)} · ${tn('recurring.dueCount', dueCount)} · ${ccy}`
 
   return (
     <div className="space-y-4">

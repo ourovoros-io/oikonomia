@@ -673,10 +673,9 @@ export {
   formatDate,
   isoDate,
   minorToInputText,
-  parseMajorToMinor,
-  localeForCurrency,
   type Currency,
 } from './money'
+export { parseMajorToMinor } from './amountParse'
 
 export function todayISO(): string {
   const d = new Date()

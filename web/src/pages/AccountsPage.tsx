@@ -23,7 +23,8 @@ import {
   type Entity,
   type RegisterLine,
 } from '../lib/api'
-import { bookCurrency, parseMajorToMinor } from '../lib/money'
+import { parseMajorToMinor } from '../lib/amountParse'
+import { bookCurrency } from '../lib/money'
 import { DateInput } from '../components/DateInput'
 import { HiddenBadge } from '../components/hiddenUi'
 import { Modal } from '../components/Modal'
@@ -202,6 +203,11 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
   async function onSetBalance(ev: FormEvent) {
     ev.preventDefault()
     if (!balanceAccount || !entity) return
+
+    if (!balanceAsOf) {
+      setBalanceError(t('date.invalid'))
+      return
+    }
 
     const minor = parseMajorToMinor(balanceAmount, bookCurrency(entity))
     if (minor === null) {

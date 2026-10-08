@@ -21,11 +21,11 @@ import {
   type PendingDocSource,
   type UiPrefs,
 } from '../lib/api'
+import { parseMajorToMinor } from '../lib/amountParse'
 import {
   amountProblemKey,
   bookCurrency,
   minorToInputText,
-  parseMajorToMinor,
   type Currency,
 } from '../lib/money'
 import { fileToBase64, mimeFromName } from '../lib/files'

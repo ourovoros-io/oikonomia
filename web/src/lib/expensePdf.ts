@@ -5,6 +5,7 @@ import interRegularUrl from '../assets/fonts/Inter-Regular.ttf?url'
 import interSemiBoldUrl from '../assets/fonts/Inter-SemiBold.ttf?url'
 import type { ReportLine } from './api'
 import { asCommandError, commandErrorMessage, logCommandError } from './commandError'
+import { formatPercent } from './arc'
 import { formatMoney, type Currency } from './money'
 import { buildSlices, vizHex, type ExpenseSlice } from './expenseSlices'
 import { getLocale, t, type Locale } from './i18n'
@@ -107,7 +108,6 @@ export function bytesToBase64(bytes: Uint8Array): string {
 export function buildExpensePdfModel(input: ExpensePdfInput): ExpensePdfModel {
   const locale = getLocale()
   const period = formatPdfPeriod(input.from, input.to, locale)
-  const moneyLocale = locale === 'el' ? 'el-GR' : 'en-US'
   const { slices, total } = buildSlices(input.expenses)
   return {
     entityName: input.entityName,
@@ -121,7 +121,7 @@ export function buildExpensePdfModel(input: ExpensePdfInput): ExpensePdfModel {
       title: t('reports.pdf.title'),
       whisper: t('reports.pdf.meta', { currency: input.currency.code }),
       totalExpenses: t('reports.pdf.totalExpenses'),
-      totalAmount: formatMoney(total, input.currency, moneyLocale),
+      totalAmount: formatMoney(total, input.currency),
       emptyTitle: t('reports.pdf.emptyTitle'),
       emptyBody: t('reports.pdf.emptyBody', { period }),
       sliceNote: t('reports.pdf.sliceNote'),
@@ -292,11 +292,11 @@ export function buildExpenseReportSvg(input: ExpensePdfInput): string {
   const legend = slices
     .map((slice, i) => {
       const y = legendY + i * 28
-      const pct = `${(slice.share * 100).toFixed(1)}%`
+      const pct = formatPercent(Math.round(slice.share * 10_000))
       return `<g>
         <rect x="${legendX - 4}" y="${y - 4}" width="8" height="8" rx="2" fill="${vizHex(slice.slot)}"/>
         <text x="${legendX + 14}" y="${y + 4}" fill="${FG}" font-size="12">${escapeXml(slice.name)}</text>
-        <text x="${MARGIN + cardW - 72}" y="${y + 4}" fill="${FG}" font-size="12" font-weight="600" text-anchor="end">${escapeXml(formatMoney(slice.amount, model.currency, getLocale() === 'el' ? 'el-GR' : 'en-US'))}</text>
+        <text x="${MARGIN + cardW - 72}" y="${y + 4}" fill="${FG}" font-size="12" font-weight="600" text-anchor="end">${escapeXml(formatMoney(slice.amount, model.currency))}</text>
         <text x="${MARGIN + cardW - 16}" y="${y + 4}" fill="${MUTED}" font-size="11" text-anchor="end">${pct}</text>
       </g>`
     })
@@ -404,7 +404,8 @@ function drawText(
   color: string,
   opts?: { align?: 'left' | 'right' | 'center'; maxWidth?: number },
 ) {
-  let draw = text
+  // A narrow no-break space (French grouping) is missing from some fonts; a no-break space reads the same.
+  let draw = text.replaceAll('\u202f', '\u00a0')
   if (opts?.maxWidth) {
     while (draw.length > 1 && font.widthOfTextAtSize(draw, size) > opts.maxWidth) {
       draw = `${draw.slice(0, -2)}…`
@@ -573,7 +574,6 @@ function paintPdfPage(
 
     const legendX = MARGIN + 290
     let ly = cardTop + 40
-    const moneyLocale = getLocale() === 'el' ? 'el-GR' : 'en-US'
     for (const slice of slices) {
       roundedRect(page, legendX - 4, ly - 4, 8, 8, 2, vizHex(slice.slot))
       drawText(page, fonts.regular, slice.name, legendX + 14, ly + 4, 11, FG, {
@@ -582,7 +582,7 @@ function paintPdfPage(
       drawText(
         page,
         fonts.semibold,
-        formatMoney(slice.amount, model.currency, moneyLocale),
+        formatMoney(slice.amount, model.currency),
         MARGIN + cardW - 72,
         ly + 4,
         11,
@@ -592,7 +592,7 @@ function paintPdfPage(
       drawText(
         page,
         fonts.regular,
-        `${(slice.share * 100).toFixed(1)}%`,
+        formatPercent(Math.round(slice.share * 10_000)),
         MARGIN + cardW - 16,
         ly + 4,
         10,

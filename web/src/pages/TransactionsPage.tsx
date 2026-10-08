@@ -27,7 +27,8 @@ import {
   type PostedEntryView,
   type SimpleEntryInput,
 } from '../lib/api'
-import { amountProblemKey, bookCurrency, minorToInputText, parseMajorToMinor } from '../lib/money'
+import { parseMajorToMinor } from '../lib/amountParse'
+import { amountProblemKey, bookCurrency, minorToInputText } from '../lib/money'
 import { useDialogError } from '../lib/useDialogError'
 import { renderUiTexts, type UiText } from '../lib/uiText'
 import { fileToBase64, mimeFromName } from '../lib/files'
@@ -528,6 +529,11 @@ export function TransactionsPage({
     ev.preventDefault()
     if (!entity) return
     if (!beginExclusive(busyRef)) return
+    if (!date) {
+      busyRef.current = false
+      setError(t('date.invalid'))
+      return
+    }
     const minor = parseMajorToMinor(amount, bookCurrency(entity))
     const problem = entryFormProblem(minor)
     // minor is only null alongside a problem; the check narrows its type.
@@ -1207,6 +1213,9 @@ export function TransactionsPage({
                       {formatDate(view.entry.entry_date)}
                       <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
                       <span>{t(`kind.${kindLabel}`)}</span>
+                      {view.entry.reference ? (
+                        <span>{t('entry.ref', { reference: view.entry.reference })}</span>
+                      ) : null}
                       <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
                       {parts}
                     </div>

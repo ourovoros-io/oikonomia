@@ -5,7 +5,6 @@ import {
   formatDate,
   bookCurrency,
   formatMoney,
-  localeForCurrency,
   monthEndISO,
   monthStartISO,
   quarterEndISO,
@@ -38,6 +37,7 @@ import {
 import { cn } from '../lib/cn'
 import { commandErrorMessage } from '../lib/commandError'
 import { useI18n } from '../lib/I18nProvider'
+import { tn } from '../lib/i18n'
 
 type Props = { entity: Entity | null; onCreateBook?: () => void }
 
@@ -174,8 +174,7 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
   }
 
   const ccy = bookCurrency(entity)
-  const loc = localeForCurrency(ccy.code)
-  const money = (n: number, signed = false) => formatMoney(n, ccy, loc, { signed })
+  const money = (n: number, signed = false) => formatMoney(n, ccy, locale, { signed })
 
   const pending = loading && !data
   const income = data?.income ?? 0
@@ -295,10 +294,7 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
 
       <Panel
         title={t('dash.recentActivity')}
-        description={t('dash.entriesThis', {
-          count: data?.recent_entry_count ?? 0,
-          period: periodWord,
-        })}
+        description={tn('dash.entriesThis', data?.recent_entry_count ?? 0, { period: periodWord })}
         icon={<Receipt className="size-4" />}
       >
         {activity.length === 0 ? (

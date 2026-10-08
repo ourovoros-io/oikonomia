@@ -244,13 +244,15 @@ export function CsvMappingModal({ open, preview, busy = false, error = null, onC
       </div>
 
       {live ? (
-        <button
-          type="button"
-          className="mt-3 text-xs text-[var(--color-muted)] underline-offset-2 hover:text-[var(--color-fg)] hover:underline"
-          onClick={toggleAmountMode}
-        >
-          {draft.amountMode === 'amount' ? t('tx.csv.useDebitCredit') : t('tx.csv.useAmount')}
-        </button>
+        <label className="mt-3 flex w-fit cursor-pointer items-center gap-2 text-sm text-[var(--color-fg-secondary)]">
+          <input
+            type="checkbox"
+            className="check-box"
+            checked={draft.amountMode === 'debit_credit'}
+            onChange={toggleAmountMode}
+          />
+          {t('tx.csv.useDebitCredit')}
+        </label>
       ) : null}
 
       <p className="mt-5 text-xs text-[var(--color-muted)]">{t('tx.csv.mapFooter')}</p>

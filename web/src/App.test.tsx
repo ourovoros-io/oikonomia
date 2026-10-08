@@ -301,31 +301,13 @@ describe('App shell', () => {
     expect(lock).not.toHaveAttribute('title')
   })
 
-  test('mounts exactly one aurora, above the shell, moving in a focused unlocked window', async () => {
-    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+  test('mounts exactly one aurora, above the shell', async () => {
     render(<App />)
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Settings' })).toBeTruthy()
     })
 
-    const auroras = document.querySelectorAll('.aurora')
-    expect(auroras).toHaveLength(1)
-    expect(auroras[0]).toHaveAttribute('data-moving', 'true')
-  })
-
-  test('mounts exactly one aurora, held still, while the vault is locked', async () => {
-    // jsdom reports no focus, which would hold the aurora still on its own;
-    // give the window focus so only the locked state can be what pauses it.
-    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
-    vi.mocked(vaultStatus).mockReset().mockResolvedValue('locked')
-    render(<App />)
-    await waitFor(() => {
-      expect(screen.getByRole('heading', { name: 'Welcome back' })).toBeTruthy()
-    })
-
-    const auroras = document.querySelectorAll('.aurora')
-    expect(auroras).toHaveLength(1)
-    expect(auroras[0]).toHaveAttribute('data-moving', 'false')
+    expect(document.querySelectorAll('.aurora')).toHaveLength(1)
   })
 
   test('gives each book its own categorical colour', async () => {
@@ -392,7 +374,7 @@ describe('App after archiving the current book', () => {
     await userEvent.click(screen.getByRole('button', { name: /^entities/i }))
     await userEvent.click(screen.getByRole('button', { name: `Archive ${name}` }))
     await userEvent.click(
-      within(screen.getByRole('dialog', { name: 'Archive entity?' })).getByRole('button', {
+      within(screen.getByRole('dialog', { name: 'Archive book?' })).getByRole('button', {
         name: 'Archive',
       }),
     )

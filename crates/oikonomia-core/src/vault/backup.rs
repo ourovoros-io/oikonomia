@@ -239,6 +239,30 @@ pub fn restore_from_path(archive: &Path, data_dir: &Path, replace: bool) -> Resu
     restore_pair(archive, data_dir, replace).map(|_header| ())
 }
 
+/// Checks that `archive` is a backup this build can restore, without touching
+/// the vault.
+///
+/// The archive is unpacked to the same staging files a restore uses and
+/// removed again, so the check costs one read of the archive and leaves no
+/// trace. Run it before asking the user to confirm a restore: a bad file is
+/// then reported while the session is still open.
+///
+/// # Errors
+///
+/// - [`Error::BackupInvalid`] when the file is not a backup, is damaged, or
+///   comes from a later build.
+/// - [`Error::Io`] when the archive cannot be read or the staging files
+///   cannot be written.
+pub fn verify_backup_archive(archive: &Path, data_dir: &Path) -> Result<()> {
+    create_private_dir(data_dir)?;
+    recover_interrupted_restore(data_dir)?;
+    let paths = RestorePaths::new(data_dir);
+
+    let checked = unpack_and_verify(archive, &paths).map(|_header| ());
+    discard_unpacked_unless_swap_pending(&paths);
+    checked
+}
+
 /// Does what [`restore_from_path`] documents and returns the header that is
 /// now published, as it was checked before the swap.
 ///
@@ -1226,6 +1250,36 @@ mod tests {
         );
         dest.unlock(OTHER_PASSWORD)
             .expect("the previous vault and its header are still in place");
+    }
+
+    #[test]
+    fn verifying_a_non_backup_is_rejected_and_leaves_no_staging_files() {
+        let dir = TempDir::new().expect("dir");
+        let csv = dir.path().join("statement.csv");
+        write_file(&csv, b"date,amount\n2026-01-01,5.00\n");
+
+        let err = verify_backup_archive(&csv, dir.path()).expect_err("csv");
+
+        assert_eq!(err, Error::BackupInvalid(BackupDefect::NotABackup));
+        let paths = RestorePaths::new(dir.path());
+        assert!(!paths.unpacked_header.exists() && !paths.unpacked_db.exists());
+    }
+
+    #[test]
+    fn verifying_a_real_backup_succeeds_and_changes_nothing() {
+        let (src, mut vault) = init_vault();
+        vault.lock();
+        let header_before = fs::read(vault_header_path(src.path())).expect("header");
+        let (_archive_dir, archive) = backup_of(&vault);
+
+        verify_backup_archive(&archive, src.path()).expect("valid backup");
+
+        assert_eq!(
+            fs::read(vault_header_path(src.path())).expect("header"),
+            header_before
+        );
+        let paths = RestorePaths::new(src.path());
+        assert!(!paths.unpacked_header.exists() && !paths.unpacked_db.exists());
     }
 
     #[test]
