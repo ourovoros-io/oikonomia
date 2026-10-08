@@ -30,6 +30,8 @@ type Props = {
   onView: (documentId: string) => void
   onChanged: () => Promise<void>
   onError: (message: string) => void
+  /** The last failure of an action in this dialog, drawn at the top of it. */
+  error?: string | null
 }
 
 /** Full journal view: lines with account names plus the attachments list. */
@@ -43,6 +45,7 @@ export function EntryDetailModal({
   onView,
   onChanged,
   onError,
+  error = null,
 }: Props) {
   const { t } = useI18n()
   const [busyId, setBusyId] = useState<string | null>(null)
@@ -131,6 +134,7 @@ export function EntryDetailModal({
       open
       title={entry.description}
       description={`${formatDate(entry.entry_date)}${entry.reference ? t('entry.ref', { reference: entry.reference }) : ''}`}
+      error={error}
       onClose={() => {
         if (!anyBusy) onClose()
       }}

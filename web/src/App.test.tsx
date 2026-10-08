@@ -293,6 +293,14 @@ describe('App shell', () => {
     ).toBeNull()
   })
 
+  test('Lock is a button with its own word, and has no native tooltip to linger on the lock screen', async () => {
+    render(<App />)
+    const lock = await screen.findByRole('button', { name: 'Lock vault' })
+
+    expect(lock).toHaveTextContent('Lock')
+    expect(lock).not.toHaveAttribute('title')
+  })
+
   test('mounts exactly one aurora, above the shell, moving in a focused unlocked window', async () => {
     vi.spyOn(document, 'hasFocus').mockReturnValue(true)
     render(<App />)

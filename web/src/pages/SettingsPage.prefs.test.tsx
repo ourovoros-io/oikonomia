@@ -115,11 +115,9 @@ describe('SettingsPage damaged preferences', () => {
     await waitFor(() => expect(screen.queryByText(NOTICE)).toBeNull())
     expect(api.resetUiPrefs).toHaveBeenCalledTimes(1)
     expect(resetButton()).toBeNull()
-    expect(
-      screen.getByText(
-        'Preferences reset. The damaged file was kept beside the vault as ui-prefs.damaged.json.',
-      ),
-    ).toHaveAttribute('role', 'status')
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Preferences reset. The damaged file was kept beside the vault as ui-prefs.damaged.json.',
+    )
     expect(screen.queryByRole('alert')).toBeNull()
   })
 

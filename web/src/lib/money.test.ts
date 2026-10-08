@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import {
+  amountProblemKey,
   bookCurrency,
   formatDate,
   formatMoney,
@@ -109,6 +110,24 @@ describe('the number of decimals is the one core sent', () => {
     expect(formatMoney(-150, EUR, 'en-US')).toBe('-€1.50')
     expect(formatMoney(150, EUR, 'en-US', { signed: true })).toBe('+€1.50')
     expect(formatMoney(0, EUR, 'en-US', { signed: true })).toBe('€0.00')
+  })
+})
+
+describe('amountProblemKey', () => {
+  test('text that is not a number gets the screen\'s own wording', () => {
+    expect(amountProblemKey(parseMajorToMinor('abc', EUR), 'tx.invalidAmount')).toBe(
+      'tx.invalidAmount',
+    )
+  })
+
+  test.each(['0', '0,00', '-5'])('%s is a number but not a postable amount', (text) => {
+    expect(amountProblemKey(parseMajorToMinor(text, EUR), 'tx.invalidAmount')).toBe(
+      'error.amountNotPositive',
+    )
+  })
+
+  test('a positive amount has no problem', () => {
+    expect(amountProblemKey(parseMajorToMinor('25,50', EUR), 'tx.invalidAmount')).toBeNull()
   })
 })
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { ArrowRight } from 'lucide-react'
 import { Modal } from './Modal'
 import { Button, Input, Select } from './ui'
@@ -8,6 +8,7 @@ import {
   draftToMapping,
   draftsEqual,
   mapNeededKey,
+  mappingProblemKey,
   mappingReady,
   matchHeader,
   previewHasColumnMap,
@@ -19,6 +20,8 @@ type Props = {
   open: boolean
   preview: CsvImportPreview | null
   busy?: boolean
+  /** The last failure of an action in this dialog, drawn at the top of it. */
+  error?: string | null
   onClose: () => void
   onContinue: (mapping: CsvColumnMapping, unchanged: boolean) => void
 }
@@ -95,7 +98,7 @@ function PlaceholderRow({ label, target }: { label: string; target: string }) {
 }
 
 /** Step 2 of CSV import: map file headers, or Auto-detected placeholders until headers exist. */
-export function CsvMappingModal({ open, preview, busy = false, onClose, onContinue }: Props) {
+export function CsvMappingModal({ open, preview, busy = false, error = null, onClose, onContinue }: Props) {
   const { t } = useI18n()
   const headers = preview?.headers ?? []
   const live = preview != null && previewHasColumnMap(preview)
@@ -111,6 +114,9 @@ export function CsvMappingModal({ open, preview, busy = false, onClose, onContin
   const mapping = draftToMapping(draft)
   const canContinue = !live || mappingReady(mapping)
   const neededKey = live ? mapNeededKey(preview?.missing_columns) : null
+  // Continue stays disabled until the mapping works; this says why.
+  const problemKey = live ? mappingProblemKey(mapping) : null
+  const problemId = useId()
 
   function patch(partial: Partial<CsvMapDraft>) {
     setDraft((prev) => ({ ...prev, ...partial }))
@@ -153,6 +159,7 @@ export function CsvMappingModal({ open, preview, busy = false, onClose, onContin
       title={t('tx.csv.mapTitle')}
       description={t('tx.csv.mapDescription')}
       maxWidth="max-w-xl"
+      error={error}
       onClose={onClose}
     >
       {neededKey ? (
@@ -248,11 +255,23 @@ export function CsvMappingModal({ open, preview, busy = false, onClose, onContin
 
       <p className="mt-5 text-xs text-[var(--color-muted)]">{t('tx.csv.mapFooter')}</p>
 
+      {problemKey ? (
+        <p id={problemId} className="mt-4 text-sm text-[var(--color-danger-text)]">
+          {t(problemKey)}
+        </p>
+      ) : null}
+
       <div className="mt-5 flex justify-end gap-2 border-t border-[var(--color-border)] pt-4">
         <Button type="button" variant="secondary" disabled={busy} onClick={onClose}>
           {t('common.cancel')}
         </Button>
-        <Button type="button" disabled={!canContinue} busy={busy} onClick={handleContinue}>
+        <Button
+          type="button"
+          disabled={!canContinue}
+          busy={busy}
+          onClick={handleContinue}
+          aria-describedby={problemKey ? problemId : undefined}
+        >
           {t('tx.csv.continuePreview')}
         </Button>
       </div>

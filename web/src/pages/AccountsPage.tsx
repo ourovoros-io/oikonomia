@@ -8,6 +8,7 @@ import {
   PieChart,
   Plus,
   Receipt,
+  X,
   TrendingDown,
   TrendingUp,
   Wallet,
@@ -86,6 +87,8 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [error, setError] = useState<string | null>(null)
   const [showForm, setShowForm] = useState(false)
+  // Drawn inside the Add account card, where the person is looking.
+  const [formError, setFormError] = useState<string | null>(null)
   const [code, setCode] = useState('')
   const [name, setName] = useState('')
   const [accountType, setAccountType] = useState<AccountType>('expense')
@@ -128,7 +131,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
     ev.preventDefault()
     if (!entity) return
     setBusy(true)
-    setError(null)
+    setFormError(null)
     try {
       await api.accountCreate({
         entity_id: entity.id,
@@ -141,13 +144,14 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
       setShowForm(false)
       await reload()
     } catch (err) {
-      setError(commandErrorMessage(err))
+      setFormError(commandErrorMessage(err))
     } finally {
       setBusy(false)
     }
   }
 
   async function onArchive(id: string) {
+    setError(null)
     try {
       await api.accountArchive(id)
       await reload()
@@ -246,7 +250,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
           }
         />
 
-        <ErrorBanner message={registerError} />
+        <ErrorBanner message={registerError} onDismiss={() => setRegisterError(null)} />
 
         <Panel title={registerAccount.name} icon={<Receipt className="size-4" />}>
           {registerBusy ? (
@@ -307,14 +311,19 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
         title={t('acct.title')}
         subtitle={`${entity.name} · ${entity.base_currency}`}
         actions={
-          <Button onClick={() => setShowForm((v) => !v)}>
-            <Plus className="size-4" />
+          <Button
+            onClick={() => {
+              setFormError(null)
+              setShowForm((v) => !v)
+            }}
+          >
+            {showForm ? <X className="size-4" /> : <Plus className="size-4" />}
             {showForm ? t('acct.close') : t('acct.addAccount')}
           </Button>
         }
       />
 
-      <ErrorBanner message={error} />
+      <ErrorBanner message={error} onDismiss={() => setError(null)} />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard
@@ -351,11 +360,14 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
             <h3 className="text-base leading-6 font-semibold text-[var(--color-fg)]">{t('acct.newAccount')}</h3>
             <p className="text-[13px] leading-5 text-[var(--color-muted)]">{t('acct.newAccountHint')}</p>
           </div>
-          <form onSubmit={onCreate} className="grid gap-4 sm:grid-cols-3">
+          <form noValidate onSubmit={onCreate} className="grid gap-4 sm:grid-cols-3">
             <Field label={t('acct.code')}>
               <Input
                 value={code}
-                onChange={(e) => setCode(e.target.value)}
+                onChange={(e) => {
+                  setCode(e.target.value)
+                  setFormError(null)
+                }}
                 placeholder={t('acct.codePlaceholder')}
                 className="tabular-nums"
                 required
@@ -381,7 +393,8 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
                 ))}
               </Select>
             </Field>
-            <div className="flex items-end sm:col-span-3">
+            <div className="sm:col-span-3">
+              <ErrorBanner message={formError} onDismiss={() => setFormError(null)} />
               <Button type="submit" busy={busy}>
                 {busy ? t('common.saving') : t('acct.createAccount')}
               </Button>
@@ -399,12 +412,13 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
         }
         description={t('acct.setBalanceDesc')}
         maxWidth="max-w-md"
+        error={balanceError}
+        onDismissError={() => setBalanceError(null)}
         onClose={() => {
           if (!balanceBusy) setBalanceAccount(null)
         }}
       >
-        <form onSubmit={onSetBalance} className="space-y-4">
-          <ErrorBanner message={balanceError} className="mb-0" />
+        <form noValidate onSubmit={onSetBalance} className="space-y-4">
           {balanceCurrent !== null ? (
             <p className="text-sm text-[var(--color-muted)]">
               {t('acct.ledgerBalanceToday')}{' '}
@@ -418,10 +432,13 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
               inputMode="decimal"
               placeholder="2.500,00"
               value={balanceAmount}
-              onChange={(e) => setBalanceAmount(e.target.value)}
+              onChange={(e) => {
+                setBalanceAmount(e.target.value)
+                setBalanceError(null)
+              }}
               className="tabular-nums"
               required
-              autoFocus
+              aria-invalid={balanceError ? true : undefined}
             />
           </Field>
           <Field label={t('acct.asOf')}>
@@ -497,7 +514,6 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
                     size="iconSm"
                     onClick={() => openRegister(a)}
                     aria-label={t('accounts.register.title', { name: a.name })}
-                    title={t('accounts.register.title', { name: a.name })}
                   >
                     <Receipt className="size-4" />
                   </Button>
@@ -505,16 +521,17 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
                   (a.account_type === 'asset' || a.account_type === 'liability') ? (
                     <Button
                       variant="ghost"
-                      size="iconSm"
+                      size="sm"
+                      className="w-32 shrink-0"
                       onClick={() => openBalance(a)}
                       aria-label={t('acct.setBalanceAria', { name: a.name })}
-                      title={t('acct.setBalance')}
                     >
                       <Coins className="size-4" />
+                      {t('acct.setBalance')}
                     </Button>
                   ) : (
-                    // Keeps the action icons in columns when a row has fewer of them.
-                    <span aria-hidden className="size-8 shrink-0" />
+                    // Keeps the actions in columns when a row has fewer of them.
+                    <span aria-hidden className="hidden w-32 shrink-0 sm:block" />
                   )}
                   {a.is_active && !a.is_system ? (
                     <Button
@@ -522,7 +539,6 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
                       size="iconSm"
                       onClick={() => void onArchive(a.id)}
                       aria-label={t('acct.deactivateAria')}
-                      title={t('acct.deactivate')}
                     >
                       <CircleOff className="size-4" />
                     </Button>

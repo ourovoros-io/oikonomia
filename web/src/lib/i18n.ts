@@ -328,7 +328,6 @@ export const KEY_ALIASES: Record<string, string> = {
   'acct.invalidAmount': 'accounts.balance.error.invalid',
   'acct.setBalanceAria': 'accounts.balance.aria',
   'acct.deactivateAria': 'accounts.deactivate.aria',
-  'acct.deactivate': 'accounts.deactivate.title',
   'common.system': 'accounts.badge.system',
   'common.active': 'accounts.status.active',
   'common.inactive': 'accounts.status.inactive',
