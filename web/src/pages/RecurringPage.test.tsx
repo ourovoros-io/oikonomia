@@ -376,6 +376,21 @@ describe('RecurringPage template type colours', () => {
   })
 })
 
+describe('RecurringPage post dialog keyboard', () => {
+  test('Enter in the amount field posts the template', async () => {
+    vi.mocked(api.recurringList).mockResolvedValue([rent])
+    await renderPage()
+    await userEvent.click(screen.getByRole('button', { name: 'Post' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Post Rent?' })
+
+    await userEvent.type(within(dialog).getByLabelText('Amount (EUR)'), '{Enter}')
+
+    await waitFor(() => {
+      expect(api.recurringPost).toHaveBeenCalledTimes(1)
+    })
+  })
+})
+
 describe('RecurringPage weekly and yearly start dates', () => {
   beforeEach(() => {
     // Thursday 8 October 2026. Only Date is faked, so user-event keeps its timers.

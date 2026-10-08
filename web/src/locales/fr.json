@@ -30,7 +30,8 @@
     },
     "sidebar": {
       "versionEncrypted": "v{version} · chiffré",
-      "quickAdd": "Ajout rapide"
+      "quickAdd": "Ajout rapide",
+      "quickAddNeedsBook": "Créez d’abord un livre."
     },
     "header": {
       "noBook": "Aucun livre sélectionné",
@@ -249,10 +250,13 @@
         "5min": "5 min",
         "15min": "15 min",
         "30min": "30 min",
-        "1hour": "1 heure"
+        "1hour": "60 min"
       },
       "error": {
         "min": "Le délai de verrouillage doit être d’au moins 1 minute"
+      },
+      "notice": {
+        "saved": "Verrouillage automatique enregistré."
       }
     },
     "password": {

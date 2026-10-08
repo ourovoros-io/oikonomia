@@ -220,6 +220,7 @@ export function CollapsibleSection({
   tone = 'accent',
   defaultOpen = false,
   flush = false,
+  summary,
   children,
 }: {
   title: string
@@ -230,6 +231,8 @@ export function CollapsibleSection({
   defaultOpen?: boolean
   /** Body without padding, for lists that manage their own edges. */
   flush?: boolean
+  /** The current value of a setting, shown in the header so it reads while collapsed. */
+  summary?: string
   children: ReactNode
 }) {
   const [open, setOpen] = useState(defaultOpen)
@@ -253,6 +256,11 @@ export function CollapsibleSection({
             <p className="text-[13px] leading-5 text-[var(--color-muted)]">{description}</p>
           ) : null}
         </div>
+        {summary ? (
+          <span className="shrink-0 text-[13px] font-medium whitespace-nowrap text-[var(--color-fg-secondary)]">
+            {summary}
+          </span>
+        ) : null}
         <ChevronDown
           className={cn(
             'size-4 shrink-0 text-[var(--color-dim)] transition-transform duration-200',

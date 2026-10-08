@@ -100,19 +100,28 @@ export function ConfirmDialog({
             <p className="mt-1 text-sm leading-relaxed text-[var(--color-muted)]">{body}</p>
           </div>
         </div>
-        {children ? <div className="mt-4">{children}</div> : null}
-        <div className="mt-6 flex justify-end gap-2">
-          <Button variant="secondary" onClick={onCancel} disabled={busy}>
-            {resolvedCancel}
-          </Button>
-          <Button
-            variant={resolvedTone === 'danger' ? 'danger' : 'primary'}
-            onClick={onConfirm}
-            busy={busy}
-          >
-            {busy ? resolvedBusy : resolvedConfirm}
-          </Button>
-        </div>
+        {/* A form, so Enter in a field of `children` confirms like the button. */}
+        <form
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (!busy) onConfirm()
+          }}
+        >
+          {children ? <div className="mt-4">{children}</div> : null}
+          <div className="mt-6 flex justify-end gap-2">
+            <Button variant="secondary" onClick={onCancel} disabled={busy}>
+              {resolvedCancel}
+            </Button>
+            <Button
+              type="submit"
+              variant={resolvedTone === 'danger' ? 'danger' : 'primary'}
+              busy={busy}
+            >
+              {busy ? resolvedBusy : resolvedConfirm}
+            </Button>
+          </div>
+        </form>
       </div>
     </div>,
     document.body,

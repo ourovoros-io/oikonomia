@@ -360,10 +360,22 @@ export default function App() {
               )}
             </section>
 
-            <Button className="w-full" onClick={openNewEntry} disabled={!entity}>
-              <Plus className="size-4" />
-              {t('app.sidebar.quickAdd')}
-            </Button>
+            <div className="space-y-1.5">
+              <Button
+                className="w-full"
+                onClick={openNewEntry}
+                disabled={!entity}
+                aria-describedby={entity ? undefined : 'quick-add-hint'}
+              >
+                <Plus className="size-4" />
+                {t('app.sidebar.quickAdd')}
+              </Button>
+              {entity ? null : (
+                <p id="quick-add-hint" className="px-3 text-xs text-[var(--color-muted)]">
+                  {t('app.sidebar.quickAddNeedsBook')}
+                </p>
+              )}
+            </div>
 
             <div className="px-3 font-mono text-[10px] leading-tight tracking-[0.04em] text-[var(--color-muted)]">
               {info ? t('app.versionEncrypted', { version: info.version }) : 'Oikonomia'}
@@ -413,7 +425,7 @@ export default function App() {
               </div>
             </header>
 
-            <main key={active} className="flex-1 overflow-auto">
+            <main key={active} className="flex-1 overflow-auto [scrollbar-gutter:stable]">
               <div className="mx-auto max-w-6xl px-7 pt-2 pb-10">
                 <ErrorBanner message={error} className="mb-5" onDismiss={() => setError(null)} />
                 {prefsNotice && active !== 'settings' ? (
