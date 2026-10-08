@@ -53,7 +53,14 @@ export function kindDefaultAccounts(
     return { ...none, categoryId: defaults.category ?? '', walletId: defaults.payment ?? '' }
   }
   if (kind === 'income') {
-    return { ...none, categoryId: defaults.income ?? '', walletId: defaults.deposit ?? '' }
+    // The payable field of an income holds the receivable account, the one
+    // an invoice not yet paid is owed on.
+    return {
+      ...none,
+      categoryId: defaults.income ?? '',
+      walletId: defaults.deposit ?? '',
+      payableId: defaults.receivable ?? '',
+    }
   }
   if (kind === 'bill') {
     return {

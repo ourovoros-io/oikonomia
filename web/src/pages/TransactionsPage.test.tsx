@@ -54,6 +54,7 @@ vi.mock('../lib/api', async (importOriginal) => {
       csvExportJournal: vi.fn(),
       entrySetHidden: vi.fn(),
       entryPostSimple: vi.fn(),
+      entryPostSimpleWithDocumentPath: vi.fn(),
       recurringList: vi.fn(),
       recurringCreate: vi.fn(),
       recurringPost: vi.fn(),
@@ -258,6 +259,7 @@ const DEFAULTS: AccountDefaults = {
   income: 'inc1',
   bill_category: 'exp1',
   bills_payable: null,
+  receivable: null,
   transfer_source: 'w1',
   transfer_destination: 'w1',
 }
@@ -284,6 +286,8 @@ beforeEach(() => {
     ...postedEntry,
     entry: { ...postedEntry.entry, id, hidden },
   }))
+  vi.mocked(api.entryPostSimple).mockReset()
+  vi.mocked(api.entryPostSimpleWithDocumentPath).mockReset()
   vi.mocked(api.recurringList).mockReset().mockResolvedValue([])
   vi.mocked(api.recurringCreate).mockReset()
   vi.mocked(api.recurringPost).mockReset()
@@ -408,15 +412,35 @@ describe('TransactionsPage CSV toolbar', () => {
     })
   })
 
-  test('New Entry form has no Hidden checkbox (HOLD paint)', async () => {
+  test('New Entry form can hide the entry from export as it is posted', async () => {
+    vi.mocked(api.entryPostSimple).mockResolvedValue(postedEntry)
     await renderReady()
     await userEvent.click(screen.getByRole('button', { name: 'New Entry' }))
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'New entry' })).toBeTruthy()
     })
-    expect(screen.queryByRole('checkbox', { name: /hidden/i })).toBeNull()
-    expect(screen.queryByText('Export skips this line. Backup still includes it.')).toBeNull()
-    expect(screen.queryByText('Hide from export')).toBeNull()
+    await userEvent.type(screen.getByRole('textbox', { name: /amount/i }), '12,50')
+    await userEvent.type(screen.getByRole('textbox', { name: /description/i }), 'Coffee beans')
+    await userEvent.click(screen.getByRole('checkbox', { name: /hide/i }))
+    await userEvent.click(screen.getByRole('button', { name: 'Save entry' }))
+
+    await waitFor(() => {
+      expect(api.entrySetHidden).toHaveBeenCalledWith(postedEntry.entry.id, true)
+    })
+  })
+
+  test('an entry that is not hidden is posted without a hide call', async () => {
+    vi.mocked(api.entryPostSimple).mockResolvedValue(postedEntry)
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'New Entry' }))
+    await userEvent.type(await screen.findByRole('textbox', { name: /amount/i }), '12,50')
+    await userEvent.type(screen.getByRole('textbox', { name: /description/i }), 'Coffee beans')
+    await userEvent.click(screen.getByRole('button', { name: 'Save entry' }))
+
+    await waitFor(() => {
+      expect(api.entryPostSimple).toHaveBeenCalled()
+    })
+    expect(api.entrySetHidden).not.toHaveBeenCalled()
   })
 
   test('invalid amount marks the Amount field invalid and describes the error', async () => {
@@ -1302,5 +1326,155 @@ describe('TransactionsPage New entry type colours', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Transfer' }))
     expect(screen.getByRole('button', { name: 'Transfer' })).toHaveAttribute('data-tone', 'neutral')
+  })
+})
+
+const receivable = account({ id: 'r1', name: 'Receivables', account_type: 'asset', code: '1200' })
+
+describe('TransactionsPage unpaid income', () => {
+  beforeEach(() => {
+    vi.mocked(api.accountList).mockResolvedValue([...accounts, receivable])
+    vi.mocked(api.accountDefaults).mockResolvedValue({ ...DEFAULTS, receivable: 'r1' })
+    vi.mocked(api.entryPostSimpleWithDocumentPath).mockResolvedValue(incomeEntry)
+    vi.mocked(api.entryPostSimple).mockResolvedValue(incomeEntry)
+  })
+
+  test('an invoice that is still due preselects the unpaid status and posts to the receivable', async () => {
+    await renderReady()
+
+    deliverDrop(
+      documentSuggestion({
+        kind: 'income',
+        bill_unpaid: true,
+        amount_minor: 186000,
+        description: 'ACME invoice 9',
+        category_account_id: 'inc1',
+        payable_account_id: 'r1',
+      }),
+    )
+
+    const status = await screen.findByLabelText('Income status')
+    expect(status).toHaveValue('unpaid')
+    expect(screen.getByLabelText('Receivable account')).toHaveValue('r1')
+    expect(screen.queryByLabelText('Received into')).toBeNull()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save entry' }))
+
+    await waitFor(() => {
+      expect(api.entryPostSimpleWithDocumentPath).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'income',
+          bill_status: 'unpaid',
+          payable_account_id: 'r1',
+          category_account_id: 'inc1',
+          amount_minor: 186000,
+        }),
+        '/tmp/receipt.pdf',
+        expect.any(String),
+      )
+    })
+  })
+
+  test('income marked received sends no status', async () => {
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'New Entry' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Income' }))
+    await userEvent.type(screen.getByLabelText('Amount (EUR)'), '20')
+    await userEvent.type(screen.getByLabelText('Description'), 'Tip')
+    await userEvent.click(screen.getByRole('button', { name: 'Save entry' }))
+
+    await waitFor(() => {
+      expect(api.entryPostSimple).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'income', bill_status: null }),
+      )
+    })
+  })
+
+  test('editing an entry owed on the receivable reopens it as unpaid income', async () => {
+    const invoice: PostedEntryView = {
+      ...incomeEntry,
+      lines: incomeEntry.lines.map((line) =>
+        line.account_id === 'w1' ? { ...line, account_id: 'r1' } : line,
+      ),
+    }
+    vi.mocked(api.entryList).mockResolvedValue([invoice])
+    await renderReady()
+
+    await userEvent.click(await screen.findByText('CLIENT INVOICE'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit entry' }))
+
+    expect(await screen.findByLabelText('Income status')).toHaveValue('unpaid')
+    expect(screen.getByLabelText('Receivable account')).toHaveValue('r1')
+  })
+})
+
+describe('TransactionsPage list header', () => {
+  test('a search with no results keeps Recurring, Import and Export', async () => {
+    await renderReady()
+    vi.mocked(api.entryList).mockResolvedValue([])
+
+    await userEvent.type(screen.getByLabelText('Search'), 'zzz')
+
+    expect(await screen.findByText('No matching entries')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Recurring' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Import CSV' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Export CSV' })).toBeTruthy()
+  })
+
+  test('coming back from Recurring reloads the entries', async () => {
+    await renderReady()
+    const before = vi.mocked(api.entryList).mock.calls.length
+
+    await userEvent.click(screen.getByRole('button', { name: 'Recurring' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Back to entries' }))
+
+    await waitFor(() => {
+      expect(vi.mocked(api.entryList).mock.calls.length).toBeGreaterThan(before)
+    })
+  })
+})
+
+describe('TransactionsPage bills in the list', () => {
+  test('an entry on the bills payable account is listed as a bill', async () => {
+    const payable = account({ id: 'p1', name: 'Bills payable', account_type: 'liability', code: '2050' })
+    vi.mocked(api.accountList).mockResolvedValue([...accounts, payable])
+    vi.mocked(api.accountDefaults).mockResolvedValue({ ...DEFAULTS, bills_payable: 'p1' })
+    vi.mocked(api.entryList).mockResolvedValue([
+      {
+        ...postedEntry,
+        lines: postedEntry.lines.map((line) =>
+          line.account_id === 'w1' ? { ...line, account_id: 'p1' } : line,
+        ),
+      },
+    ])
+    await renderReady()
+
+    const row = (await screen.findByText('Alpha supermarket')).closest('li')
+    expect(row).toHaveTextContent('Bill')
+    expect(row).not.toHaveTextContent('Expense')
+  })
+})
+
+describe('TransactionsPage row meta', () => {
+  test('shows the reference, and names an equity-only entry an opening balance', async () => {
+    const equity = account({ id: 'eq1', name: 'Opening Balances', account_type: 'equity', code: '3000' })
+    vi.mocked(api.accountList).mockResolvedValue([...accounts, equity])
+    vi.mocked(api.entryList).mockResolvedValue([
+      { ...postedEntry, entry: { ...postedEntry.entry, reference: 'R-1' } },
+      {
+        ...incomeEntry,
+        entry: { ...incomeEntry.entry, id: 'j9', description: 'Opening balance — Checking' },
+        lines: incomeEntry.lines.map((line) =>
+          line.account_id === 'inc1' ? { ...line, account_id: 'eq1' } : line,
+        ),
+      },
+    ])
+    await renderReady()
+
+    const groceries = (await screen.findByText('Alpha supermarket')).closest('li')
+    expect(groceries).toHaveTextContent('R-1')
+    const opening = screen.getByText('Opening balance — Checking').closest('li')
+    expect(opening).toHaveTextContent('Opening balance')
+    expect(opening).not.toHaveTextContent(/\bother\b/)
   })
 })

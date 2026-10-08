@@ -158,6 +158,7 @@ fn personal_template_shapes() -> Vec<AccountShape> {
         AccountShape::new("1010", AccountType::Asset, false, 20),
         AccountShape::new("1020", AccountType::Asset, false, 30),
         AccountShape::new("1100", AccountType::Asset, false, 40),
+        AccountShape::new("1200", AccountType::Asset, false, 45),
         AccountShape::new("2000", AccountType::Liability, false, 50),
         AccountShape::new("2050", AccountType::Liability, false, 55),
         AccountShape::new("2100", AccountType::Liability, false, 60),
@@ -229,8 +230,29 @@ pub const fn role_account_type(role: AccountRole) -> AccountType {
         AccountRole::Payment
         | AccountRole::Deposit
         | AccountRole::TransferSource
-        | AccountRole::TransferDestination => AccountType::Asset,
+        | AccountRole::TransferDestination
+        | AccountRole::Receivable => AccountType::Asset,
         AccountRole::BillsPayable => AccountType::Liability,
+    }
+}
+
+/// Returns whether a book without the template's account for `role` may
+/// fall back to its first active account of the role's type.
+///
+/// Every role does except the receivable: money owed to the owner is one
+/// kind of asset, and the first asset of a book is usually its cash.
+#[must_use]
+pub const fn has_type_fallback(role: AccountRole) -> bool {
+    match role {
+        AccountRole::Category
+        | AccountRole::Payment
+        | AccountRole::Deposit
+        | AccountRole::Income
+        | AccountRole::BillCategory
+        | AccountRole::BillsPayable
+        | AccountRole::TransferSource
+        | AccountRole::TransferDestination => true,
+        AccountRole::Receivable => false,
     }
 }
 
@@ -279,6 +301,8 @@ fn personal_role_codes(role: AccountRole) -> &'static [&'static str] {
         // Utilities, Bills & services, Housing, Subscriptions.
         AccountRole::BillCategory => &["5300", "5350", "5000", "5500"],
         AccountRole::BillsPayable => &["2050"],
+        // Receivables.
+        AccountRole::Receivable => &["1200"],
         AccountRole::TransferSource => &["1010"],
         // Savings, then Cash.
         AccountRole::TransferDestination => &["1020", "1000"],
@@ -298,6 +322,8 @@ fn company_role_codes(role: AccountRole) -> &'static [&'static str] {
         AccountRole::BillCategory => &["5200"],
         // Accounts Payable.
         AccountRole::BillsPayable => &["2000"],
+        // Accounts Receivable.
+        AccountRole::Receivable => &["1100"],
         AccountRole::TransferSource => &["1010"],
         AccountRole::TransferDestination => &["1000"],
     }

@@ -93,6 +93,10 @@ const PERSONAL_ACCOUNT_NAMES: &[(&str, Localized)] = &[
         Localized::new("Investments", "Επενδύσεις", "Placements", "Geldanlagen"),
     ),
     (
+        "1200",
+        Localized::new("Receivables", "Απαιτήσεις", "Créances", "Forderungen"),
+    ),
+    (
         "2000",
         Localized::new(
             "Credit Card",

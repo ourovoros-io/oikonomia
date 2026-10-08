@@ -26,6 +26,8 @@ export function accountDefaults(): AccountDefaults {
     income: accountId('4000'),
     bill_category: accountId('5020'),
     bills_payable: accountId('2000'),
+    // The demo chart has no account for money owed to the book.
+    receivable: null,
     transfer_source: accountId('1020'),
     transfer_destination: accountId('1000'),
   }

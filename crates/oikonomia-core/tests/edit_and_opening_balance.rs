@@ -9,7 +9,7 @@ use oikonomia_core::error::Error;
 use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
     CreateEntity, EntryFilter, PostSimpleEntry, SimpleEntryAccounts, UpdateAccount,
-    account_balance, archive_account, create_entity, list_accounts, list_entries,
+    account_balance, archive_account, balance_sheet, create_entity, list_accounts, list_entries,
     post_simple_entry, replace_simple_entry, set_account_opening_balance, trial_balance,
     update_account, void_entry,
 };
@@ -335,4 +335,34 @@ fn a_replacement_cannot_post_to_an_archived_account_and_leaves_the_original() {
         account_balance(conn, acc.food, common::date("2026-12-31")),
         Ok(4_200)
     );
+}
+/// "I owe 350 on the card" is stated as a positive amount owed: the card is a
+/// liability of 350 on every report, and the contra equity takes the debit.
+#[test]
+fn a_card_balance_stated_as_owed_is_a_liability_on_every_report() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, acc) = entity_with_accounts(conn);
+    let card = common::account(conn, entity_id, "2000");
+    let as_of = common::date("2026-09-01");
+
+    set_account_opening_balance(conn, acc.checking, 250_000, as_of, Locale::En).expect("checking");
+    set_account_opening_balance(conn, card, 35_000, as_of, Locale::En).expect("card");
+
+    assert_eq!(account_balance(conn, card, as_of).expect("balance"), 35_000);
+
+    let sheet = balance_sheet(conn, entity_id, as_of).expect("balance sheet");
+    assert_eq!(sheet.liabilities.total, 35_000);
+    assert_eq!(sheet.total_assets, 250_000);
+    // Opening Balances equity is what is left after the debt: 2.500 - 350.
+    assert_eq!(sheet.equity.total, 215_000);
+
+    let trial = trial_balance(conn, entity_id, as_of).expect("trial balance");
+    let card_line = trial
+        .lines
+        .iter()
+        .find(|line| line.code == "2000")
+        .expect("card line");
+    assert_eq!((card_line.debit_minor, card_line.credit_minor), (0, 35_000));
+    assert_eq!(trial.total_debits, trial.total_credits);
 }

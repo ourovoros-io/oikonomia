@@ -306,6 +306,7 @@ fn ipc_commands() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         commands::settings_get_ui_prefs,
         commands::settings_reset_ui_prefs,
         commands::settings_remember_quick_add,
+        commands::settings_remember_last_entity,
         commands::open_main_window,
         commands::quick_add_hide,
         commands::document_analyzer_status,

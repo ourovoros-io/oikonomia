@@ -16,6 +16,11 @@
 //!    archived, and one whose code the user changed.
 //! 3. Otherwise nothing: the role has no default.
 //!
+//! The receivable role skips step 2. Money owed to the owner is a kind of
+//! asset that no other asset can stand in for, so a book without the
+//! template's Accounts Receivable gives it no default and the user picks the
+//! account.
+//!
 //! [`default_accounts`] does this for every role and then keeps the two sides
 //! of a transfer apart.
 //!
@@ -26,7 +31,7 @@
 //! in another language, so no choice here reads one. The mapping from role to
 //! code lives next to the chart templates in [`crate::coa`].
 
-use crate::coa::{default_role_codes, role_account_type};
+use crate::coa::{default_role_codes, has_type_fallback, role_account_type};
 use crate::domain::{Account, AccountId, AccountType, ChartTemplate, EntityId};
 use crate::error::{AccountRole, Result};
 use crate::ledger::{get_entity, list_accounts};
@@ -56,6 +61,10 @@ pub struct DefaultAccounts {
     pub bill_category: Option<AccountId>,
     /// The liability account proposed for holding an unpaid bill.
     pub bills_payable: Option<AccountId>,
+    /// The asset account proposed for holding an income not yet received.
+    /// Only a seeded Accounts Receivable is proposed; there is no fallback by
+    /// type.
+    pub receivable: Option<AccountId>,
     /// The asset account proposed as the source of a transfer.
     pub transfer_source: Option<AccountId>,
     /// The asset account proposed as the destination of a transfer; never
@@ -85,8 +94,12 @@ pub fn default_account_for_role(
     accounts: &[Account],
     role: AccountRole,
 ) -> Option<AccountId> {
-    seeded_account_for_role(template, accounts, role)
-        .or_else(|| first_of_type(accounts, role_account_type(role)).map(|account| account.id))
+    let seeded = seeded_account_for_role(template, accounts, role);
+    if !has_type_fallback(role) {
+        return seeded;
+    }
+
+    seeded.or_else(|| first_of_type(accounts, role_account_type(role)).map(|account| account.id))
 }
 
 /// Returns the seeded account for `role`, by identity only.
@@ -133,6 +146,7 @@ pub fn default_accounts(template: ChartTemplate, accounts: &[Account]) -> Defaul
         income: pick(AccountRole::Income),
         bill_category: pick(AccountRole::BillCategory),
         bills_payable: pick(AccountRole::BillsPayable),
+        receivable: pick(AccountRole::Receivable),
         transfer_source,
         transfer_destination,
     }
@@ -243,10 +257,12 @@ pub(crate) fn code_of_for_tests(accounts: &[Account], id: Option<AccountId>) -> 
 mod tests {
     use super::*;
 
-    /// Codes of every role's default, in `AccountRole::ALL` order.
+    /// Codes of every role's default, in `AccountRole::ALL` order, but the
+    /// receivable: it has no type fallback and its own tests below.
     fn role_codes(template: ChartTemplate, accounts: &[Account]) -> Vec<Option<String>> {
         AccountRole::ALL
             .iter()
+            .filter(|role| **role != AccountRole::Receivable)
             .map(|role| {
                 let id = default_account_for_role(template, accounts, *role);
                 code_of_for_tests(accounts, id)
@@ -503,6 +519,53 @@ mod tests {
         );
         assert_eq!(
             seeded_account_for_role(ChartTemplate::Blank, &accounts, AccountRole::BillsPayable),
+            None,
+        );
+    }
+
+    #[test]
+    fn each_seeded_chart_proposes_its_own_receivable_account() {
+        let receivable_code = |template| {
+            let accounts = seeded_chart_for_tests(template, false);
+            let id = default_account_for_role(template, &accounts, AccountRole::Receivable);
+            code_of_for_tests(&accounts, id)
+        };
+
+        assert_eq!(
+            receivable_code(ChartTemplate::Company).as_deref(),
+            Some("1100")
+        );
+        // Personal 1100 is Investments: it is not proposed in its place.
+        assert_eq!(
+            receivable_code(ChartTemplate::Personal).as_deref(),
+            Some("1200")
+        );
+    }
+
+    #[test]
+    fn a_receivable_has_no_default_by_type_when_the_seeded_account_is_gone() {
+        for (template, code) in [
+            (ChartTemplate::Company, "1100"),
+            (ChartTemplate::Personal, "1200"),
+        ] {
+            let mut accounts = seeded_chart_for_tests(template, false);
+            deactivate(&mut accounts, code);
+
+            assert_eq!(
+                default_account_for_role(template, &accounts, AccountRole::Receivable),
+                None,
+                "{template:?}",
+            );
+        }
+    }
+
+    #[test]
+    fn a_personal_chart_from_before_receivables_has_no_receivable_default() {
+        let mut accounts = seeded_chart_for_tests(ChartTemplate::Personal, false);
+        accounts.retain(|account| account.code != "1200");
+
+        assert_eq!(
+            default_account_for_role(ChartTemplate::Personal, &accounts, AccountRole::Receivable),
             None,
         );
     }

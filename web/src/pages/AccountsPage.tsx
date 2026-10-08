@@ -1,17 +1,19 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import {
   Banknote,
   CircleOff,
   Coins,
   CreditCard,
   Landmark,
+  PencilLine,
   PieChart,
   Plus,
   Receipt,
-  X,
+  RotateCcw,
   TrendingDown,
   TrendingUp,
   Wallet,
+  X,
 } from 'lucide-react'
 import {
   api,
@@ -25,9 +27,11 @@ import {
 } from '../lib/api'
 import { parseMajorToMinor } from '../lib/amountParse'
 import { bookCurrency } from '../lib/money'
+import { ConfirmDialog } from '../components/ConfirmDialog'
 import { DateInput } from '../components/DateInput'
 import { HiddenBadge } from '../components/hiddenUi'
 import { Modal } from '../components/Modal'
+import { RenameDialog } from '../components/RenameDialog'
 import { TopBar } from '../components/TopBar'
 import {
   Button,
@@ -38,6 +42,7 @@ import {
   IconBadge,
   Input,
   MetricCard,
+  NoticeBanner,
   Panel,
   Select,
 } from '../components/ui'
@@ -83,10 +88,30 @@ function typeTone(t: AccountType): 'accent' | 'info' | 'muted' | 'money-in' | 'm
   return 'muted'
 }
 
+/** Balance-sheet accounts have a balance as of today; income and expense are read in Reports. */
+function showsBalance(account: Account): boolean {
+  return (
+    account.account_type === 'asset' ||
+    account.account_type === 'liability' ||
+    account.account_type === 'equity'
+  )
+}
+
+/** The chart in code order, whatever order the accounts were created in. */
+function byCode(a: Account, b: Account): number {
+  return a.code.localeCompare(b.code, undefined, { numeric: true })
+}
+
 export function AccountsPage({ entity, onCreateBook }: Props) {
   const { t } = useI18n()
   const [accounts, setAccounts] = useState<Account[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [balances, setBalances] = useState<Map<string, number>>(new Map())
+  const [renameTarget, setRenameTarget] = useState<Account | null>(null)
+  const [deactivateTarget, setDeactivateTarget] = useState<Account | null>(null)
+  const [deactivateBusy, setDeactivateBusy] = useState(false)
+  const codeInputRef = useRef<HTMLInputElement>(null)
   const [showForm, setShowForm] = useState(false)
   // Drawn inside the Add account card, where the person is looking.
   const [formError, setFormError] = useState<string | null>(null)
@@ -111,7 +136,14 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
 
   async function reload() {
     if (!entity) return
-    setAccounts(await api.accountList(entity.id))
+    const list = await api.accountList(entity.id)
+    setAccounts(list)
+
+    const today = todayISO()
+    const pairs = await Promise.all(
+      list.filter(showsBalance).map(async (a) => [a.id, await api.accountBalance(a.id, today)] as const),
+    )
+    setBalances(new Map(pairs))
   }
 
   useEffect(() => {
@@ -121,6 +153,8 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
     }
     void reload().catch((err) => setError(commandErrorMessage(err)))
   }, [entity?.id])
+
+  const sortedAccounts = useMemo(() => [...accounts].sort(byCode), [accounts])
 
   const counts = useMemo(() => {
     const active = accounts.filter((a) => a.is_active)
@@ -137,6 +171,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
     if (!entity) return
     setBusy(true)
     setFormError(null)
+    setNotice(null)
     try {
       await api.accountCreate({
         entity_id: entity.id,
@@ -144,9 +179,12 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
         name,
         account_type: accountType,
       })
+      // The form stays open for the next account; the type is kept because
+      // accounts are usually added in runs of one type.
+      setNotice(t('accounts.form.created', { code: code.trim(), name: name.trim() }))
       setCode('')
       setName('')
-      setShowForm(false)
+      codeInputRef.current?.focus()
       await reload()
     } catch (err) {
       setFormError(commandErrorMessage(err))
@@ -155,14 +193,51 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
     }
   }
 
-  async function onArchive(id: string) {
+  async function confirmDeactivate() {
+    if (!deactivateTarget) return
+    setDeactivateBusy(true)
     setError(null)
+    setNotice(null)
     try {
-      await api.accountArchive(id)
+      await api.accountArchive(deactivateTarget.id)
+      setNotice(t('accounts.deactivate.done', { name: deactivateTarget.name }))
+      await reload()
+    } catch (err) {
+      setError(commandErrorMessage(err))
+    } finally {
+      // Closed on failure too, so the error is not behind the dialog.
+      setDeactivateTarget(null)
+      setDeactivateBusy(false)
+    }
+  }
+
+  async function reactivate(account: Account) {
+    setError(null)
+    setNotice(null)
+    try {
+      await api.accountUpdate({
+        id: account.id,
+        code: account.code,
+        name: account.name,
+        is_active: true,
+        sort_order: account.sort_order,
+      })
+      setNotice(t('accounts.reactivate.done', { name: account.name }))
       await reload()
     } catch (err) {
       setError(commandErrorMessage(err))
     }
+  }
+
+  async function rename(account: Account, name: string) {
+    await api.accountUpdate({
+      id: account.id,
+      code: account.code,
+      name,
+      is_active: account.is_active,
+      sort_order: account.sort_order,
+    })
+    await reload()
   }
 
   function openBalance(account: Account) {
@@ -215,14 +290,23 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
 
     const minor = parseMajorToMinor(balanceAmount, bookCurrency(entity))
     if (minor === null) {
-      setBalanceError(t('acct.invalidAmount'))
+      setBalanceError(
+        t(balanceAccount.account_type === 'liability' ? 'accounts.balance.error.invalidOwed' : 'acct.invalidAmount'),
+      )
       return
     }
 
     setBalanceBusy(true)
     setBalanceError(null)
+    setNotice(null)
     try {
       await api.accountSetOpeningBalance(balanceAccount.id, minor, balanceAsOf)
+      setNotice(
+        t('accounts.balance.saved', {
+          name: balanceAccount.name,
+          amount: formatMoney(minor, bookCurrency(entity)),
+        }),
+      )
       setBalanceAccount(null)
       await reload()
     } catch (err) {
@@ -288,7 +372,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
                 <tbody className="divide-y divide-[var(--color-border)]">
                   {registerLines.map((line) => (
                     <tr key={line.entry_id} className={cn(line.hidden && 'opacity-50')}>
-                      <td className="px-5 py-3 whitespace-nowrap text-xs text-[var(--color-muted)] tabular-nums">
+                      <td className="px-5 py-3 whitespace-nowrap text-sm text-[var(--color-fg-secondary)] tabular-nums">
                         {formatDate(line.entry_date)}
                       </td>
                       <td className="px-5 py-3">
@@ -315,6 +399,9 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
     )
   }
 
+  const owes = balanceAccount?.account_type === 'liability'
+  const enteredMinor = parseMajorToMinor(balanceAmount, bookCurrency(entity))
+
   return (
     <div className="space-y-4">
       <TopBar
@@ -334,6 +421,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
       />
 
       <ErrorBanner message={error} onDismiss={() => setError(null)} />
+      <NoticeBanner message={notice} />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard
@@ -373,6 +461,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
           <form noValidate onSubmit={onCreate} className="grid gap-4 sm:grid-cols-3">
             <Field label={t('acct.code')}>
               <Input
+                ref={codeInputRef}
                 value={code}
                 onChange={(e) => {
                   setCode(e.target.value)
@@ -422,7 +511,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
             ? t('acct.setBalanceNamed', { name: balanceAccount.name })
             : t('acct.setBalance')
         }
-        description={t('acct.setBalanceDesc')}
+        description={owes ? t('accounts.balance.owedDescription') : t('acct.setBalanceDesc')}
         maxWidth="max-w-md"
         error={balanceError}
         onDismissError={() => setBalanceError(null)}
@@ -433,13 +522,24 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
         <form noValidate onSubmit={onSetBalance} className="space-y-4">
           {balanceCurrent !== null ? (
             <p className="text-sm text-[var(--color-muted)]">
-              {t('acct.ledgerBalanceToday')}{' '}
+              {owes ? t('accounts.balance.owedToday') : t('acct.ledgerBalanceToday')}{' '}
               <span className="font-medium tabular-nums text-[var(--color-fg)]">
                 {formatMoney(balanceCurrent, bookCurrency(entity))}
               </span>
             </p>
           ) : null}
-          <Field label={t('acct.actualBalance', { ccy: entity.base_currency })}>
+          {owes ? (
+            <p className="text-[13px] leading-5 text-[var(--color-muted)]">
+              {t('accounts.balance.owedHelp')}
+            </p>
+          ) : null}
+          <Field
+            label={
+              owes
+                ? t('accounts.balance.owedLabel', { ccy: entity.base_currency })
+                : t('acct.actualBalance', { ccy: entity.base_currency })
+            }
+          >
             <Input
               inputMode="decimal"
               placeholder="2.500,00"
@@ -453,6 +553,14 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
               aria-invalid={balanceError ? true : undefined}
             />
           </Field>
+          {owes && enteredMinor !== null && enteredMinor < 0 ? (
+            <p
+              role="status"
+              className="rounded-xl border border-[var(--color-warning)]/25 bg-[var(--color-warning-soft)] px-4 py-3 text-sm text-[var(--color-fg-secondary)]"
+            >
+              {t('accounts.balance.owedNegative')}
+            </p>
+          ) : null}
           <Field label={t('acct.asOf')}>
             <DateInput
               value={balanceAsOf}
@@ -477,6 +585,27 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
         </form>
       </Modal>
 
+      <ConfirmDialog
+        open={deactivateTarget !== null}
+        title={t('accounts.deactivate.confirmTitle', { name: deactivateTarget?.name ?? '' })}
+        body={t('accounts.deactivate.confirmBody')}
+        confirmLabel={t('acct.deactivate')}
+        danger
+        busy={deactivateBusy}
+        onCancel={() => {
+          if (!deactivateBusy) setDeactivateTarget(null)
+        }}
+        onConfirm={() => void confirmDeactivate()}
+      />
+
+      <RenameDialog
+        current={renameTarget?.name ?? null}
+        title={t('accounts.rename.title')}
+        label={t('acct.name')}
+        onSave={(name) => (renameTarget ? rename(renameTarget, name) : Promise.resolve())}
+        onClose={() => setRenameTarget(null)}
+      />
+
       {accounts.length === 0 ? (
         <EmptyState
           icon={<Banknote className="size-5" />}
@@ -490,21 +619,24 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
           icon={<Banknote className="size-4" />}
         >
           <ul className="divide-y divide-[var(--color-border)]">
-            {accounts.map((a) => {
+            {sortedAccounts.map((a) => {
               const meta = typeMeta(a.account_type)
               const Icon = meta.icon
+              const balance = balances.get(a.id)
               return (
+                // The whole row opens the register; the icon buttons stop the click.
                 <li
                   key={a.id}
+                  onClick={() => openRegister(a)}
                   className={cn(
-                    'flex items-center gap-4 px-5 py-3 transition hover:bg-[var(--color-surface-2)]/50',
+                    'flex cursor-pointer items-center gap-4 px-5 py-3 transition hover:bg-[var(--color-surface-2)]/50',
                     !a.is_active && 'opacity-45',
                   )}
                 >
                   <IconBadge tone={typeTone(a.account_type)}>
                     <Icon className="size-4" strokeWidth={1.75} />
                   </IconBadge>
-                  <div className="min-w-0 flex-1">
+                  <button type="button" className="min-w-0 flex-1 text-left">
                     <div className="flex flex-wrap items-baseline gap-x-2">
                       {/* A fixed code column, so names line up whatever the code's length. */}
                       <span className="inline-block min-w-10 text-sm font-medium tabular-nums text-[var(--color-fg)]">
@@ -520,11 +652,20 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
                       <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
                       {a.is_active ? t('common.active') : t('common.inactive')}
                     </div>
-                  </div>
+                  </button>
+                  <span
+                    className="min-w-28 text-right text-sm font-medium tabular-nums text-[var(--color-fg)]"
+                    aria-label={balance === undefined ? undefined : t('accounts.list.balance')}
+                  >
+                    {balance === undefined ? '' : formatMoney(balance, bookCurrency(entity))}
+                  </span>
                   <Button
                     variant="ghost"
                     size="iconSm"
-                    onClick={() => openRegister(a)}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      openRegister(a)
+                    }}
                     aria-label={t('accounts.register.title', { name: a.name })}
                   >
                     <Receipt className="size-4" />
@@ -535,7 +676,10 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
                       variant="ghost"
                       size="sm"
                       className="w-32 shrink-0"
-                      onClick={() => openBalance(a)}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        openBalance(a)
+                      }}
                       aria-label={t('acct.setBalanceAria', { name: a.name })}
                     >
                       <Coins className="size-4" />
@@ -545,14 +689,42 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
                     // Keeps the actions in columns when a row has fewer of them.
                     <span aria-hidden className="hidden w-32 shrink-0 sm:block" />
                   )}
+                  <Button
+                    variant="ghost"
+                    size="iconSm"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setRenameTarget(a)
+                    }}
+                    aria-label={t('accounts.rename.aria', { name: a.name })}
+                    title={t('common.rename')}
+                  >
+                    <PencilLine className="size-4" />
+                  </Button>
                   {a.is_active && !a.is_system ? (
                     <Button
                       variant="ghost"
                       size="iconSm"
-                      onClick={() => void onArchive(a.id)}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setDeactivateTarget(a)
+                      }}
                       aria-label={t('acct.deactivateAria')}
                     >
                       <CircleOff className="size-4" />
+                    </Button>
+                  ) : !a.is_active ? (
+                    <Button
+                      variant="ghost"
+                      size="iconSm"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        void reactivate(a)
+                      }}
+                      aria-label={t('accounts.reactivate.aria', { name: a.name })}
+                      title={t('accounts.reactivate.title')}
+                    >
+                      <RotateCcw className="size-4" />
                     </Button>
                   ) : (
                     <span aria-hidden className="size-8 shrink-0" />
