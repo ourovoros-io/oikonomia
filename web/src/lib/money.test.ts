@@ -1,9 +1,10 @@
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   bookCurrency,
   formatDate,
   formatMoney,
   isoDate,
+  localeForCurrency,
   minorToInputText,
   parseEuropeanDateToISO,
   parseMajorToMinor,
@@ -187,5 +188,19 @@ describe('parseEuropeanDateToISO', () => {
 
   test('accepts ISO as a fallback', () => {
     expect(parseEuropeanDateToISO('2026-03-15')).toBe('2026-03-15')
+  })
+})
+
+describe('localeForCurrency with a webview language Intl rejects', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  test.each(['HUF', 'JPY', 'USD', 'EUR'])('%s still formats numbers', (code) => {
+    vi.stubGlobal('navigator', { language: 'en-US@posix' })
+
+    const locale = localeForCurrency(code)
+
+    expect(() => new Intl.NumberFormat(locale, { style: 'percent' })).not.toThrow()
   })
 })

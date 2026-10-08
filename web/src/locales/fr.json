@@ -998,6 +998,8 @@
     "moneyOverflow": "Ce montant est trop élevé.",
     "negativeMoney": "Ce montant ne peut pas être négatif.",
     "io": "Une opération sur un fichier a échoué.",
+    "pageRender": "Cette page n’a pas pu s’afficher. Vos données sont en sécurité. Réessayez ou ouvrez une autre page.",
+    "pageRenderRetry": "Réessayer",
     "crypto": "Une opération de sécurité a échoué.",
     "vaultCorrupt": "Le fichier du coffre est corrompu.",
     "vaultTooNew": "Ce coffre a été enregistré par une version plus récente d’Oikonomia. Mettez à jour l’application pour l’ouvrir ; rien n’a été perdu.",

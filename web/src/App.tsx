@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { Aurora } from './components/Aurora'
 import { Logo } from './components/Logo'
+import { PageErrorBoundary } from './components/PageErrorBoundary'
 import { UnlockScreen } from './components/UnlockScreen'
 import { Button, ErrorBanner } from './components/ui'
 import { cn } from './lib/cn'
@@ -381,63 +382,65 @@ export default function App() {
               <div className="mx-auto max-w-6xl px-7 pt-2 pb-10">
                 <ErrorBanner message={error} className="mb-5" />
 
-                {active === 'dashboard' ? (
-                  <DashboardPage
-                    key={entity?.id ?? 'none'}
-                    entity={entity}
-                    onCreateBook={openCreateBook}
-                  />
-                ) : null}
-                {active === 'transactions' ? (
-                  <TransactionsPage
-                    key={entity?.id ?? 'none'}
-                    entity={entity}
-                    onCreateBook={openCreateBook}
-                    newEntryIntent={newEntryIntent}
-                    onNewEntryIntentHandled={onNewEntryIntentHandled}
-                  />
-                ) : null}
-                {active === 'documents' ? (
-                  <DocumentsPage
-                    key={entity?.id ?? 'none'}
-                    entity={entity}
-                    onCreateBook={openCreateBook}
-                  />
-                ) : null}
-                {active === 'accounts' ? (
-                  <AccountsPage
-                    key={entity?.id ?? 'none'}
-                    entity={entity}
-                    onCreateBook={openCreateBook}
-                  />
-                ) : null}
-                {active === 'reports' ? (
-                  <ReportsPage
-                    key={entity?.id ?? 'none'}
-                    entity={entity}
-                    onCreateBook={openCreateBook}
-                  />
-                ) : null}
-                {active === 'settings' ? (
-                  <SettingsPage
-                    entities={entities}
-                    appInfo={info}
-                    createBookIntent={createBookIntent}
-                    onCreateBookIntentHandled={onCreateBookIntentHandled}
-                    onLockTimeoutChange={setLockTimeoutSecs}
-                    onEntitiesChange={async () => {
-                      try {
-                        await loadEntities()
-                      } catch (err) {
-                        setError(commandErrorMessage(err, 'app.failedBackend'))
-                      }
-                    }}
-                    onSelectEntity={(id) => {
-                      setEntityId(id)
-                      setActive('dashboard')
-                    }}
-                  />
-                ) : null}
+                <PageErrorBoundary resetKey={`${active}:${entity?.id ?? 'none'}`}>
+                  {active === 'dashboard' ? (
+                    <DashboardPage
+                      key={entity?.id ?? 'none'}
+                      entity={entity}
+                      onCreateBook={openCreateBook}
+                    />
+                  ) : null}
+                  {active === 'transactions' ? (
+                    <TransactionsPage
+                      key={entity?.id ?? 'none'}
+                      entity={entity}
+                      onCreateBook={openCreateBook}
+                      newEntryIntent={newEntryIntent}
+                      onNewEntryIntentHandled={onNewEntryIntentHandled}
+                    />
+                  ) : null}
+                  {active === 'documents' ? (
+                    <DocumentsPage
+                      key={entity?.id ?? 'none'}
+                      entity={entity}
+                      onCreateBook={openCreateBook}
+                    />
+                  ) : null}
+                  {active === 'accounts' ? (
+                    <AccountsPage
+                      key={entity?.id ?? 'none'}
+                      entity={entity}
+                      onCreateBook={openCreateBook}
+                    />
+                  ) : null}
+                  {active === 'reports' ? (
+                    <ReportsPage
+                      key={entity?.id ?? 'none'}
+                      entity={entity}
+                      onCreateBook={openCreateBook}
+                    />
+                  ) : null}
+                  {active === 'settings' ? (
+                    <SettingsPage
+                      entities={entities}
+                      appInfo={info}
+                      createBookIntent={createBookIntent}
+                      onCreateBookIntentHandled={onCreateBookIntentHandled}
+                      onLockTimeoutChange={setLockTimeoutSecs}
+                      onEntitiesChange={async () => {
+                        try {
+                          await loadEntities()
+                        } catch (err) {
+                          setError(commandErrorMessage(err, 'app.failedBackend'))
+                        }
+                      }}
+                      onSelectEntity={(id) => {
+                        setEntityId(id)
+                        setActive('dashboard')
+                      }}
+                    />
+                  ) : null}
+                </PageErrorBoundary>
               </div>
             </main>
           </div>
@@ -448,10 +451,8 @@ export default function App() {
   return (
     <div className="relative h-full">
       {/* Mounted once, above every status branch, so a status change never
-          remounts it (and restarts its drift). Until phase 4 makes the
-          unlock screen a glass card over it, it is hidden there and paused
-          so it does not spend GPU time animating unseen. */}
-      <Aurora paused={status !== 'unlocked'} />
+          remounts it. */}
+      <Aurora />
       <div className="relative z-10 h-full">{content}</div>
     </div>
   )

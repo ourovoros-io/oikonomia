@@ -998,6 +998,8 @@
     "moneyOverflow": "Dieser Betrag ist zu groß.",
     "negativeMoney": "Dieser Betrag darf nicht negativ sein.",
     "io": "Ein Dateivorgang ist fehlgeschlagen.",
+    "pageRender": "Diese Seite konnte nicht angezeigt werden. Ihre Daten sind sicher. Versuchen Sie es erneut oder öffnen Sie eine andere Seite.",
+    "pageRenderRetry": "Erneut versuchen",
     "crypto": "Ein Sicherheitsvorgang ist fehlgeschlagen.",
     "vaultCorrupt": "Die Tresordatei ist beschädigt.",
     "vaultTooNew": "Dieser Tresor wurde mit einer neueren Version von Oikonomia gespeichert. Aktualisieren Sie die App, um ihn zu öffnen; es ist nichts verloren gegangen.",
