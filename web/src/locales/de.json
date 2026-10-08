@@ -369,7 +369,8 @@
     }
   },
   "date": {
-    "placeholder": "dd/mm/yyyy",
+    "placeholder": "TT/MM/JJJJ",
+    "invalid": "Geben Sie ein echtes Datum von 1900 bis 2100 ein, z. B. 25/12/2026.",
     "openCalendar": {
       "aria": "Kalender öffnen",
       "title": "Kalender"

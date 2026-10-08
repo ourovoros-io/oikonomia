@@ -199,6 +199,11 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
     ev.preventDefault()
     if (!balanceAccount || !entity) return
 
+    if (!balanceAsOf) {
+      setBalanceError(t('date.invalid'))
+      return
+    }
+
     const minor = parseMajorToMinor(balanceAmount, bookCurrency(entity))
     if (minor === null) {
       setBalanceError(t('acct.invalidAmount'))

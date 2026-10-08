@@ -503,6 +503,11 @@ export function TransactionsPage({
     ev.preventDefault()
     if (!entity) return
     if (!beginExclusive(busyRef)) return
+    if (!date) {
+      busyRef.current = false
+      setError(t('date.invalid'))
+      return
+    }
     const minor = parseMajorToMinor(amount, bookCurrency(entity))
     if (minor === null || minor <= 0) {
       busyRef.current = false
