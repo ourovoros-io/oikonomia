@@ -144,6 +144,19 @@ export function mappingReady(mapping: CsvColumnMapping): boolean {
   return debit || credit
 }
 
+/**
+ * The sentence that says what is missing from a mapping `mappingReady`
+ * refuses, so the disabled Continue button is explained. `null` when the
+ * mapping is ready.
+ */
+export function mappingProblemKey(mapping: CsvColumnMapping): MessageKey | null {
+  if (mappingReady(mapping)) return null
+  if (!mapping.date?.trim()) return 'error.csvMapping.missingDate'
+  if (mapping.amount?.trim()) return 'error.csvMapping.amountAndDebitOrCredit'
+
+  return 'error.csvMapping.missingAmount'
+}
+
 /** Rows that can be posted: no parse error and a suggested simple entry. */
 export function rowSelectable(row: {
   error: UiText | null

@@ -206,7 +206,7 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
         }
       />
 
-      <ErrorBanner message={error} />
+      <ErrorBanner message={error} onDismiss={() => setError(null)} />
 
       <Hero>
         <div className="flex flex-wrap items-start justify-between gap-6 px-7 pt-6">

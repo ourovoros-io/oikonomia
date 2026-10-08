@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event'
 import { api, formatMoney } from './lib/api'
 import { isTauri, vaultStatus, vaultTouch, type VaultStatus } from './lib/tauri'
 import { Button } from './components/ui'
+import { trapTab } from './components/useDialogFocus'
 import {
   QUICK_ADD_COMPACT_HEIGHT,
   QUICK_ADD_STEPPER_HEIGHT,
@@ -10,7 +11,6 @@ import {
 } from './lib/quickAddWindow'
 import { QuickAddPage, type QuickAddPosted } from './pages/QuickAddPage'
 import { cn } from './lib/cn'
-import { trapTab } from './lib/focusTrap'
 import { useI18n } from './lib/I18nProvider'
 
 /**
@@ -126,15 +126,10 @@ export default function QuickAddApp() {
   }, [])
 
   useEffect(() => {
-    // Focus must not leave the strip: it hides on blur, and a Tab past the
-    // last control would send the next keystrokes to the main window.
-    const onTab = (e: KeyboardEvent) => trapTab(document, e)
-    window.addEventListener('keydown', onTab)
-    return () => window.removeEventListener('keydown', onTab)
-  }, [])
-
-  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Tab past the last control would leave the webview: the panel then hides
+      // on blur and the next keystrokes land in the main window.
+      if (e.key === 'Tab') trapTab(e, document.body)
       if (e.key !== 'Escape') return
       if (busyRef.current) return
       hidePanel()

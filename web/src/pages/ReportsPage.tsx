@@ -235,7 +235,7 @@ export function ReportsPage({ entity, onCreateBook }: Props) {
         </div>
       </Card>
 
-      <ErrorBanner message={error} />
+      <ErrorBanner message={error} onDismiss={() => setError(null)} />
 
       {tab === 'trial' && tb && queryMatches ? (
         <TrialView tb={tb} entityName={entity.name} ccy={ccy} />

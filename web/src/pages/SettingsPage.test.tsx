@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import '@testing-library/jest-dom/vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { Entity } from '../lib/api'
@@ -208,6 +208,44 @@ describe('SettingsPage', () => {
     expect(api.entityCreate).toHaveBeenCalledTimes(1)
     expect(onEntitiesChange).not.toHaveBeenCalled()
     expect(onSelectEntity).not.toHaveBeenCalled()
+  })
+
+  test('a refused entity name is explained inside the dialog, and gone once it is closed', async () => {
+    vi.mocked(api.entityCreate).mockRejectedValue({
+      code: 'name_taken',
+      message: 'the name is already in use',
+      params: { name: 'Personal' },
+    })
+    render(
+      <SettingsPage entities={[entity]} onEntitiesChange={vi.fn(noopAsync)} onSelectEntity={vi.fn()} />,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: /entities/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /new entity/i }))
+    const dialog = await screen.findByRole('dialog', { name: 'New entity' })
+    await userEvent.type(within(dialog).getByLabelText('Name'), 'Personal')
+    await userEvent.click(within(dialog).getByRole('button', { name: /create entity/i }))
+
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('already in use')
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  test('an empty entity name is reported in the app own words', async () => {
+    render(
+      <SettingsPage entities={[entity]} onEntitiesChange={vi.fn(noopAsync)} onSelectEntity={vi.fn()} />,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: /entities/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /new entity/i }))
+    const dialog = await screen.findByRole('dialog', { name: 'New entity' })
+    await userEvent.click(within(dialog).getByRole('button', { name: /create entity/i }))
+
+    expect(within(dialog).getByRole('alert')).toHaveTextContent(
+      'A required name or code is empty. Fill it in and try again.',
+    )
+    expect(api.entityCreate).not.toHaveBeenCalled()
   })
 
   test('a failed entity create with an unknown code never shows the raw message', async () => {
@@ -577,7 +615,7 @@ describe('SettingsPage section design', () => {
     await userEvent.click(screen.getByRole('button', { name: /change password/i }))
 
     expect(confirm).toHaveAttribute('aria-invalid', 'true')
-    expect(confirm).toHaveAccessibleDescription('New passwords do not match')
+    expect(confirm).toHaveAccessibleDescription('New passwords do not match.')
     expect(vaultChangePassword).not.toHaveBeenCalled()
 
     await userEvent.type(confirm, '3')
@@ -603,6 +641,9 @@ describe('SettingsPage section design', () => {
       await screen.findByText('That password is too short. Use at least 12 characters.'),
     ).toBeInTheDocument()
     expect(screen.queryByText('password must be at least 12 characters')).toBeNull()
+    // The complaint is about the new password, so that is the field outlined.
+    expect(screen.getByLabelText('New password')).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByLabelText('Current password')).not.toHaveAttribute('aria-invalid')
   })
 
   test('a password change failing with an unknown code shows the screen fallback, never the raw message', async () => {
@@ -664,7 +705,7 @@ describe('SettingsPage section design', () => {
     expect(current).toHaveAccessibleDescription('Current password is incorrect.')
   })
 
-  test('an unrelated success after a failed password change clears the stale invalid field', async () => {
+  test('an unrelated success after a failed password change leaves the field described by a banner that still exists', async () => {
     render(
       <SettingsPage
         entities={[entity]}
@@ -684,18 +725,18 @@ describe('SettingsPage section design', () => {
     expect(confirm).toHaveAttribute('aria-invalid', 'true')
     expect(confirm).toHaveAttribute('aria-describedby')
 
-    // An unrelated action succeeds (auto-lock preset) — the stale
-    // aria-invalid/aria-describedby from the earlier password error must
-    // not survive it, or aria-describedby would point at a banner that no
-    // longer describes this field (or is unmounted once error clears).
+    // The password complaint lives in the password form until the field is
+    // fixed, so an unrelated action succeeding (auto-lock preset) must leave
+    // aria-describedby pointing at a banner that is still mounted.
     await userEvent.click(screen.getByRole('button', { name: /auto-lock/i }))
     await userEvent.click(await screen.findByRole('button', { name: '5 min' }))
 
     await waitFor(() => {
       expect(api.setLockTimeout).toHaveBeenCalled()
     })
-    expect(confirm).not.toHaveAttribute('aria-invalid')
-    expect(confirm).not.toHaveAttribute('aria-describedby')
+    const bannerId = confirm.getAttribute('aria-describedby')
+    expect(bannerId).toBeTruthy()
+    expect(document.getElementById(bannerId ?? '')).not.toBeNull()
   })
 })
 

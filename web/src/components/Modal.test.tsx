@@ -26,4 +26,28 @@ describe('Modal', () => {
     const dialog = screen.getByRole('dialog', { name: 'Entry detail' })
     expect(dialog.parentElement).toBe(document.body)
   })
+
+  test('opens on its first field, not on the close button', () => {
+    render(
+      <Modal open title="New entry" onClose={() => {}}>
+        <form>
+          <input aria-label="Date" />
+          <input aria-label="Amount" />
+        </form>
+      </Modal>,
+    )
+
+    expect(screen.getByLabelText('Date')).toHaveFocus()
+  })
+
+  test('opens on the panel when there is no text field to type into', () => {
+    render(
+      <Modal open title="Entry detail" onClose={() => {}}>
+        <input type="checkbox" aria-label="Hide" />
+      </Modal>,
+    )
+
+    expect(screen.getByLabelText('Hide')).not.toHaveFocus()
+    expect(screen.getByRole('dialog').firstElementChild).toHaveFocus()
+  })
 })

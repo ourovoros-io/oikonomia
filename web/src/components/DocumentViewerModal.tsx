@@ -19,13 +19,15 @@ type Props = {
   documentId: string | null
   onClose: () => void
   onError: (message: string) => void
+  /** The last failure of an action in this dialog, drawn at the top of it. */
+  error?: string | null
 }
 
 /**
  * In-memory document viewer: decrypted bytes live only in a blob URL that is
  * revoked when the viewer closes. "Save a copy" is the explicit export path.
  */
-export function DocumentViewerModal({ documentId, onClose, onError }: Props) {
+export function DocumentViewerModal({ documentId, onClose, onError, error = null }: Props) {
   const { t } = useI18n()
   const [meta, setMeta] = useState<DocumentMeta | null>(null)
   const [bytes, setBytes] = useState<Uint8Array | null>(null)
@@ -94,6 +96,7 @@ export function DocumentViewerModal({ documentId, onClose, onError }: Props) {
       title={meta?.filename ?? t('viewer.document')}
       description={meta ? `${meta.mime_type} · ${formatBytes(meta.size_bytes)}` : undefined}
       maxWidth="max-w-4xl"
+      error={error}
       onClose={onClose}
     >
       {!meta || !bytes ? (

@@ -42,6 +42,10 @@ const IDLE: UpdateUiState = { kind: 'idle' }
 // that unlocking never feels slower.
 const SUCCESS_BEAT_MS = 420
 
+// Rounded, so the shared focus ring hugs the text instead of drawing a tight square.
+const footerLink =
+  'h-6 rounded-md px-1.5 text-[13px] font-medium text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)] disabled:opacity-50'
+
 export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props) {
   const { t, locale, setLocale, languageChangeFailed } = useI18n()
   const [password, setPassword] = useState('')
@@ -61,6 +65,8 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
   // flow (beginRestore/confirmRestore), which must never mark the password
   // fields invalid — only a failed unlock/create submit does.
   const [passwordInvalid, setPasswordInvalid] = useState(false)
+  const passwordRef = useRef<HTMLInputElement>(null)
+  const confirmRef = useRef<HTMLInputElement>(null)
   const checkGeneration = useRef(0)
   const updateRef = useRef(update)
   const handoffTimer = useRef<number | undefined>(undefined)
@@ -71,9 +77,34 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
 
   useEffect(() => () => window.clearTimeout(handoffTimer.current), [])
 
+  // Typing starts at once on arrival, and after a restore turns "create" into
+  // "unlock", when the field would otherwise have lost focus.
+  useEffect(() => {
+    passwordRef.current?.focus()
+  }, [status])
+
+  // A dialog over the form hands focus back to the button that opened it, not
+  // to the field the person was about to type in.
+  const dialogOpen = restoreOpen || update.kind !== 'idle'
+  const dialogWasOpen = useRef(false)
+  useEffect(() => {
+    if (dialogWasOpen.current && !dialogOpen) passwordRef.current?.focus()
+    dialogWasOpen.current = dialogOpen
+  }, [dialogOpen])
+
   useEffect(() => {
     updateRef.current = update
   }, [update])
+
+  /** Marks the fields as wrong, shakes the card and puts the caret in `field`. */
+  function rejectInput(message: string, field: 'password' | 'confirm') {
+    setError(message)
+    setPasswordInvalid(true)
+    setShaking(true)
+    const target = field === 'confirm' ? confirmRef.current : passwordRef.current
+    // After the render that clears the cleared field, or the caret lands in a stale one.
+    window.setTimeout(() => target?.focus(), 0)
+  }
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault()
@@ -81,34 +112,39 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
     setError(null)
     setPasswordInvalid(false)
 
+    if (!password) {
+      rejectInput(t('form.passwordRequired'), 'password')
+      return
+    }
     if (isSetup && password !== confirm) {
-      setError(t('unlock.passwordsMismatch'))
-      setPasswordInvalid(true)
-      setShaking(true)
+      rejectInput(t('unlock.passwordsMismatch'), 'confirm')
       return
     }
 
     // Password strength rules live in Rust; its Validation error surfaces below.
     setBusy(true)
+    let accepted = false
     try {
       const next = isSetup ? await vaultInit(password) : await vaultUnlock(password)
+      accepted = true
       // Success beat: let the logo pulse once before the app takes over.
       setUnlocking(true)
       handoffTimer.current = window.setTimeout(() => onUnlocked(next), SUCCESS_BEAT_MS)
     } catch (err) {
       // A rejection can be anything, including nothing.
       const cmd = asCommandError(err)
-      setError(
+      rejectInput(
         cmd.code === 'invalid_password'
           ? t('unlock.incorrectPassword')
           : commandErrorMessage(cmd, 'unlock.unlockFailed'),
+        'password',
       )
-      setPasswordInvalid(true)
-      setShaking(true)
     } finally {
       setBusy(false)
-      setPassword('')
-      setConfirm('')
+      // A wrong unlock password is retyped; a refused new vault keeps both
+      // entries, so a "too short" is fixed by editing, not by typing twice again.
+      if (accepted || !isSetup) setPassword('')
+      if (accepted) setConfirm('')
     }
   }
 
@@ -223,6 +259,7 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
           </div>
 
           <form
+            noValidate
             className={cn(
               'glass-pane rounded-[24px] p-6',
               shaking && 'oik-shake',
@@ -239,6 +276,7 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
                   {/* The icon starts on the label's edge; the text follows one gap later. */}
                   <KeyRound className="pointer-events-none absolute top-1/2 left-0 size-4 -translate-y-1/2 text-[var(--color-muted)]" />
                   <Input
+                    ref={passwordRef}
                     type="password"
                     autoComplete={isSetup ? 'new-password' : 'current-password'}
                     value={password}
@@ -261,6 +299,7 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
                   <div className="relative">
                     <KeyRound className="pointer-events-none absolute top-1/2 left-0 size-4 -translate-y-1/2 text-[var(--color-muted)]" />
                     <Input
+                      ref={confirmRef}
                       type="password"
                       autoComplete="new-password"
                       value={confirm}
@@ -278,7 +317,7 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
                 </Field>
               ) : null}
 
-              <ErrorBanner id={errorId} message={error} className="text-center" />
+              <ErrorBanner id={errorId} message={error} className="text-center" onDismiss={() => setError(null)} />
 
               <Button type="submit" size="lg" busy={busy || unlocking} className="w-full">
                 {busy || unlocking
@@ -306,14 +345,14 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
         ) : null}
         <button
           type="button"
-          className="h-6 text-[13px] font-medium text-[var(--color-muted)] outline-none hover:text-[var(--color-fg-secondary)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/25"
+          className={footerLink}
           onClick={() => void beginUpdateCheck()}
         >
           {t('unlock.update.button')}
         </button>
         <button
           type="button"
-          className="h-6 text-[13px] font-medium text-[var(--color-muted)] outline-none hover:text-[var(--color-fg-secondary)] focus-visible:ring-2 focus-visible:ring-[var(--color-accent)]/25"
+          className={footerLink}
           onClick={() => void beginRestore()}
           disabled={busy || restoreBusy || restorePicking}
         >

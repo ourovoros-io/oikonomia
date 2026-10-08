@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import '@testing-library/jest-dom/vitest'
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type {
@@ -53,6 +53,7 @@ vi.mock('../lib/api', async (importOriginal) => {
       csvImportPost: vi.fn(),
       csvExportJournal: vi.fn(),
       entrySetHidden: vi.fn(),
+      entryPostSimple: vi.fn(),
       recurringList: vi.fn(),
       recurringCreate: vi.fn(),
       recurringPost: vi.fn(),
@@ -432,12 +433,53 @@ describe('TransactionsPage CSV toolbar', () => {
     await waitFor(() => {
       expect(amountField).toHaveAttribute('aria-invalid', 'true')
     })
-    expect(amountField).toHaveAccessibleDescription(
-      'Enter a valid amount (e.g. 25.50 or 25,50)',
-    )
+    // Zero is a number, so it gets its own sentence, not the typo one.
+    expect(amountField).toHaveAccessibleDescription('The amount must be greater than zero.')
 
     await userEvent.type(amountField, '12.50')
     expect(amountField).not.toHaveAttribute('aria-invalid')
+  })
+
+  test('a failed save is explained inside the dialog and gone after Cancel', async () => {
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'New Entry' }))
+    const dialog = await screen.findByRole('dialog', { name: 'New entry' })
+    await userEvent.type(within(dialog).getByLabelText(/description/i), 'Coffee')
+    await userEvent.type(within(dialog).getByRole('textbox', { name: /amount/i }), 'abc')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Save entry' }))
+
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('Enter a valid amount')
+
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    await userEvent.click(screen.getByRole('button', { name: 'New Entry' }))
+    const reopened = await screen.findByRole('dialog', { name: 'New entry' })
+
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(within(reopened).queryByRole('alert')).toBeNull()
+  })
+
+  test('Enter in the amount field saves the entry, with native validation off', async () => {
+    vi.mocked(api.entryPostSimple).mockResolvedValue(undefined as never)
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'New Entry' }))
+    const dialog = await screen.findByRole('dialog', { name: 'New entry' })
+    await userEvent.type(within(dialog).getByLabelText(/description/i), 'Coffee')
+    await userEvent.type(within(dialog).getByRole('textbox', { name: /amount/i }), '4,20{Enter}')
+
+    await waitFor(() => {
+      expect(api.entryPostSimple).toHaveBeenCalledTimes(1)
+    })
+    expect(vi.mocked(api.entryPostSimple).mock.calls[0]?.[0]).toMatchObject({ amount_minor: 420 })
+  })
+
+  test('an empty description is reported in the app own words, not a browser bubble', async () => {
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'New Entry' }))
+    const dialog = await screen.findByRole('dialog', { name: 'New entry' })
+    await userEvent.type(within(dialog).getByRole('textbox', { name: /amount/i }), '4,20{Enter}')
+
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('A required field is empty')
+    expect(api.entryPostSimple).not.toHaveBeenCalled()
   })
 
   test('cancelled import does not open mapping or preview', async () => {

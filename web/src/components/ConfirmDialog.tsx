@@ -71,7 +71,7 @@ export function ConfirmDialog({
   // document.body sidesteps that.
   return createPortal(
     <div
-      className="glass-scrim fixed inset-0 z-50 flex items-center justify-center p-4"
+      className="glass-scrim fixed inset-0 z-50 flex items-start justify-center p-4 pt-[7vh]"
       role="dialog"
       aria-modal="true"
       aria-labelledby={titleId}
