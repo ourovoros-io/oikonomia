@@ -79,8 +79,9 @@
 //! [`reset_unreadable_ui_prefs`] ends the refusal. It renames the file to
 //! `ui-prefs.damaged.json` beside it ([`damaged_ui_prefs_path`]) and writes
 //! a fresh `{}` in its place, which holds every default and stores no
-//! preference. The file is moved and not deleted, because its owner may still want what is in it; only one
-//! such file is kept, so the one an earlier reset left is replaced.
+//! preference. The file is moved and not deleted, because its owner may
+//! still want what is in it; only one such file is kept, so the one an
+//! earlier reset left is replaced.
 //!
 //! The reset moves a file only when what the file holds is the problem:
 //!
