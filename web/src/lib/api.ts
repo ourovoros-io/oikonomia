@@ -42,6 +42,7 @@ export type AccountDefaults = {
   income: string | null
   bill_category: string | null
   bills_payable: string | null
+  receivable: string | null
   transfer_source: string | null
   transfer_destination: string | null
 }
@@ -471,6 +472,9 @@ export const api = {
       kind,
       accounts,
     }),
+  /** Remember the open book so the next unlock selects it again. */
+  rememberLastEntity: (entityId: string) =>
+    call<void>('settings_remember_last_entity', { entityId }),
   openMainWindow: () => call<void>('open_main_window'),
   quickAddHide: () => call<void>('quick_add_hide'),
 

@@ -5,12 +5,17 @@ import {
   billStatusForKind,
   cadenceLabelKey,
   dayOfMonthForCadence,
+  firstOnOrAfterMonthDay,
+  firstOnOrAfterWeekday,
   formCadenceLabelKey,
   isRecurringCadence,
   isRecurringKind,
   kindBadgeTone,
   kindLabelKey,
+  maxDayOfMonth,
+  monthAndDayOfIso,
   recurringAccountIds,
+  weekdayOfIso,
 } from './recurring'
 
 describe('recurring cadence and kind guards', () => {
@@ -114,5 +119,36 @@ describe('label keys', () => {
     expect(formCadenceLabelKey('monthly')).toBe('recurring.form.cadenceMonthly')
     expect(formCadenceLabelKey('weekly')).toBe('recurring.form.cadenceWeekly')
     expect(formCadenceLabelKey('yearly')).toBe('recurring.form.cadenceYearly')
+  })
+})
+
+describe('recurring start dates', () => {
+  test('weekday: the same day counts, otherwise the next one ahead', () => {
+    // 2026-10-08 is a Thursday.
+    expect(firstOnOrAfterWeekday('2026-10-08', 4)).toBe('2026-10-08')
+    expect(firstOnOrAfterWeekday('2026-10-08', 5)).toBe('2026-10-09')
+    expect(firstOnOrAfterWeekday('2026-10-08', 3)).toBe('2026-10-14')
+    expect(firstOnOrAfterWeekday('2026-12-31', 1)).toBe('2027-01-04')
+  })
+
+  test('weekday and month-day are read back from an ISO date', () => {
+    expect(weekdayOfIso('2026-10-08')).toBe(4)
+    expect(monthAndDayOfIso('2026-10-08')).toEqual({ month: 10, day: 8 })
+  })
+
+  test('month and day: this year if still ahead, otherwise next year', () => {
+    expect(firstOnOrAfterMonthDay('2026-10-08', 12, 25)).toBe('2026-12-25')
+    expect(firstOnOrAfterMonthDay('2026-10-08', 10, 8)).toBe('2026-10-08')
+    expect(firstOnOrAfterMonthDay('2026-10-08', 3, 1)).toBe('2027-03-01')
+  })
+
+  test('February 29 waits for a leap year instead of overflowing to March', () => {
+    expect(firstOnOrAfterMonthDay('2026-10-08', 2, 29)).toBe('2028-02-29')
+  })
+
+  test('a month offers at most its own length, February as in a leap year', () => {
+    expect(maxDayOfMonth(2)).toBe(29)
+    expect(maxDayOfMonth(4)).toBe(30)
+    expect(maxDayOfMonth(12)).toBe(31)
   })
 })

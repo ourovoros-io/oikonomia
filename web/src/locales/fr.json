@@ -343,7 +343,12 @@
       "restore": "Restaurer",
       "restoreAria": "Restaurer {name}",
       "restoreError": "Impossible de restaurer le livre.",
-      "restoreNameTaken": "Un autre livre s’appelle désormais « {name} ». Archivez ou supprimez cet autre livre avant de restaurer celui-ci."
+      "restoreNameTaken": "Un autre livre s’appelle désormais « {name} ». Archivez ou supprimez cet autre livre avant de restaurer celui-ci.",
+      "created": "Livre {name} créé.",
+      "rename": {
+        "title": "Renommer le livre",
+        "aria": "Renommer {name}"
+      }
     },
     "entityCreate": {
       "title": "Nouvelle entité",
@@ -525,7 +530,7 @@
   },
   "entry": {
     "kind": {
-      "other": "Autre"
+      "other": "Solde d’ouverture"
     }
   },
   "common": {
@@ -535,7 +540,8 @@
     },
     "error": {
       "fileTooLarge": "Fichier trop volumineux (max. 8 Mo)"
-    }
+    },
+    "rename": "Renommer"
   },
   "documents": {
     "header": {
@@ -649,7 +655,8 @@
       "name": "Nom",
       "namePlaceholder": "Nom du compte",
       "type": "Type",
-      "submit": "Créer le compte"
+      "submit": "Créer le compte",
+      "created": "Compte {code} · {name} ajouté."
     },
     "balance": {
       "title": "Fixer le solde — {name}",
@@ -661,12 +668,23 @@
       "asOfAria": "Solde à la date",
       "busy": "Comptabilisation…",
       "error": {
-        "invalid": "Saisissez un montant valable (ex. 2.500,00 — négatif accepté)"
+        "invalid": "Saisissez un montant valable (ex. 2.500,00 — négatif accepté)",
+        "invalidOwed": "Saisissez un montant valide (p. ex. 350,00)"
       },
-      "aria": "Fixer le solde de {name}"
+      "aria": "Fixer le solde de {name}",
+      "saved": "Solde de {name} fixé à {amount}.",
+      "owedLabel": "Montant dû ({ccy})",
+      "owedToday": "Montant dû aujourd’hui :",
+      "owedDescription": "Indiquez le montant que vous devez sur ce compte ; l’écart est comptabilisé face aux Soldes d’ouverture.",
+      "owedHelp": "Saisissez ce que vous devez comme nombre positif : 350 pour une carte avec 350 à payer. Un nombre négatif signifie que le compte est en votre faveur.",
+      "owedNegative": "Un montant négatif signifie que ce compte contient de l’argent en votre faveur, pas une dette. Si vous devez de l’argent, saisissez-le comme nombre positif."
     },
     "deactivate": {
-      "aria": "Désactiver le compte"
+      "aria": "Désactiver le compte",
+      "title": "Désactiver",
+      "confirmTitle": "Désactiver {name} ?",
+      "confirmBody": "Les nouvelles écritures ne peuvent plus utiliser ce compte. Ses écritures et son solde restent dans les livres, et vous pouvez le réactiver à tout moment.",
+      "done": "{name} désactivé."
     },
     "badge": {
       "system": "système"
@@ -677,7 +695,8 @@
     },
     "list": {
       "title": "Plan comptable",
-      "description": "Comptes actifs et archivés"
+      "description": "Comptes actifs et archivés",
+      "balance": "Solde"
     },
     "empty": {
       "title": "Aucun compte",
@@ -688,6 +707,15 @@
       "back": "Tous les comptes",
       "balance": "Solde",
       "empty": "Aucune écriture comptabilisée pour ce compte pour le moment."
+    },
+    "reactivate": {
+      "title": "Réactiver",
+      "aria": "Réactiver {name}",
+      "done": "{name} réactivé."
+    },
+    "rename": {
+      "title": "Renommer le compte",
+      "aria": "Renommer {name}"
     }
   },
   "reports": {
@@ -707,7 +735,6 @@
       "toAria": "Date de fin du rapport",
       "asOfAria": "Date d’arrêté du rapport"
     },
-    "refresh": "Actualiser",
     "exportPdf": "Exporter en PDF",
     "pdf": {
       "title": "Dépenses du mois",
@@ -942,7 +969,11 @@
       },
       "duplicate": "Doublon probable",
       "postSelected": "Comptabiliser {n} lignes"
-    }
+    },
+    "incomeStatus": "Statut du revenu",
+    "incomeReceivedNow": "Reçu maintenant",
+    "incomeUnpaid": "Impayé — on me le doit (créance)",
+    "receivableAccount": "Compte de créances"
   },
   "recurring": {
     "title": "Récurrents",
@@ -989,7 +1020,10 @@
       "error": "L’enregistrement du modèle n’a pas abouti.",
       "cadenceMonthly": "Mensuel",
       "cadenceWeekly": "Hebdomadaire",
-      "cadenceYearly": "Annuel"
+      "cadenceYearly": "Annuel",
+      "dayOfWeek": "Jour de la semaine",
+      "month": "Mois",
+      "nextDate": "Prochaine date : {date}"
     },
     "delete": {
       "title": "Supprimer le modèle ?",
@@ -1090,7 +1124,8 @@
       "bill_category": "Catégorie de facture",
       "bills_payable": "Compte Factures à payer",
       "transfer_source": "Virement depuis",
-      "transfer_destination": "Virement vers"
+      "transfer_destination": "Virement vers",
+      "receivable": "Compte de créances"
     }
   },
   "analyze": {

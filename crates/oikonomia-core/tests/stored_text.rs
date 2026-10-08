@@ -149,6 +149,7 @@ fn english_names_are_the_ones_seeded_before_localization() {
             "Checking",
             "Savings",
             "Investments",
+            "Receivables",
             "Credit Card",
             "Bills Payable",
             "Loans",

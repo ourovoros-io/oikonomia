@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { BarChart3, FileSpreadsheet, FileText, PieChart, RefreshCw, Scale } from 'lucide-react'
+import { BarChart3, FileSpreadsheet, FileText, PieChart, Scale } from 'lucide-react'
 import {
   api,
   formatDate,
@@ -22,6 +22,7 @@ import {
   suggestedExpensePdfName,
 } from '../lib/expensePdf'
 import { beginExclusive } from '../lib/guards'
+import { rememberReportPeriod, rememberedReportPeriod } from '../lib/reportPeriod'
 import { DateInput } from '../components/DateInput'
 import { ExpenseDonut } from '../components/ExpenseDonut'
 import { TopBar } from '../components/TopBar'
@@ -56,22 +57,22 @@ type AppliedQuery = {
 export function ReportsPage({ entity, onCreateBook }: Props) {
   const { t } = useI18n()
   const [tab, setTab] = useState<Tab>('pnl')
-  const [asOf, setAsOf] = useState(todayISO())
-  // The P&L opens on the current month, the same window as the dashboard's Month.
-  const [from, setFrom] = useState(monthStartISO())
-  const [to, setTo] = useState(monthEndISO())
+  // The dates chosen earlier in this session come back; the P&L otherwise
+  // opens on the current month, the same window as the dashboard's Month.
+  const [asOf, setAsOf] = useState(() => rememberedReportPeriod().asOf ?? todayISO())
+  const [from, setFrom] = useState(() => rememberedReportPeriod().from ?? monthStartISO())
+  const [to, setTo] = useState(() => rememberedReportPeriod().to ?? monthEndISO())
   const [error, setError] = useState<string | null>(null)
   const [tb, setTb] = useState<TrialBalance | null>(null)
   const [pnl, setPnl] = useState<PnL | null>(null)
   const [bs, setBs] = useState<BalanceSheet | null>(null)
   const [pdfBusy, setPdfBusy] = useState(false)
-  const [refreshNonce, setRefreshNonce] = useState(0)
   const [applied, setApplied] = useState<AppliedQuery | null>(null)
   const pdfBusyRef = useRef(false)
 
-  function run() {
-    setRefreshNonce((n) => n + 1)
-  }
+  useEffect(() => {
+    rememberReportPeriod({ from, to, asOf })
+  }, [from, to, asOf])
 
   const queryMatches =
     entity !== null &&
@@ -154,7 +155,7 @@ export function ReportsPage({ entity, onCreateBook }: Props) {
     return () => {
       cancelled = true
     }
-  }, [entity, tab, from, to, asOf, refreshNonce])
+  }, [entity, tab, from, to, asOf])
 
   if (!entity) {
     return (
@@ -214,12 +215,7 @@ export function ReportsPage({ entity, onCreateBook }: Props) {
               </Field>
             )}
           </div>
-          {/* Equal columns: both buttons take the wider one's width in every language. */}
-          <div className="ml-auto grid auto-cols-fr grid-flow-col gap-3">
-            <Button variant="secondary" onClick={run} disabled={pdfBusy}>
-              <RefreshCw className="size-4" />
-              {t('rpt.refresh')}
-            </Button>
+          <div className="ml-auto flex gap-3">
             {tab === 'pnl' ? (
               <Button
                 variant="secondary"

@@ -16,6 +16,7 @@ const defaults: AccountDefaults = {
   income: 'i1',
   bill_category: 'e2',
   bills_payable: 'l1',
+  receivable: 'r1',
   transfer_source: 'a1',
   transfer_destination: 'a2',
 }
@@ -45,6 +46,7 @@ describe('kindDefaultAccounts', () => {
     const d = kindDefaultAccounts('income', defaults)
     expect(d.categoryId).toBe('i1')
     expect(d.walletId).toBe('a3')
+    expect(d.payableId).toBe('r1')
   })
 
   test('bill follows the bill category, payment and payable roles', () => {

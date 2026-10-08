@@ -25,9 +25,9 @@ Design: [`docs/DESIGN.md`](docs/DESIGN.md)
 - Encrypted vault (Argon2id → SQLCipher); init / unlock / lock; change master password
 - Encrypted vault backup/restore (one `.oikonomia-backup` file: `vault.db` + header, already SQLCipher); Settings + login restore; no second password; pick-then-confirm then unlock with master password
 - Auto-lock on idle, enforced by a Rust watchdog thread (survives webview stalls)
-- Multi-entity books with personal / company / blank chart templates
-- Chart of accounts (create, deactivate)
-- Journal entries: two-line post + void with reverse, editing (replace, hides the original), opening balances
+- Multi-entity books (rename, archive) with personal / company / blank chart templates
+- Chart of accounts (create, rename, deactivate and reactivate; balances shown)
+- Journal entries: two-line post + void with reverse, editing (replace, hides the original), opening balances, income invoiced but not yet received (receivable)
 - Recurring transaction templates (weekly, monthly, yearly; shows what is due, and you post each occurrence yourself)
 - Bank CSV import (confirm before post) and journal CSV export (formula-neutralized cells)
 - Document capture: attach files to entries, offline OCR (bundled `.rten` text-detection/recognition models) reads receipts and invoices with no network call

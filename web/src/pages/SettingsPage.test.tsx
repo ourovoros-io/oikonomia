@@ -2,6 +2,7 @@
 
 import '@testing-library/jest-dom/vitest'
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { useState } from 'react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { Entity } from '../lib/api'
@@ -20,6 +21,7 @@ vi.mock('../lib/api', () => ({
     setLockTimeout: vi.fn(),
     openSupportEmail: vi.fn(),
     entityCreate: vi.fn(),
+    entityUpdate: vi.fn(),
     entityListArchived: vi.fn(),
     getUiPrefs: vi.fn(),
   },
@@ -60,6 +62,7 @@ beforeEach(() => {
   ])
   vi.mocked(api.openSupportEmail).mockReset().mockResolvedValue(undefined)
   vi.mocked(api.entityCreate).mockReset()
+  vi.mocked(api.entityUpdate).mockReset()
   vi.mocked(api.entityListArchived).mockReset().mockResolvedValue([])
   vi.mocked(api.setLockTimeout).mockReset()
   vi.mocked(api.getUiPrefs).mockReset().mockResolvedValue({
@@ -142,7 +145,7 @@ describe('SettingsPage', () => {
     expect(newEntity).not.toHaveAttribute('title')
   })
 
-  test('creating an entity sends the form payload and selects the new book', async () => {
+  test('creating an entity sends the form payload and stays on Settings', async () => {
     vi.mocked(api.entityCreate).mockResolvedValue({
       id: 'e2',
       name: 'Work',
@@ -166,9 +169,7 @@ describe('SettingsPage', () => {
     await userEvent.type(screen.getByLabelText('Name'), 'Work')
     await userEvent.click(screen.getByRole('button', { name: /create entity/i }))
 
-    await waitFor(() => {
-      expect(onSelectEntity).toHaveBeenCalledWith('e2')
-    })
+    expect(await screen.findByText('Book Work created.')).toBeTruthy()
     expect(api.entityCreate).toHaveBeenCalledTimes(1)
     expect(api.entityCreate).toHaveBeenCalledWith({
       name: 'Work',
@@ -177,7 +178,7 @@ describe('SettingsPage', () => {
       fiscal_year_start_month: 1,
     })
     expect(onEntitiesChange).toHaveBeenCalledTimes(1)
-    expect(onSelectEntity).toHaveBeenCalledTimes(1)
+    expect(onSelectEntity).not.toHaveBeenCalled()
   })
 
   test('a failed entity create shows the error and does not select a book', async () => {
@@ -842,5 +843,78 @@ describe('SettingsPage createBookIntent', () => {
     await waitFor(() => {
       expect(screen.getByRole('dialog', { name: /new entity/i })).toBeTruthy()
     })
+  })
+})
+
+describe('SettingsPage books', () => {
+  const created: Entity = { ...entity, id: 'e2', name: 'Household' }
+
+  test('creating a book keeps the book list open and marks the new book', async () => {
+    vi.mocked(api.entityCreate).mockResolvedValue(created)
+    const onSelectEntity = vi.fn()
+    function Harness() {
+      const [books, setBooks] = useState<Entity[]>([entity])
+      return (
+        <SettingsPage
+          entities={books}
+          onEntitiesChange={async () => setBooks([entity, created])}
+          onSelectEntity={onSelectEntity}
+        />
+      )
+    }
+    render(<Harness />)
+
+    await userEvent.click(screen.getByRole('button', { name: /entities/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /new entity/i }))
+    await userEvent.type(screen.getByLabelText('Name'), 'Household')
+    await userEvent.click(screen.getByRole('button', { name: 'Create entity' }))
+
+    expect(await screen.findByText('Book Household created.')).toBeTruthy()
+    // Still on Settings, with the list open and the new book marked.
+    const row = screen.getByText('Household').closest('li')
+    expect(row).toHaveAttribute('aria-current', 'true')
+    expect(onSelectEntity).not.toHaveBeenCalled()
+  })
+
+  test('a book can be renamed', async () => {
+    vi.mocked(api.entityUpdate).mockResolvedValue({ ...entity, name: 'Home' })
+    const onEntitiesChange = vi.fn(async () => {})
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={onEntitiesChange}
+        onSelectEntity={() => {}}
+      />,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: /entities/i }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Rename Personal' }))
+    const dialog = screen.getByRole('dialog', { name: 'Rename book' })
+    const name = within(dialog).getByRole('textbox')
+    await userEvent.clear(name)
+    await userEvent.type(name, 'Home')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Rename' }))
+
+    await waitFor(() => {
+      expect(api.entityUpdate).toHaveBeenCalledWith('e1', 'Home')
+    })
+    expect(onEntitiesChange).toHaveBeenCalled()
+  })
+
+  test('a rename the backend refuses is explained in the dialog', async () => {
+    vi.mocked(api.entityUpdate).mockRejectedValue({ code: 'name_taken', message: 'taken' })
+    render(
+      <SettingsPage entities={[entity]} onEntitiesChange={noopAsync} onSelectEntity={() => {}} />,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: /entities/i }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Rename Personal' }))
+    const dialog = screen.getByRole('dialog', { name: 'Rename book' })
+    const name = within(dialog).getByRole('textbox')
+    await userEvent.clear(name)
+    await userEvent.type(name, 'Other')
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Rename' }))
+
+    expect(await within(dialog).findByRole('alert')).toBeTruthy()
   })
 })

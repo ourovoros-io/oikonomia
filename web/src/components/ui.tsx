@@ -492,6 +492,29 @@ export function Notice({
   )
 }
 
+/** A short, polite confirmation that something the user asked for happened. */
+export function NoticeBanner({
+  message,
+  className = '',
+}: {
+  message: string | null
+  className?: string
+}) {
+  if (!message) return null
+
+  return (
+    <div
+      role="status"
+      className={cn(
+        'rounded-xl border border-[var(--color-accent)]/25 bg-[var(--color-accent-soft)] px-4 py-3 text-sm text-[var(--color-fg-secondary)]',
+        className,
+      )}
+    >
+      {message}
+    </div>
+  )
+}
+
 export function EmptyState({
   icon,
   title,
