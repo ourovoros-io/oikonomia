@@ -328,6 +328,18 @@ export function commandErrorMessage(err: unknown, fallbackKey?: string): string 
   return copy ?? t(fallbackKey ?? 'error.unknown')
 }
 
+/**
+ * Reduces a caught value to the two strings the desktop log takes. Only an
+ * `Error` gives its text; a rejection with a string or an object gives none,
+ * because that is where a value of the app's own is most likely to be. The
+ * text goes to the local log, never to the UI.
+ */
+export function errorReport(error: unknown): { name: string; message: string } {
+  if (error instanceof Error) return { name: error.name, message: error.message }
+
+  return { name: 'NonError', message: '' }
+}
+
 /** Tauri reports an unregistered command; the FE stub may answer instead. */
 export function isMissingIpcCommand(err: { code: string; message: string }, command: string): boolean {
   const haystack = `${err.code} ${err.message}`.toLowerCase()
