@@ -602,6 +602,7 @@
   "reports.synthetic.netIncome": "Net Income (current period)",
   "donut.noExpenses": "No expenses in this period.",
   "date.placeholder": "dd/mm/yyyy",
+  "date.invalid": "Enter a real date from 1900 to 2100, such as 25/12/2026.",
   "date.openCalendar": "Open calendar",
   "date.calendar": "Calendar",
   "date.prevMonth": "Previous month",

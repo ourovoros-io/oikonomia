@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react'
 import { cn } from '../lib/cn'
 import { daysInMonth, formatDate, parseEuropeanDateToISO } from '../lib/money'
@@ -60,6 +60,7 @@ export function DateInput({
   const [open, setOpen] = useState(false)
   const [view, setView] = useState<YearMonth>(() => viewFromIso(value))
   const rootRef = useRef<HTMLDivElement>(null)
+  const messageId = useId()
 
   // The parent commits values only through onChange, so an external value
   // change (prefill, reset) can safely overwrite the draft text.
@@ -97,7 +98,10 @@ export function DateInput({
       setText(formatDate(iso))
       if (iso !== value) onChange(iso)
     } else {
+      // An unreadable date is cleared, not left as the previous value: the
+      // form would otherwise save a date the user did not type.
       setInvalid(true)
+      if (value) onChange('')
     }
   }
 
@@ -131,44 +135,55 @@ export function DateInput({
         }
       }}
     >
-      <Input
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault()
-            commit()
-          }
-        }}
-        placeholder={t('date.placeholder')}
-        inputMode="numeric"
-        required={required}
-        disabled={disabled}
-        aria-label={ariaLabel}
-        aria-invalid={invalid || undefined}
-        className={cn(
-          'pr-11',
-          invalid &&
-            'border-[var(--color-danger)] focus:border-[var(--color-danger)] focus:ring-[var(--color-danger)]/25',
-        )}
-      />
-      <Button
-        type="button"
-        variant="ghost"
-        size="iconSm"
-        className="absolute top-1/2 right-1 -translate-y-1/2"
-        onClick={() => {
-          if (disabled) return
-          setOpen((v) => !v)
-        }}
-        disabled={disabled}
-        aria-label={t('date.openCalendar')}
-        aria-expanded={open}
-        title={t('date.calendar')}
-      >
-        <CalendarDays className="size-4" />
-      </Button>
+      <div className="relative">
+        <Input
+          value={text}
+          onChange={(e) => {
+            setText(e.target.value)
+            setInvalid(false)
+          }}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              commit()
+            }
+          }}
+          placeholder={t('date.placeholder')}
+          inputMode="numeric"
+          required={required}
+          disabled={disabled}
+          aria-label={ariaLabel}
+          aria-invalid={invalid || undefined}
+          aria-describedby={invalid ? messageId : undefined}
+          className={cn(
+            'pr-11',
+            invalid &&
+              'border-[var(--color-danger)] focus:border-[var(--color-danger)] focus:ring-[var(--color-danger)]/25',
+          )}
+        />
+        <Button
+          type="button"
+          variant="ghost"
+          size="iconSm"
+          className="absolute top-1/2 right-1 -translate-y-1/2"
+          onClick={() => {
+            if (disabled) return
+            setOpen((v) => !v)
+          }}
+          disabled={disabled}
+          aria-label={t('date.openCalendar')}
+          aria-expanded={open}
+          title={t('date.calendar')}
+        >
+          <CalendarDays className="size-4" />
+        </Button>
+      </div>
+      {invalid ? (
+        <p id={messageId} role="alert" className="mt-1 text-xs text-[var(--color-danger)]">
+          {t('date.invalid')}
+        </p>
+      ) : null}
 
       {open && !disabled ? (
         <div className="glass-dialog absolute top-full left-0 z-30 mt-2 w-64 rounded-[16px] p-3">
