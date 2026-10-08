@@ -74,7 +74,7 @@ async function openBooks(entities: Entity[], onEntitiesChange = vi.fn(async () =
       onSelectEntity={() => {}}
     />,
   )
-  await userEvent.click(screen.getByRole('button', { name: /^entities/i }))
+  await userEvent.click(screen.getByRole('button', { name: /^books/i }))
   return onEntitiesChange
 }
 
@@ -217,7 +217,7 @@ describe('SettingsPage archived books', () => {
     await openBooks([])
 
     expect(await screen.findByRole('button', { name: 'Restore Home' })).toBeEnabled()
-    expect(screen.getByText('Use the New entity button above to create your first book.')).toBeInTheDocument()
+    expect(screen.getByText('Use the New book button above to create your first book.')).toBeInTheDocument()
   })
 
   test('are not asked for when there is no vault', async () => {

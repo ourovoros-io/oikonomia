@@ -161,7 +161,7 @@ describe('App create-book intent', () => {
       expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy()
     })
     await waitFor(() => {
-      expect(screen.getByRole('dialog', { name: 'New entity' })).toBeTruthy()
+      expect(screen.getByRole('dialog', { name: 'New book' })).toBeTruthy()
     })
   })
 
@@ -171,12 +171,12 @@ describe('App create-book intent', () => {
     const cta = await screen.findByRole('button', { name: 'Create a book' })
     await userEvent.click(cta)
     await waitFor(() => {
-      expect(screen.getByRole('dialog', { name: 'New entity' })).toBeTruthy()
+      expect(screen.getByRole('dialog', { name: 'New book' })).toBeTruthy()
     })
 
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     await waitFor(() => {
-      expect(screen.queryByRole('dialog', { name: 'New entity' })).toBeNull()
+      expect(screen.queryByRole('dialog', { name: 'New book' })).toBeNull()
     })
 
     await userEvent.click(screen.getByRole('button', { name: 'Dashboard' }))
@@ -188,7 +188,7 @@ describe('App create-book intent', () => {
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'Settings' })).toBeTruthy()
     })
-    expect(screen.queryByRole('dialog', { name: 'New entity' })).toBeNull()
+    expect(screen.queryByRole('dialog', { name: 'New book' })).toBeNull()
   })
 
   test('a second CTA click still reopens the dialog', async () => {
@@ -197,11 +197,11 @@ describe('App create-book intent', () => {
     const cta1 = await screen.findByRole('button', { name: 'Create a book' })
     await userEvent.click(cta1)
     await waitFor(() => {
-      expect(screen.getByRole('dialog', { name: 'New entity' })).toBeTruthy()
+      expect(screen.getByRole('dialog', { name: 'New book' })).toBeTruthy()
     })
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     await waitFor(() => {
-      expect(screen.queryByRole('dialog', { name: 'New entity' })).toBeNull()
+      expect(screen.queryByRole('dialog', { name: 'New book' })).toBeNull()
     })
 
     await userEvent.click(screen.getByRole('button', { name: 'Dashboard' }))
@@ -212,7 +212,7 @@ describe('App create-book intent', () => {
     await userEvent.click(cta2)
 
     await waitFor(() => {
-      expect(screen.getByRole('dialog', { name: 'New entity' })).toBeTruthy()
+      expect(screen.getByRole('dialog', { name: 'New book' })).toBeTruthy()
     })
   })
 })
@@ -251,13 +251,13 @@ describe('App shell', () => {
     vi.mocked(api.entityCreate).mockReset().mockResolvedValue({ ...entity, id: 'e2', name: 'Work' })
     render(<App />)
     await userEvent.click(await screen.findByRole('button', { name: 'Settings' }))
-    await userEvent.click(screen.getByRole('button', { name: /entities/i }))
-    await userEvent.click(await screen.findByRole('button', { name: /new entity/i }))
+    await userEvent.click(screen.getByRole('button', { name: /^books/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /^new book$/i }))
     await userEvent.type(screen.getByLabelText('Name'), 'Work')
 
     // Created fine, but reloading the list fails with a code the UI has no copy for.
     vi.mocked(api.entityList).mockRejectedValue({ code: 'brand_new', message: 'sqlcipher: raw detail' })
-    await userEvent.click(screen.getByRole('button', { name: /create entity/i }))
+    await userEvent.click(screen.getByRole('button', { name: /create book/i }))
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(
@@ -375,7 +375,7 @@ describe('App after archiving the current book', () => {
   /** Archives `name` from the Settings books list, through its confirmation. */
   async function archiveFromSettings(name: string) {
     await userEvent.click(await screen.findByRole('button', { name: 'Settings' }))
-    await userEvent.click(screen.getByRole('button', { name: /^entities/i }))
+    await userEvent.click(screen.getByRole('button', { name: /^books/i }))
     await userEvent.click(screen.getByRole('button', { name: `Archive ${name}` }))
     await userEvent.click(
       within(screen.getByRole('dialog', { name: 'Archive book?' })).getByRole('button', {
@@ -419,7 +419,7 @@ describe('App after archiving the current book', () => {
 
     await archiveFromSettings('Personal')
 
-    expect(await screen.findByText('No entities yet')).toBeInTheDocument()
+    expect((await screen.findAllByText('No books yet')).length).toBeGreaterThan(0)
     expect(screen.getByRole('button', { name: 'Quick add' })).toBeDisabled()
     expect(await screen.findByRole('button', { name: 'Restore Personal' })).toBeEnabled()
     expect(screen.queryByRole('alert')).toBeNull()

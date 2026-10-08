@@ -269,7 +269,7 @@ each lives in one place:
 
 ## Decided, not changed
 
-Three questions that were raised, weighed and closed. Each is recorded here
+Questions that were raised, weighed and closed. Each is recorded here
 with its reason so that it is not raised again without something new to say.
 
 - **An archived entity is fully read-only, voids and corrections included.**
@@ -306,3 +306,25 @@ with its reason so that it is not raised again without something new to say.
   `ledger/journals.rs` for every simple entry). A positive-amount type would
   say the same thing once, but it would touch every place money is
   constructed, for little gain over two checks that already exist.
+- **A bill paid at once is listed as an expense.** It posts the same two lines
+  as an expense (category debited, wallet credited), so the list cannot tell
+  them apart. Showing a Bill badge would need the entry kind stored on
+  `journal_entries`, a schema migration, for a label only. Unpaid bills and
+  bill payments do show as Bill.
+- **The app's own journal CSV export cannot be imported.** The import refuses
+  it with a clear message (`csv_journal_export`). A journal line has no wallet
+  side, so importing two-line entries as bank rows would create unrelated
+  movements. The export is for accountants; the backup is the way to move data
+  between machines.
+- **The `.deb` icon folder is named `256x256@2`.** The Tauri bundler makes it
+  from `128x128@2x.png`; renaming it would mean post-processing the signed
+  package for no functional gain.
+- **GTK file dialogs follow the system language, not the app's.** On Linux the
+  native Open and Save dialogs stay in the system locale (a Greek app on an
+  English desktop shows "Open File" and "Cancel"). The locale is process-wide,
+  so setting it from the app language would change other output as well.
+- **Quick add on Linux is opaque and resizable.** Without a compositor a
+  transparent window went blank after its first paint, so on Linux the
+  quick-add window is opaque (`QUICK_ADD_TRANSPARENT` in `tray.rs`). This was
+  reasoned from a QA report on a machine without a compositor and still needs
+  a check on a normal Linux desktop.
