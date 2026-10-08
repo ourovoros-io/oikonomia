@@ -6,6 +6,7 @@ import { formatDate, formatMoney, type Account, type Currency, type CsvImportPre
 import {
   applyBulkAccounts,
   defaultChecked,
+  initialBulkAccounts,
   postLabel,
   previewSubtitle,
   rowSelectable,
@@ -63,8 +64,12 @@ export function CsvPreviewModal({
         checked: defaultChecked(row),
       })),
     )
-    setBulkWallet(walletAccounts[0]?.id ?? '')
-    setBulkCategory(expenseAccounts[0]?.id ?? incomeAccounts[0]?.id ?? '')
+    const bulk = initialBulkAccounts(preview.rows, {
+      wallets: walletAccounts,
+      categories: [...expenseAccounts, ...incomeAccounts],
+    })
+    setBulkWallet(bulk.walletId)
+    setBulkCategory(bulk.categoryId)
   }, [open, preview, walletAccounts, expenseAccounts, incomeAccounts])
 
   const categoryAccounts = useMemo(() => {
@@ -127,6 +132,18 @@ export function CsvPreviewModal({
       error={error}
       onClose={onClose}
     >
+      {preview?.other_currency ? (
+        <p
+          role="alert"
+          className="mb-4 rounded-xl border border-[var(--color-warning)] px-3 py-2 text-sm text-[var(--color-warning)]"
+        >
+          {t('tx.csv.otherCurrency', {
+            marker: preview.other_currency,
+            currency: currency.code,
+          })}
+        </p>
+      ) : null}
+
       <div className="mb-4 flex flex-wrap items-end gap-3">
         <Field label={t('tx.csv.wallet')} className="min-w-[12rem] flex-1">
           <Select

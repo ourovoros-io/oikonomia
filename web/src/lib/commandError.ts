@@ -31,6 +31,7 @@ export const ERROR_CODE_KEYS: Record<string, string> = {
   csv_too_large: 'error.csvTooLarge',
   csv_parse: 'error.csvParse',
   csv_missing_header: 'error.csvMissingHeader',
+  csv_journal_export: 'error.csvJournalExport',
   csv_missing_column: 'error.csvMissingColumn',
   // A problem with one cell is worded by the sentence the import preview
   // shows for a row with the same problem (NOTE_CODE_KEYS in uiText.ts), so

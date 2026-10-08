@@ -371,7 +371,7 @@ fn csv_import_preview_and_result() {
     assert_json_is_pinned::<CsvImportPreview>(concat!(
         r#"{"source":"bank.csv","headers":["Date","Amount"],"detected_mapping":{"date":"Date","#,
         r#""description":null,"amount":"Amount","debit":null,"credit":null,"reference":null,"#,
-        r#""direction":null},"missing_columns":[],"rows":[]}"#,
+        r#""direction":null},"missing_columns":[],"other_currency":null,"rows":[]}"#,
     ));
     assert_json_is_pinned::<CsvImportPostResult>(r#"{"posted":[],"skipped_duplicate_count":2}"#);
 }
@@ -383,7 +383,7 @@ fn csv_import_preview_of_a_file_that_needs_a_mapping() {
     assert_json_is_pinned::<CsvImportPreview>(concat!(
         r#"{"source":"bank.csv","headers":["When","Paid"],"detected_mapping":{"date":null,"#,
         r#""description":null,"amount":null,"debit":null,"credit":null,"reference":null,"#,
-        r#""direction":null},"missing_columns":["date","amount"],"rows":[]}"#,
+        r#""direction":null},"missing_columns":["date","amount"],"other_currency":null,"rows":[]}"#,
     ));
     assert_json_is_pinned::<Vec<CsvRequiredColumn>>(r#"["date","amount"]"#);
     assert!(is_refused::<CsvRequiredColumn>(r#""description""#));

@@ -14,13 +14,16 @@ import { getLocale, t, type Locale } from './i18n'
 export const A4_WIDTH = 595.28
 export const A4_HEIGHT = 841.89
 
-const CANVAS = '#0a0e0b'
-const SURFACE = '#101511'
-const SURFACE_2 = '#151b16'
-const ACCENT = '#35b06b'
-const FG = '#f4f6f4'
-const MUTED = '#8f9a93'
-const EMPTY_RING = '#2a332e'
+// A light palette: the report is printed, and a dark page costs a sheet of ink.
+const CANVAS = '#ffffff'
+const SURFACE = '#eef2ef'
+const SURFACE_2 = '#f6f8f6'
+const ACCENT = '#1f8a4c'
+const FG = '#141a16'
+const MUTED = '#5a665e'
+const EMPTY_RING = '#d9dfdb'
+const BORDER = '#9aa59d'
+const RULE = '#d9dfdb'
 
 const MARGIN = 44
 const LOGO = 28
@@ -176,107 +179,17 @@ function svgShield(x: number, y: number, size: number): string {
   </g>`
 }
 
-/** Flip a 24-unit y-down SVG path into PDF y-up so drawSvgPath matches `svgShield`. */
-export function flipSvgPathY(d: string, box = 24): string {
-  const tokens = d.match(/[A-Za-z]|[-+]?(?:\d*\.\d+|\d+)(?:[eE][-+]?\d+)?/g)
-  if (!tokens) return d
-  let i = 0
-  let cmd = ''
-  const out: string[] = []
-  const num = () => Number(tokens[i++])
-  const push = (...xs: Array<string | number>) => {
-    for (const x of xs) out.push(String(x))
-  }
-  while (i < tokens.length) {
-    const tok = tokens[i]
-    if (/^[A-Za-z]$/.test(tok)) {
-      cmd = tok
-      out.push(tok)
-      i += 1
-      continue
-    }
-    switch (cmd) {
-      case 'H':
-      case 'h':
-        push(num())
-        break
-      case 'V':
-        push(box - num())
-        break
-      case 'v':
-        push(-num())
-        break
-      case 'A': {
-        const rx = num()
-        const ry = num()
-        const rot = num()
-        const large = num()
-        const sweep = num()
-        const x = num()
-        const y = num()
-        push(rx, ry, rot, large, sweep ? 0 : 1, x, box - y)
-        break
-      }
-      case 'a': {
-        const rx = num()
-        const ry = num()
-        const rot = num()
-        const large = num()
-        const sweep = num()
-        const dx = num()
-        const dy = num()
-        push(rx, ry, rot, large, sweep ? 0 : 1, dx, -dy)
-        break
-      }
-      case 'C':
-      case 'c':
-      case 'S':
-      case 's':
-      case 'Q':
-      case 'q':
-      case 'T':
-      case 't':
-      case 'M':
-      case 'm':
-      case 'L':
-      case 'l': {
-        const pair = cmd === 'C' || cmd === 'c' ? 3 : cmd === 'S' || cmd === 's' || cmd === 'Q' || cmd === 'q' ? 2 : 1
-        const rel = cmd === cmd.toLowerCase()
-        for (let p = 0; p < pair; p += 1) {
-          const x = num()
-          const y = num()
-          push(x, rel ? -y : box - y)
-        }
-        break
-      }
-      default:
-        push(num())
-    }
-  }
-  return out.join(' ')
-}
-
 function drawBrandMark(page: PDFPage, x: number, yTop: number, size: number) {
-  const s = size / 24
-  const originY = yPdf(yTop + size)
-  const stroke = {
-    borderColor: hexRgb(ACCENT),
-    borderLineCap: LineCapStyle.Round,
-    x,
-    y: originY,
-    scale: s,
-  }
-  page.drawSvgPath(flipSvgPathY(BRAND_MARK.shield), { ...stroke, borderWidth: 1.4 })
-  page.drawSvgPath(flipSvgPathY(BRAND_MARK.pediment), { ...stroke, borderWidth: 1.3 })
-  page.drawSvgPath(flipSvgPathY(BRAND_MARK.house), {
-    x,
-    y: originY,
-    scale: s,
-    color: hexRgb(ACCENT),
-  })
+  // The mark is written y-down in a 24-unit box, which is how pdf-lib draws
+  // an SVG path from the point it is given: the box's top-left corner.
+  const origin = { x, y: yPdf(yTop), scale: size / 24 }
+  const stroke = { ...origin, borderColor: hexRgb(ACCENT), borderLineCap: LineCapStyle.Round }
+  page.drawSvgPath(BRAND_MARK.shield, { ...stroke, borderWidth: 1.4 })
+  page.drawSvgPath(BRAND_MARK.pediment, { ...stroke, borderWidth: 1.3 })
+  page.drawSvgPath(BRAND_MARK.house, { ...origin, color: hexRgb(ACCENT) })
 }
 
-/** Dark A4 SVG matching the owner-greenlit monthly-expenses mocks. */
+/** A4 SVG of the monthly-expenses report, in the same light palette as the PDF. */
 export function buildExpenseReportSvg(input: ExpensePdfInput): string {
   const model = buildExpensePdfModel(input)
   const { labels, slices, period } = model
@@ -286,7 +199,7 @@ export function buildExpenseReportSvg(input: ExpensePdfInput): string {
   const cardW = A4_WIDTH - MARGIN * 2
   const cx = MARGIN + 150
   const cy = cardTop + cardH / 2
-  const legendX = MARGIN + 290
+  const legendX = MARGIN + 250
   const legendY = cardTop + 36
 
   const legend = slices
@@ -303,7 +216,7 @@ export function buildExpenseReportSvg(input: ExpensePdfInput): string {
     .join('')
 
   const body = empty
-    ? `<rect x="${MARGIN}" y="${cardTop}" width="${cardW}" height="${cardH}" rx="14" fill="none" stroke="#3a433c" stroke-dasharray="5 5"/>
+    ? `<rect x="${MARGIN}" y="${cardTop}" width="${cardW}" height="${cardH}" rx="14" fill="none" stroke="${BORDER}" stroke-dasharray="5 5"/>
        ${svgEmptyRing(A4_WIDTH / 2, cardTop + 118)}
        <text x="${A4_WIDTH / 2}" y="${cardTop + 210}" fill="${FG}" font-size="16" font-weight="700" text-anchor="middle">${escapeXml(labels.emptyTitle)}</text>
        <text x="${A4_WIDTH / 2}" y="${cardTop + 234}" fill="${MUTED}" font-size="11" text-anchor="middle">${escapeXml(labels.emptyBody)}</text>`
@@ -334,7 +247,7 @@ export function buildExpenseReportSvg(input: ExpensePdfInput): string {
   <text x="${MARGIN + 16}" y="${barY + 27}" fill="${empty ? MUTED : FG}" font-size="12">${escapeXml(labels.totalExpenses)}</text>
   <text x="${MARGIN + cardW - 16}" y="${barY + 28}" fill="${FG}" font-size="16" font-weight="700" text-anchor="end">${escapeXml(labels.totalAmount)}</text>
   ${note}
-  <rect x="${MARGIN}" y="${A4_HEIGHT - 52}" width="${cardW}" height="1" fill="#232c26"/>
+  <rect x="${MARGIN}" y="${A4_HEIGHT - 52}" width="${cardW}" height="1" fill="${RULE}"/>
   ${svgShield(MARGIN, A4_HEIGHT - 38, 12)}
   <text x="${MARGIN + 18}" y="${A4_HEIGHT - 26}" fill="${MUTED}" font-size="9">${escapeXml(labels.footerPrivacy)}</text>
   <text x="${A4_WIDTH - MARGIN}" y="${A4_HEIGHT - 26}" fill="${MUTED}" font-size="9" text-anchor="end">${escapeXml(labels.footerLocal)}</text>
@@ -343,6 +256,35 @@ export function buildExpenseReportSvg(input: ExpensePdfInput): string {
 
 function yPdf(yTop: number): number {
   return A4_HEIGHT - yTop
+}
+
+/**
+ * Draws a path written in page-top coordinates: the origin is the page's
+ * top-left corner and y grows downwards, like every `yTop` in this file.
+ *
+ * pdf-lib draws an SVG path y-down from the point it is given, so the point
+ * is the page's top-left corner. A path in PDF's own y-up coordinates would
+ * be drawn mirrored below the page and never be seen.
+ */
+function drawTopPath(page: PDFPage, path: string, options: SvgPathOptions) {
+  page.drawSvgPath(path, { ...options, x: 0, y: A4_HEIGHT })
+}
+
+type SvgPathOptions = NonNullable<Parameters<PDFPage['drawSvgPath']>[1]>
+
+export function roundedRectPath(x: number, y: number, w: number, h: number, r: number): string {
+  return [
+    `M ${x + r} ${y}`,
+    `H ${x + w - r}`,
+    `Q ${x + w} ${y} ${x + w} ${y + r}`,
+    `V ${y + h - r}`,
+    `Q ${x + w} ${y + h} ${x + w - r} ${y + h}`,
+    `H ${x + r}`,
+    `Q ${x} ${y + h} ${x} ${y + h - r}`,
+    `V ${y + r}`,
+    `Q ${x} ${y} ${x + r} ${y}`,
+    'Z',
+  ].join(' ')
 }
 
 function roundedRect(
@@ -355,26 +297,18 @@ function roundedRect(
   fill: string,
   stroke?: { color: string; width: number; dash?: number[] },
 ) {
-  const y = yPdf(yTop + h)
-  const path = [
-    `M ${x + r} ${y}`,
-    `H ${x + w - r}`,
-    `Q ${x + w} ${y} ${x + w} ${y + r}`,
-    `V ${y + h - r}`,
-    `Q ${x + w} ${y + h} ${x + w - r} ${y + h}`,
-    `H ${x + r}`,
-    `Q ${x} ${y + h} ${x} ${y + h - r}`,
-    `V ${y + r}`,
-    `Q ${x} ${y} ${x + r} ${y}`,
-    'Z',
-  ].join(' ')
-  page.drawSvgPath(path, stroke
-    ? {
-        borderColor: hexRgb(stroke.color),
-        borderWidth: stroke.width,
-        borderDashArray: stroke.dash,
-      }
-    : { color: hexRgb(fill) })
+  const path = roundedRectPath(x, yTop, w, h, r)
+  drawTopPath(
+    page,
+    path,
+    stroke
+      ? {
+          borderColor: hexRgb(stroke.color),
+          borderWidth: stroke.width,
+          borderDashArray: stroke.dash,
+        }
+      : { color: hexRgb(fill) },
+  )
 }
 
 function wrapLines(font: PDFFont, text: string, size: number, maxWidth: number): string[] {
@@ -424,24 +358,32 @@ function drawText(
   })
 }
 
-function annularPath(
+/**
+ * The ring segment between the angles `a0` and `a1`, in page-top
+ * coordinates, as a closed path.
+ *
+ * Angles run clockwise on the page from 3 o'clock, so a ring that starts at
+ * the top starts at -PI/2. The outer arc goes from `a0` to `a1` (SVG sweep
+ * flag 1, clockwise with y down) and the inner arc comes back (flag 0). A
+ * span of a whole turn would start and end at one point and draw nothing, so
+ * it is cut a hair short.
+ */
+export function annularPath(
   cx: number,
-  cyTop: number,
+  cy: number,
   rOut: number,
   rIn: number,
   a0: number,
   a1: number,
 ): string {
-  const cy = yPdf(cyTop)
-  const p = (r: number, a: number) => ({
-    x: cx + r * Math.cos(a),
-    y: cy + r * Math.sin(-a),
-  })
-  const large = Math.abs(a1 - a0) > Math.PI ? 1 : 0
-  const o0 = p(rOut, a0)
-  const o1 = p(rOut, a1)
-  const i1 = p(rIn, a1)
-  const i0 = p(rIn, a0)
+  const span = Math.min(a1 - a0, FULL_TURN - MIN_GAP)
+  const end = a0 + span
+  const point = (r: number, a: number) => ({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) })
+  const large = span > Math.PI ? 1 : 0
+  const o0 = point(rOut, a0)
+  const o1 = point(rOut, end)
+  const i1 = point(rIn, end)
+  const i0 = point(rIn, a0)
   return [
     `M ${o0.x} ${o0.y}`,
     `A ${rOut} ${rOut} 0 ${large} 1 ${o1.x} ${o1.y}`,
@@ -450,6 +392,10 @@ function annularPath(
     'Z',
   ].join(' ')
 }
+
+const FULL_TURN = Math.PI * 2
+/** The shortest gap, in radians, that keeps a one-slice ring from closing on itself. */
+const MIN_GAP = 0.001
 
 async function embedReportFonts(pdf: PDFDocument): Promise<{ regular: PDFFont; semibold: PDFFont }> {
   try {
@@ -531,7 +477,7 @@ function paintPdfPage(
 
   if (empty) {
     roundedRect(page, MARGIN, cardTop, cardW, cardH, 14, CANVAS, {
-      color: '#3a433c',
+      color: BORDER,
       width: 1,
       dash: [5, 5],
     })
@@ -558,7 +504,7 @@ function paintPdfPage(
     for (const slice of slices) {
       const sweep = slice.share * Math.PI * 2
       const a1 = angle + Math.max(sweep - gap, 0.01)
-      page.drawSvgPath(annularPath(cx, cy, 82, 58, angle, a1), {
+      drawTopPath(page, annularPath(cx, cy, 82, 58, angle, a1), {
         color: hexRgb(vizHex(slice.slot)),
       })
       angle += sweep
@@ -572,12 +518,12 @@ function paintPdfPage(
       maxWidth: 100,
     })
 
-    const legendX = MARGIN + 290
+    const legendX = MARGIN + 250
     let ly = cardTop + 40
     for (const slice of slices) {
       roundedRect(page, legendX - 4, ly - 4, 8, 8, 2, vizHex(slice.slot))
       drawText(page, fonts.regular, slice.name, legendX + 14, ly + 4, 11, FG, {
-        maxWidth: 130,
+        maxWidth: 112,
       })
       drawText(
         page,
@@ -620,7 +566,7 @@ function paintPdfPage(
     y: 52,
     width: cardW,
     height: 1,
-    color: hexRgb('#232c26'),
+    color: hexRgb(RULE),
   })
   drawBrandMark(page, MARGIN, A4_HEIGHT - 38, 12)
   drawText(page, fonts.regular, labels.footerPrivacy, MARGIN + 18, A4_HEIGHT - 30, 9, MUTED)
@@ -629,7 +575,7 @@ function paintPdfPage(
   })
 }
 
-/** Dark A4 monthly-expenses PDF bytes (vector). */
+/** A4 monthly-expenses PDF bytes (vector), on a white page. */
 export async function buildExpensePdfBytes(input: ExpensePdfInput): Promise<Uint8Array> {
   const model = buildExpensePdfModel(input)
   const pdf = await PDFDocument.create()
