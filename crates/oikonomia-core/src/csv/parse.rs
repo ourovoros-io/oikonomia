@@ -331,14 +331,7 @@ pub fn parse_bank_csv(
     let records: Vec<csv::Result<StringRecord>> = reader.records().collect();
 
     let detected = auto_map_headers(&headers, &records);
-    let (missing_columns, columns) = match mapping {
-        Some(user) => (Vec::new(), Some(resolve_user_mapping(&headers, user)?)),
-        None => {
-            let missing = missing_required_columns(detected);
-            let columns = missing.is_empty().then_some(detected);
-            (missing, columns)
-        }
-    };
+    let (missing_columns, columns) = columns_to_read(&headers, detected, mapping)?;
     let other_currency = columns.and_then(|columns| other_currency(&records, columns, currency));
     let rows = columns.map_or_else(Vec::new, |columns| {
         parse_records(records, columns, currency)
@@ -351,6 +344,28 @@ pub fn parse_bank_csv(
         other_currency,
         rows,
     })
+}
+
+/// The columns rows are read with, and the required columns that are missing.
+///
+/// An explicit `mapping` is resolved and nothing is missing. Without one the
+/// detected columns are used when they are complete, and otherwise there is
+/// nothing to read rows with.
+///
+/// # Errors
+///
+/// [`CsvError::InvalidMapping`] as [`resolve_user_mapping`] gives it.
+fn columns_to_read(
+    headers: &StringRecord,
+    detected: ColumnMap,
+    mapping: Option<&CsvColumnMapping>,
+) -> crate::error::Result<(Vec<CsvRequiredColumn>, Option<ColumnMap>)> {
+    if let Some(user) = mapping {
+        return Ok((Vec::new(), Some(resolve_user_mapping(headers, user)?)));
+    }
+    let missing = missing_required_columns(detected);
+    let columns = missing.is_empty().then_some(detected);
+    Ok((missing, columns))
 }
 
 /// The first currency marker in the amount, debit and credit cells that is
