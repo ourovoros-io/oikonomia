@@ -1399,3 +1399,27 @@ describe('TransactionsPage bills in the list', () => {
     expect(row).not.toHaveTextContent('Expense')
   })
 })
+
+describe('TransactionsPage row meta', () => {
+  test('shows the reference, and names an equity-only entry an opening balance', async () => {
+    const equity = account({ id: 'eq1', name: 'Opening Balances', account_type: 'equity', code: '3000' })
+    vi.mocked(api.accountList).mockResolvedValue([...accounts, equity])
+    vi.mocked(api.entryList).mockResolvedValue([
+      { ...postedEntry, entry: { ...postedEntry.entry, reference: 'R-1' } },
+      {
+        ...incomeEntry,
+        entry: { ...incomeEntry.entry, id: 'j9', description: 'Opening balance — Checking' },
+        lines: incomeEntry.lines.map((line) =>
+          line.account_id === 'inc1' ? { ...line, account_id: 'eq1' } : line,
+        ),
+      },
+    ])
+    await renderReady()
+
+    const groceries = (await screen.findByText('Alpha supermarket')).closest('li')
+    expect(groceries).toHaveTextContent('R-1')
+    const opening = screen.getByText('Opening balance — Checking').closest('li')
+    expect(opening).toHaveTextContent('Opening balance')
+    expect(opening).not.toHaveTextContent(/\bother\b/)
+  })
+})

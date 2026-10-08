@@ -25,7 +25,7 @@
   "tx.form.kind.transfer": "Transfer",
   "kind.billShort": "Bill",
   "kind.transferShort": "Transfer",
-  "kind.other": "Other",
+  "kind.other": "Opening balance",
   "accountType.asset": "Asset",
   "accountType.liability": "Liability",
   "accountType.equity": "Equity",

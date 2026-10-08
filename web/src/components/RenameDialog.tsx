@@ -75,7 +75,7 @@ function RenameForm({
 
   return (
     <form onSubmit={onSubmit} className="space-y-4">
-      <ErrorBanner message={error} className="mb-0" />
+      <ErrorBanner message={error} />
       <Field label={label}>
         <Input value={name} onChange={(e) => setName(e.target.value)} required autoFocus />
       </Field>

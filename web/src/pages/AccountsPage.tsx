@@ -13,6 +13,7 @@ import {
   TrendingDown,
   TrendingUp,
   Wallet,
+  X,
 } from 'lucide-react'
 import {
   api,
@@ -365,7 +366,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
                 <tbody className="divide-y divide-[var(--color-border)]">
                   {registerLines.map((line) => (
                     <tr key={line.entry_id} className={cn(line.hidden && 'opacity-50')}>
-                      <td className="px-5 py-3 whitespace-nowrap text-xs text-[var(--color-muted)] tabular-nums">
+                      <td className="px-5 py-3 whitespace-nowrap text-sm text-[var(--color-fg-secondary)] tabular-nums">
                         {formatDate(line.entry_date)}
                       </td>
                       <td className="px-5 py-3">
@@ -402,7 +403,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
         subtitle={`${entity.name} · ${entity.base_currency}`}
         actions={
           <Button onClick={() => setShowForm((v) => !v)}>
-            <Plus className="size-4" />
+            {showForm ? <X className="size-4" /> : <Plus className="size-4" />}
             {showForm ? t('acct.close') : t('acct.addAccount')}
           </Button>
         }
@@ -500,7 +501,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
         }}
       >
         <form onSubmit={onSetBalance} className="space-y-4">
-          <ErrorBanner message={balanceError} className="mb-0" />
+          <ErrorBanner message={balanceError} />
           {balanceCurrent !== null ? (
             <p className="text-sm text-[var(--color-muted)]">
               {owes ? t('accounts.balance.owedToday') : t('acct.ledgerBalanceToday')}{' '}

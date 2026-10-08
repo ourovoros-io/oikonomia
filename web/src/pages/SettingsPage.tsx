@@ -856,15 +856,18 @@ export function SettingsPage({
                   >
                     <Archive className="size-3.5" />
                   </Button>
-                  <Button
-                    variant="danger"
-                    size="iconSm"
-                    onClick={() => setPendingDelete({ id: e.id, name: e.name })}
-                    aria-label={t('settings.entities.deleteAria', { name: e.name })}
-                    title={t('common.delete')}
-                  >
-                    <Trash2 className="size-3.5" />
-                  </Button>
+                  {/* Set apart from the safe actions, so it is not hit by mistake. */}
+                  <span className="ml-2 border-l border-[var(--color-border)] pl-3">
+                    <Button
+                      variant="danger"
+                      size="iconSm"
+                      onClick={() => setPendingDelete({ id: e.id, name: e.name })}
+                      aria-label={t('settings.entities.deleteAria', { name: e.name })}
+                      title={t('common.delete')}
+                    >
+                      <Trash2 className="size-3.5" />
+                    </Button>
+                  </span>
                 </div>
               </li>
             ))}
