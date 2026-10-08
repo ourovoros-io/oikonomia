@@ -10,6 +10,7 @@ import {
 } from './lib/quickAddWindow'
 import { QuickAddPage, type QuickAddPosted } from './pages/QuickAddPage'
 import { cn } from './lib/cn'
+import { trapTab } from './lib/focusTrap'
 import { useI18n } from './lib/I18nProvider'
 
 /**
@@ -122,6 +123,14 @@ export default function QuickAddApp() {
     void api.quickAddHide()
     setPhase('form')
     setFormEpoch((n) => n + 1)
+  }, [])
+
+  useEffect(() => {
+    // Focus must not leave the strip: it hides on blur, and a Tab past the
+    // last control would send the next keystrokes to the main window.
+    const onTab = (e: KeyboardEvent) => trapTab(document, e)
+    window.addEventListener('keydown', onTab)
+    return () => window.removeEventListener('keydown', onTab)
   }, [])
 
   useEffect(() => {
