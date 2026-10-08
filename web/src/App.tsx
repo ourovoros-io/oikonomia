@@ -15,6 +15,7 @@ import { Logo } from './components/Logo'
 import { PageErrorBoundary } from './components/PageErrorBoundary'
 import { UnlockScreen } from './components/UnlockScreen'
 import { Button, ErrorBanner } from './components/ui'
+import { bookDotColour } from './lib/bookColour'
 import { cn } from './lib/cn'
 import { TopBarContext, type TopBarSlots } from './lib/topBar'
 import { listen } from '@tauri-apps/api/event'
@@ -47,20 +48,6 @@ const NAV = [
 ] as const
 
 type NavId = (typeof NAV)[number]['id']
-
-const BOOK_COLOUR_SLOTS = 8
-
-/**
- * A book's identity colour, one of the validated categorical palette slots,
- * derived from the book's id so it does not move when another book is added
- * or the list is reordered. Two books can share a slot; the name beside the
- * dot is what tells them apart.
- */
-export function bookDotColour(bookId: string): string {
-  let hash = 0
-  for (const char of bookId) hash = (hash * 31 + char.charCodeAt(0)) >>> 0
-  return `var(--viz-${(hash % BOOK_COLOUR_SLOTS) + 1})`
-}
 
 /** The book last open, or null when the preferences cannot be read. */
 async function rememberedEntityId(): Promise<string | null> {
@@ -459,7 +446,7 @@ export default function App() {
                         }
                       }}
                       onSelectEntity={(id) => {
-                        setEntityId(id)
+                        selectEntity(id)
                         setActive('dashboard')
                       }}
                     />

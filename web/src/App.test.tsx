@@ -82,7 +82,7 @@ import { listen } from '@tauri-apps/api/event'
 import { appInfo, vaultPickBackup, vaultRestore, vaultStatus, vaultTouch } from './lib/tauri'
 import { api } from './lib/api'
 import { resetI18nForTests } from './lib/i18n'
-import App, { bookDotColour } from './App'
+import App from './App'
 
 const entity: Entity = {
   id: 'e1',
@@ -463,12 +463,5 @@ describe('App book selection', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Company, EUR' }))
 
     expect(api.rememberLastEntity).toHaveBeenCalledWith('e2')
-  })
-})
-
-describe('bookDotColour', () => {
-  test('depends on the id alone and stays within the palette', () => {
-    expect(bookDotColour('0b7c1c6e')).toBe(bookDotColour('0b7c1c6e'))
-    expect(bookDotColour('0b7c1c6e')).toMatch(/^var\(--viz-[1-8]\)$/)
   })
 })

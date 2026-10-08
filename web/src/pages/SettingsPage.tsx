@@ -12,6 +12,7 @@ import {
   Languages,
   LifeBuoy,
   Mail,
+  PencilLine,
   Plus,
   Timer,
   Trash2,
@@ -28,9 +29,11 @@ import {
   type AppInfo,
 } from '../lib/tauri'
 import { asCommandError, commandErrorMessage } from '../lib/commandError'
+import { cn } from '../lib/cn'
 import { CURRENCIES } from '../lib/currencies'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { Modal } from '../components/Modal'
+import { RenameDialog } from '../components/RenameDialog'
 import { TopBar } from '../components/TopBar'
 import {
   Button,
@@ -167,6 +170,11 @@ export function SettingsPage({
   const [restorePath, setRestorePath] = useState<string | undefined>(undefined)
   const [restorePicking, setRestorePicking] = useState(false)
   const newEntityAnchorRef = useRef<HTMLDivElement>(null)
+  // The book list is open when the page was opened to add a book, so the new
+  // book is in view; otherwise it starts folded like the other sections.
+  const [entitiesOpenAtStart] = useState(() => Boolean(createBookIntent))
+  const [newBookId, setNewBookId] = useState<string | null>(null)
+  const [renameTarget, setRenameTarget] = useState<Entity | null>(null)
 
   const backupAvailability = vaultBackupAvailability({
     vaultPresent,
@@ -263,7 +271,10 @@ export function SettingsPage({
       setName('')
       await onEntitiesChange()
       setShowCreate(false)
-      onSelectEntity(entity.id)
+      // Stay here: adding several books should not take a trip to each
+      // one's Dashboard. The new book is marked in the list instead.
+      setNewBookId(entity.id)
+      setNotice(t('settings.entities.created', { name: entity.name }))
     } catch (err) {
       setPageError(commandErrorMessage(err))
     } finally {
@@ -702,6 +713,18 @@ export function SettingsPage({
 
       <div ref={newEntityAnchorRef} />
 
+      <RenameDialog
+        current={renameTarget?.name ?? null}
+        title={t('settings.entities.rename.title')}
+        label={t('settings.newEntity.name')}
+        onSave={async (nextName) => {
+          if (!renameTarget) return
+          await api.entityUpdate(renameTarget.id, nextName)
+          await onEntitiesChange()
+        }}
+        onClose={() => setRenameTarget(null)}
+      />
+
       <Modal
         open={showCreate}
         title={t('settings.newEntity.title')}
@@ -780,6 +803,7 @@ export function SettingsPage({
         icon={<Building2 className="size-4" />}
         tone="accent"
         flush
+        defaultOpen={entitiesOpenAtStart}
       >
         {entities.length === 0 ? (
           <div className="px-5 py-12 text-center text-sm text-[var(--color-muted)]">
@@ -790,7 +814,11 @@ export function SettingsPage({
             {entities.map((e) => (
               <li
                 key={e.id}
-                className="flex items-center gap-3 px-5 py-3 transition hover:bg-[var(--color-surface-2)]/50"
+                aria-current={e.id === newBookId ? 'true' : undefined}
+                className={cn(
+                  'flex items-center gap-3 px-5 py-3 transition hover:bg-[var(--color-surface-2)]/50',
+                  e.id === newBookId && 'bg-[var(--color-accent-soft)]',
+                )}
               >
                 {/* Same tile and gap as the section header, so names start under its title. */}
                 <IconBadge tone="accent" size="sm">
@@ -809,6 +837,15 @@ export function SettingsPage({
                 <div className="flex shrink-0 items-center gap-1">
                   <Button variant="secondary" size="sm" onClick={() => onSelectEntity(e.id)}>
                     {t('settings.entities.open')}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="iconSm"
+                    onClick={() => setRenameTarget(e)}
+                    aria-label={t('settings.entities.rename.aria', { name: e.name })}
+                    title={t('common.rename')}
+                  >
+                    <PencilLine className="size-3.5" />
                   </Button>
                   <Button
                     variant="secondary"

@@ -333,7 +333,12 @@
       "restore": "Wiederherstellen",
       "restoreAria": "{name} wiederherstellen",
       "restoreError": "Das Buch konnte nicht wiederhergestellt werden.",
-      "restoreNameTaken": "Ein anderes Buch heißt inzwischen „{name}“. Archivieren oder löschen Sie das andere Buch, bevor Sie dieses wiederherstellen."
+      "restoreNameTaken": "Ein anderes Buch heißt inzwischen „{name}“. Archivieren oder löschen Sie das andere Buch, bevor Sie dieses wiederherstellen.",
+      "created": "Buch {name} erstellt.",
+      "rename": {
+        "title": "Buch umbenennen",
+        "aria": "{name} umbenennen"
+      }
     },
     "entityCreate": {
       "title": "Neues Buch",
@@ -525,7 +530,8 @@
     },
     "error": {
       "fileTooLarge": "Die Datei ist zu groß (max. 8 MB)"
-    }
+    },
+    "rename": "Umbenennen"
   },
   "documents": {
     "header": {
@@ -639,7 +645,8 @@
       "name": "Name",
       "namePlaceholder": "Kontoname",
       "type": "Art",
-      "submit": "Konto anlegen"
+      "submit": "Konto anlegen",
+      "created": "Konto {code} · {name} hinzugefügt."
     },
     "balance": {
       "title": "Saldo setzen — {name}",
@@ -651,13 +658,23 @@
       "asOfAria": "Saldo zum Stichtag",
       "busy": "Wird gebucht…",
       "error": {
-        "invalid": "Geben Sie einen gültigen Betrag ein (z. B. 2.500,00 — negativ ist erlaubt)"
+        "invalid": "Geben Sie einen gültigen Betrag ein (z. B. 2.500,00 — negativ ist erlaubt)",
+        "invalidOwed": "Geben Sie einen gültigen Betrag ein (z. B. 350,00)"
       },
-      "aria": "Saldo setzen für {name}"
+      "aria": "Saldo setzen für {name}",
+      "saved": "Saldo von {name} auf {amount} gesetzt.",
+      "owedLabel": "Geschuldeter Betrag ({ccy})",
+      "owedToday": "Heute geschuldet:",
+      "owedDescription": "Geben Sie an, wie viel Sie auf diesem Konto schulden; die Differenz wird gegen die Anfangssalden gebucht.",
+      "owedHelp": "Geben Sie Ihre Schulden als positive Zahl ein: 350 für eine Karte mit 350 offen. Eine negative Zahl bedeutet, dass das Konto zu Ihren Gunsten steht.",
+      "owedNegative": "Ein negativer Betrag bedeutet, dass dieses Konto Guthaben zu Ihren Gunsten enthält, keine Schuld. Wenn Sie Geld schulden, geben Sie es als positive Zahl ein."
     },
     "deactivate": {
       "aria": "Konto deaktivieren",
-      "title": "Deaktivieren"
+      "title": "Deaktivieren",
+      "confirmTitle": "{name} deaktivieren?",
+      "confirmBody": "Neue Buchungen können dieses Konto nicht mehr verwenden. Bestehende Buchungen und der Saldo bleiben in den Büchern, und Sie können das Konto jederzeit wieder aktivieren.",
+      "done": "{name} deaktiviert."
     },
     "badge": {
       "system": "System"
@@ -668,7 +685,8 @@
     },
     "list": {
       "title": "Kontenplan",
-      "description": "Aktive und archivierte Konten"
+      "description": "Aktive und archivierte Konten",
+      "balance": "Saldo"
     },
     "empty": {
       "title": "Keine Konten",
@@ -679,6 +697,15 @@
       "back": "Alle Konten",
       "balance": "Saldo",
       "empty": "Für dieses Konto liegen noch keine gebuchten Einträge vor."
+    },
+    "reactivate": {
+      "title": "Reaktivieren",
+      "aria": "{name} reaktivieren",
+      "done": "{name} reaktiviert."
+    },
+    "rename": {
+      "title": "Konto umbenennen",
+      "aria": "{name} umbenennen"
     }
   },
   "reports": {
