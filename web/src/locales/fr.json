@@ -603,6 +603,14 @@
       "noFiles": "Aucune pièce jointe sur cette écriture.",
       "edit": "Modifier l’écriture",
       "ref": " · Réf. {reference}",
+      "history": {
+        "title": "Historique",
+        "note": "Conservé pour la piste d’audit lors de la modification de cette écriture.",
+        "original": "Écriture d’origine",
+        "reversal": "Annulation",
+        "replacement": "Version précédente",
+        "error": "Impossible de charger l’historique"
+      },
       "attachError": "Impossible de joindre le fichier",
       "updateError": "Impossible de mettre à jour l’écriture"
     }

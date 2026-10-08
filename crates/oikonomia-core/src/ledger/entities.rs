@@ -477,12 +477,13 @@ fn delete_entity_in_tx(conn: &Connection, id: EntityId) -> Result<()> {
         return Err(Error::NotFound(Resource::Entity));
     }
 
-    // A voided entry and its reversal reference each other, so neither could
-    // be deleted first while the links stand.
+    // A voided entry and its reversal reference each other, and a replacement
+    // names the entry it replaced, so none could be deleted first while the
+    // links stand.
     conn.execute(
         "
         UPDATE journal_entries
-        SET voided_by_entry_id = NULL
+        SET voided_by_entry_id = NULL, replaces_entry_id = NULL
         WHERE entity_id = ?1
         ",
         [&entity_id],

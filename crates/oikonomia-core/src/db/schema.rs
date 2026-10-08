@@ -46,7 +46,7 @@ use rusqlite::{Connection, Transaction};
 use std::collections::HashSet;
 
 /// The schema version [`migrate`] brings a vault to.
-pub const CURRENT_SCHEMA_VERSION: i64 = 8;
+pub const CURRENT_SCHEMA_VERSION: i64 = 9;
 
 /// One schema change, made through the transaction the runner opened for it.
 type Migration = fn(&Transaction<'_>) -> Result<()>;
@@ -63,6 +63,7 @@ const MIGRATIONS: &[(i64, Migration)] = &[
     (6, migrate_v6),
     (7, migrate_v7),
     (8, migrate_v8),
+    (9, migrate_v9),
 ];
 
 /// Applies the migrations a vault has not run yet.
@@ -402,6 +403,46 @@ fn migrate_v8(tx: &Transaction<'_>) -> Result<()> {
         ",
     )
     .database("index void links and entry lines")
+}
+
+/// v9: `replaces_entry_id`, the entry a correction took the place of.
+///
+/// A correction is a void plus a new entry, and until now nothing tied the new
+/// entry to the one it replaced, so the audit copy the void wrote could not be
+/// shown next to it. Entries corrected before this step keep a NULL link.
+/// The index serves the lookups along that link and is partial because most
+/// entries replace nothing.
+fn migrate_v9(tx: &Transaction<'_>) -> Result<()> {
+    // `ADD COLUMN` has no `IF NOT EXISTS`. The older migration tests take a
+    // current vault back to an earlier version without dropping this column.
+    let has_column: i64 = tx
+        .query_row(
+            "
+            SELECT COUNT(1) FROM pragma_table_info('journal_entries')
+            WHERE name = 'replaces_entry_id'
+            ",
+            [],
+            |row| row.get(0),
+        )
+        .database("look for the replaces_entry_id column")?;
+    if has_column == 0 {
+        tx.execute_batch(
+            "
+            ALTER TABLE journal_entries
+                ADD COLUMN replaces_entry_id TEXT REFERENCES journal_entries(id);
+            ",
+        )
+        .database("add the replaces_entry_id column")?;
+    }
+
+    tx.execute_batch(
+        "
+        CREATE INDEX IF NOT EXISTS idx_entries_replaces
+            ON journal_entries(replaces_entry_id)
+            WHERE replaces_entry_id IS NOT NULL;
+        ",
+    )
+    .database("link replacements to the entries they replace")
 }
 
 /// Renames documents so that no two in one book share a filename.

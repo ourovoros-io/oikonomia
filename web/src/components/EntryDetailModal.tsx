@@ -12,6 +12,7 @@ import {
 import { commandErrorMessage } from '../lib/commandError'
 import { fileToBase64, formatBytes, mimeFromName } from '../lib/files'
 import { ConfirmDialog } from './ConfirmDialog'
+import { EntryHistory } from './EntryHistory'
 import { Modal } from './Modal'
 import { HideFromExportControl } from './hiddenUi'
 import { Button } from './ui'
@@ -274,6 +275,8 @@ export function EntryDetailModal({
             </ul>
           )}
         </div>
+
+        <EntryHistory key={entry.id} entryId={entry.id} />
 
         <div className="flex justify-end border-t border-[var(--color-border)] pt-4">
           <Button variant="secondary" disabled={anyBusy} onClick={onEdit}>

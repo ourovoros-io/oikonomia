@@ -70,7 +70,11 @@ fn a_v7_vault_gains_the_indexes_and_keeps_its_entries() {
     assert_eq!(schema_version(conn), CURRENT_SCHEMA_VERSION);
     assert_eq!(
         indexes_on(conn, "journal_entries"),
-        ["idx_entries_entity_date", "idx_entries_voided_by"]
+        [
+            "idx_entries_entity_date",
+            "idx_entries_replaces",
+            "idx_entries_voided_by"
+        ]
     );
     assert_eq!(
         indexes_on(conn, "journal_lines"),
