@@ -18,7 +18,8 @@ export function DamagedPrefsNotice({
   return (
     <div
       role="status"
-      className="mb-5 flex flex-wrap items-center gap-3 rounded-xl border border-[var(--color-warning)]/25 bg-[var(--color-warning-soft)] px-4 py-3 text-sm text-[var(--color-fg-secondary)]"
+      aria-live="polite"
+      className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--color-warning)]/25 bg-[var(--color-warning-soft)] px-4 py-3 text-sm text-[var(--color-fg-secondary)]"
     >
       <p className="min-w-0 flex-1">{t('settings.prefs.unreadable')}</p>
       <Button variant="secondary" size="sm" onClick={onOpenSettings}>

@@ -34,6 +34,7 @@ import {
   MoneyPill,
   Panel,
   Segmented,
+  ToastStack,
 } from '../components/ui'
 import { cn } from '../lib/cn'
 import { commandErrorMessage } from '../lib/commandError'
@@ -206,7 +207,9 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
         }
       />
 
-      <ErrorBanner message={error} onDismiss={() => setError(null)} />
+      <ToastStack>
+        <ErrorBanner className="" message={error} onDismiss={() => setError(null)} />
+      </ToastStack>
 
       <Hero>
         <div className="flex flex-wrap items-start justify-between gap-6 px-7 pt-6">

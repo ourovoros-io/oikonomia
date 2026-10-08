@@ -46,6 +46,7 @@ import {
   Input,
   Notice,
   Select,
+  ToastStack,
 } from '../components/ui'
 import {
   backupCommandError,
@@ -508,15 +509,17 @@ export function SettingsPage({
     <div className="space-y-4">
       <TopBar title={t('settings.title')} subtitle={t('settings.description')} />
 
-      <ErrorBanner message={openDialog ? null : error} onDismiss={dismissError} />
-      <Notice
-        message={noticeKey ? t(noticeKey) : null}
-        onDismiss={() => setNoticeKey(null)}
-      />
-      <Notice
-        message={createdBook ? t('settings.entities.created', { name: createdBook }) : null}
-        onDismiss={() => setCreatedBook(null)}
-      />
+      <ToastStack>
+        <ErrorBanner className="" message={openDialog ? null : error} onDismiss={dismissError} />
+        <Notice
+          message={noticeKey ? t(noticeKey) : null}
+          onDismiss={() => setNoticeKey(null)}
+        />
+        <Notice
+          message={createdBook ? t('settings.entities.created', { name: createdBook }) : null}
+          onDismiss={() => setCreatedBook(null)}
+        />
+      </ToastStack>
       {prefsUnreadable ? (
         <div
           role="status"
