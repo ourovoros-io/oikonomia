@@ -6,9 +6,9 @@
 #   - the app starts and draws a real window;
 #   - typing a password creates the encrypted vault, owner-only;
 #   - a second launch exits and leaves one process (single instance);
-#   - closing the window hides it and keeps the app alive;
+#   - closing the window takes it off screen (minimized on Linux) and keeps the app alive;
 #   - launching again brings the hidden window back;
-#   - the vault directory is created owner-only under XDG_DATA_HOME.
+#   - the vault directory is created owner-only under XDG_DATA_HOME, with the vault.
 #
 # Needs: xvfb, openbox, xdotool, wmctrl, imagemagick, dbus-x11.
 # Screenshots land in target/smoke/ for a human to look at.
@@ -113,11 +113,10 @@ smoke() {
   window="$(visible_window)"
   echo "$name: window drawn with $(identify -format '%k' "$out/$name.png") distinct colours"
 
+  # The app writes nothing before a vault exists, so the directory is checked
+  # after the vault is created below.
   local vault_dir="$XDG_DATA_HOME/oikonomia"
-  [ -d "$vault_dir" ] || fail "$name did not create $vault_dir"
   local mode
-  mode="$(stat -c '%a' "$vault_dir")"
-  [ "$mode" = "700" ] || fail "$name vault directory mode is $mode, expected 700"
 
   # Create a vault through the real first-run screen: the password field has
   # focus, Tab moves to the confirmation, Enter submits.
@@ -128,6 +127,9 @@ smoke() {
   xdotool key Return
   vault_is_created() { [ -s "$vault_dir/vault.db" ] && [ -f "$vault_dir/vault.header.json" ]; }
   wait_until "$name creates the encrypted vault" vault_is_created
+  [ -d "$vault_dir" ] || fail "$name did not create $vault_dir"
+  mode="$(stat -c '%a' "$vault_dir")"
+  [ "$mode" = "700" ] || fail "$name vault directory mode is $mode, expected 700"
   # Let the first pages reach the file before reading its header.
   sleep 5
   local file
@@ -147,12 +149,12 @@ smoke() {
     || fail "$name: expected one process after a second launch, found $(process_count)"
 
   wmctrl -c 'Oikonomia'
-  wait_until "$name hides its window on close" window_is_hidden
+  wait_until "$name takes its window off screen on close" window_is_hidden
   [ "$(process_count)" -eq 1 ] || fail "$name quit when its window was closed"
 
   timeout "$LAUNCH_TIMEOUT" "$@" >"$out/$name-reopen.log" 2>&1 \
     || fail "$name: the reopening launch did not exit cleanly"
-  wait_until "$name shows its hidden window again" window_is_visible
+  wait_until "$name shows its window again" window_is_visible
   [ "$(process_count)" -eq 1 ] \
     || fail "$name: expected one process after reopening, found $(process_count)"
 
