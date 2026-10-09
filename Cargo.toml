@@ -10,7 +10,7 @@ members = [
 default-members = ["crates/oikonomia-core"]
 
 [workspace.package]
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 repository = "https://github.com/ourovoros-io/oikonomia"
 rust-version = "1.94"
