@@ -115,17 +115,20 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo test -p oikonomia-update --features debug-feed --locked
 
-      # Bundle jobs run assert-no-debug-feed.sh only on release binaries, which
-      # must pass. The desktop package exposes debug-feed and forwards it to
+      # The desktop package exposes debug-feed and forwards it to
       # oikonomia-update, which is what puts the variable's name in the binary.
-      # Build that binary and require the script to reject it, so a check that
-      # always exits zero cannot go green.
+      # A missing binary also exits non-zero, so this step passes only when
+      # stderr has the script's line for a binary that contains the name.
       - name: Require the debug-feed check to reject a debug-feed binary
         if: runner.os == 'Linux'
         run: |
           cargo build -p oikonomia --features debug-feed --locked
-          if scripts/assert-no-debug-feed.sh target/debug/oikonomia; then
-            echo 'check passed a debug-feed binary' >&2
+          status=0
+          err=$(scripts/assert-no-debug-feed.sh target/debug/oikonomia 2>&1 >/dev/null) || status=$?
+          printf '%s\n' "$err" >&2
+          expected='::error::target/debug/oikonomia contains OIKONOMIA_UPDATE_FEED: the debug feed override was built into a release'
+          if [ "$status" -eq 0 ] || ! printf '%s\n' "$err" | grep -F -q "$expected"; then
+            echo 'debug-feed check did not reject the binary for containing OIKONOMIA_UPDATE_FEED' >&2
             exit 1
           fi
 
@@ -282,6 +285,12 @@ jobs:
           printf '{"bundle": {"createUpdaterArtifacts": false}}' > "${RUNNER_TEMP}/smoke-config.json"
           node web/node_modules/@tauri-apps/cli/tauri.js build --bundles deb,appimage --config "${RUNNER_TEMP}/smoke-config.json" -- --locked
 
+      # Same path release.yml checks. The bundle is unsigned, but it is the
+      # release binary, and a missing file fails the script.
+      - name: Reject a release binary with the debug feed override (Linux)
+        if: runner.os == 'Linux'
+        run: scripts/assert-no-debug-feed.sh target/release/oikonomia
+
       # The bundler's own fetch has no retry and no integrity check.
       - name: Fetch the WebView2 bootstrapper (retried, signature-checked)
         if: runner.os == 'Windows'
@@ -325,6 +334,13 @@ jobs:
           $config = Join-Path $env:RUNNER_TEMP 'smoke-config.json'
           '{"bundle": {"createUpdaterArtifacts": false}}' | Set-Content -Path $config -Encoding ascii
           node web/node_modules/@tauri-apps/cli/tauri.js build --bundles nsis --config $config -- --locked
+
+      # Same path release.yml checks, including the .exe suffix. Bash, because
+      # the job's default shell on Windows is PowerShell.
+      - name: Reject a release binary with the debug feed override (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: scripts/assert-no-debug-feed.sh target/release/oikonomia.exe
 
       - name: Smoke-test the installed app (Windows)
         if: runner.os == 'Windows'
