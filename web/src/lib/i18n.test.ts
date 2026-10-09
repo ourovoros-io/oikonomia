@@ -341,11 +341,18 @@ describe('Writer unlock.update catalog', () => {
     'unlock.update.available.version',
     'unlock.update.available.honesty',
     'unlock.update.available.confirm',
+    'unlock.update.available.later',
     'unlock.update.availableManually.note',
+    'unlock.update.downloading.title',
+    'unlock.update.downloading.progress',
+    'unlock.update.downloading.percent',
+    'unlock.update.downloading.unknownSize',
     'unlock.update.failed.title',
     'unlock.update.failed.body',
     'unlock.update.installing.title',
     'unlock.update.installing.body',
+    'unlock.update.installing.restartNote',
+    'unlock.update.updated.notice',
     'unlock.update.cancel',
     'unlock.update.close',
   ] as const
@@ -384,6 +391,52 @@ describe('Writer unlock.update catalog', () => {
     expect(catalogs.el['unlock.update.available.version']).toContain('Oikonomia')
     expect(catalogs.fr['unlock.update.available.version']).toContain('Oikonomia')
     expect(catalogs.de['unlock.update.available.version']).toContain('Oikonomia')
+
+    expect(catalogs.en['unlock.update.available.later']).toBe('Later')
+    expect(catalogs.el['unlock.update.available.later']).toBe('Αργότερα')
+    expect(catalogs.fr['unlock.update.available.later']).toBe('Plus tard')
+    expect(catalogs.de['unlock.update.available.later']).toBe('Später')
+
+    expect(catalogs.en['unlock.update.downloading.progress']).toBe(
+      '{done}\u00a0MB of {total}\u00a0MB',
+    )
+    expect(catalogs.el['unlock.update.downloading.progress']).toBe(
+      '{done}\u00a0MB από {total}\u00a0MB',
+    )
+    expect(catalogs.fr['unlock.update.downloading.progress']).toBe(
+      '{done}\u00a0Mo sur {total}\u00a0Mo',
+    )
+    expect(catalogs.de['unlock.update.downloading.progress']).toBe(
+      '{done}\u00a0MB von {total}\u00a0MB',
+    )
+    expect(catalogs.en['unlock.update.downloading.percent']).toBe('{percent}%')
+    expect(catalogs.el['unlock.update.downloading.percent']).toBe('{percent}%')
+    expect(catalogs.fr['unlock.update.downloading.percent']).toBe('{percent}\u202f%')
+    expect(catalogs.de['unlock.update.downloading.percent']).toBe('{percent}\u00a0%')
+    expect(catalogs.en['unlock.update.downloading.unknownSize']).toBe('{done}\u00a0MB downloaded')
+    expect(catalogs.fr['unlock.update.installing.restartNote']).toBe(
+      'La fenêtre va se fermer puis se rouvrir d\u2019elle-même.',
+    )
+    expect(catalogs.en['unlock.update.availableManually.note']).toBe(
+      'This copy was installed from a system package and cannot update itself. ' +
+        'Install the new package from the releases page.',
+    )
+    expect(catalogs.el['unlock.update.availableManually.note']).toBe(
+      'Το αντίγραφο είναι από πακέτο συστήματος και δεν ενημερώνεται μόνο του. ' +
+        'Εγκαταστήστε το νέο από τη σελίδα εκδόσεων.',
+    )
+    expect(catalogs.fr['unlock.update.availableManually.note']).toBe(
+      'Installée depuis un paquet système, cette copie ne se met pas à jour seule. ' +
+        'Installez le nouveau paquet depuis la page des versions.',
+    )
+    expect(catalogs.de['unlock.update.availableManually.note']).toBe(
+      'Aus einem Systempaket installiert, aktualisiert sich diese Kopie nicht selbst. ' +
+        'Installieren Sie das neue Paket von der Release-Seite.',
+    )
+    expect(catalogs.en['unlock.update.updated.notice']).toBe('Oikonomia was updated to {version}.')
+    expect(catalogs.el['unlock.update.downloading.title']).toBe('Λήψη')
+    expect(catalogs.fr['unlock.update.downloading.title']).toBe('Téléchargement')
+    expect(catalogs.de['unlock.update.downloading.title']).toBe('Download')
   })
 })
 

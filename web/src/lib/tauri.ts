@@ -1,17 +1,39 @@
-import { invoke } from '@tauri-apps/api/core'
+import { Channel, invoke } from '@tauri-apps/api/core'
 import { asCommandError, isMissingIpcCommand } from './commandError'
 import {
+  hasDevUnlockUpdateQuery,
   isAvailableUpdate,
+  parseInstallCommandResult,
+  parseInstallProgress,
   parseUpdateCheckResult,
+  parseUpdateNotice,
   readDevUnlockUpdatePreview,
   stubUpdateCheckResult,
   type AvailableUpdate,
-  type FailedUpdate,
+  type InstallCommandResult,
+  type InstallProgress,
   type ParsedIpcUpdate,
 } from './updateCheck'
 
-export type { AvailableUpdate, ParsedIpcUpdate, UpdateCheckResult, UpdateUiState } from './updateCheck'
-export { isAvailableUpdate, parseUpdateCheckResult, readDevUnlockUpdatePreview }
+export type {
+  AvailableUpdate,
+  InstallCommandResult,
+  InstallProgress,
+  ParsedIpcUpdate,
+  UpdateCheckResult,
+  UpdateUiState,
+} from './updateCheck'
+export {
+  isAvailableUpdate,
+  parseInstallCommandResult,
+  parseInstallProgress,
+  parseUpdateCheckResult,
+  parseUpdateNotice,
+  readDevUnlockUpdatePreview,
+}
+
+/** The relaunch marker `update_take_notice` returns once, then clears. */
+export type UpdateNotice = { from: string; to: string }
 
 export type VaultStatus = 'uninitialized' | 'locked' | 'unlocked'
 
@@ -37,9 +59,9 @@ export function isTauri(): boolean {
 
 export async function vaultStatus(): Promise<VaultStatus> {
   if (!isTauri()) {
-    // Designer QA of the six unlock-update frames needs Welcome chrome.
-    // Dead in production: `readDevUnlockUpdatePreview` is DEV-gated.
-    return readDevUnlockUpdatePreview() ? 'locked' : 'uninitialized'
+    // Designer QA of the unlock-update frames needs Welcome chrome.
+    // Dead in production: the query reader is DEV-gated.
+    return hasDevUnlockUpdateQuery() ? 'locked' : 'uninitialized'
   }
   return invoke<VaultStatus>('vault_status')
 }
@@ -190,29 +212,75 @@ export async function updateCheck(): Promise<ParsedIpcUpdate> {
  * Install the already-checked update. Accepts only {@link AvailableUpdate}
  * so Checking / Failed / Up-to-date cannot request an install.
  *
- * The webview passes no URL, endpoint, or pubkey. On success Rust restarts
- * the app. On `{ kind: "failed" }` the UI shows Failed and unlock stays usable;
- * the result keeps the code Rust gave for the failure, when it gave one.
+ * The webview passes no URL, endpoint, or pubkey. Progress arrives on a
+ * Tauri channel (`onProgress` → Rust `on_progress`). The channel is
+ * required, so every invoke passes one. Samples are `downloading` with
+ * `received` and `total` (`null` when the size is unknown, never omitted),
+ * then `installing`. The command resolves to the existing update status,
+ * or `{ kind: "cancelled" }` when the transfer was aborted. Rust is
+ * `available` again after a cancel. A missing return (the process is
+ * restarting) is `undefined`, not a failure.
  */
 export async function updateInstall(
   available: AvailableUpdate,
-): Promise<FailedUpdate | undefined> {
+  onProgress: (progress: InstallProgress) => void,
+): Promise<InstallCommandResult | undefined> {
   if (!isAvailableUpdate(available)) {
     return undefined
   }
   if (!isTauri()) {
     return undefined
   }
+  const onProgressChannel = new Channel<unknown>()
+  onProgressChannel.onmessage = (raw) => {
+    const progress = parseInstallProgress(raw)
+    if (progress) onProgress(progress)
+  }
   try {
-    const raw = await invoke<unknown>('update_install')
-    const parsed = parseUpdateCheckResult(raw)
-    if (parsed.kind === 'failed') return parsed
-    return undefined
+    const raw = await invoke<unknown>('update_install', { onProgress: onProgressChannel })
+    if (raw === undefined || raw === null) return undefined
+    return parseInstallCommandResult(raw)
   } catch (err) {
     const cmd = asCommandError(err)
     if (isMissingIpcCommand(cmd, 'update_install')) {
       return undefined
     }
     throw cmd
+  }
+}
+
+/**
+ * Abort the download in progress.
+ *
+ * `true` means Rust aborted the download. `update_install` then resolves
+ * `{ kind: "cancelled" }` and the dialog returns to the offer. `false`
+ * means Installing has already started, or nothing was downloading: the
+ * dialog stays where it is. Only meaningful while the UI is on Downloading.
+ */
+export async function updateCancel(): Promise<boolean> {
+  if (!isTauri()) return false
+  try {
+    const raw = await invoke<unknown>('update_cancel')
+    return raw === true
+  } catch (err) {
+    const cmd = asCommandError(err)
+    if (isMissingIpcCommand(cmd, 'update_cancel')) return false
+    return false
+  }
+}
+
+/**
+ * Read the relaunch marker once. Rust compares it with the running version
+ * and clears it. Null when this launch is not the one right after an update.
+ */
+export async function updateTakeNotice(): Promise<UpdateNotice | null> {
+  if (!isTauri()) return null
+  try {
+    const raw = await invoke<unknown>('update_take_notice')
+    return parseUpdateNotice(raw)
+  } catch (err) {
+    const cmd = asCommandError(err)
+    if (isMissingIpcCommand(cmd, 'update_take_notice')) return null
+    return null
   }
 }

@@ -706,3 +706,64 @@
     animation: none;
   }
 }
+
+/* Updater dialog. Opaque on purpose: glass-dialog's 0.97 lets the Unlock
+   gradient ghost through the meta row. One class, this dialog only. */
+.glass-dialog.update-dialog {
+  background: rgb(20, 22, 30);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .glass-dialog.update-dialog {
+    background: rgb(20, 22, 30);
+  }
+}
+
+/* The dialog appears at once and fades in. State changes inside it do not. */
+.update-dialog-fade {
+  animation: qa-crossfade 140ms ease-out both;
+}
+
+/* Indeterminate bar: a 30% segment sweeps from just off the left to just
+   off the right. 333% is the track (100%) divided by the segment (30%). */
+@keyframes oik-indeterminate {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(333%);
+  }
+}
+
+.oik-indeterminate-fill {
+  width: 30%;
+  animation: oik-indeterminate 1200ms cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+
+.oik-determinate-fill {
+  transition: width 200ms linear;
+}
+
+/* After the motion rules, so a reduce preference wins. The toast rule is
+   repeated here because this is the last reduced-motion block. */
+@media (prefers-reduced-motion: reduce) {
+  .oik-toast {
+    animation: none;
+  }
+
+  .update-dialog-fade {
+    animation: none;
+  }
+
+  /* The segment stays centred (35% to 65%) and the fill does not glide. */
+  .oik-indeterminate-fill {
+    animation: none;
+    width: 30%;
+    margin-left: 35%;
+    transform: none;
+  }
+
+  .oik-determinate-fill {
+    transition: none;
+  }
+}

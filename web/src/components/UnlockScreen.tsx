@@ -1,52 +1,62 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from 'react'
 import { KeyRound } from 'lucide-react'
 import { cn } from '../lib/cn'
 import { Logo } from './Logo'
 import { ConfirmDialog } from './ConfirmDialog'
-import { useDialogFocus } from './useDialogFocus'
-import {
-  dialogStateFromCheck,
-  isAvailableUpdate,
-  pollsRefusedInstall,
-  readDevUnlockUpdatePreview,
-  watchRefusedInstall,
-  type ParsedIpcUpdate,
-  type UpdateUiState,
-} from '../lib/updateCheck'
+import { wholePixelShift } from '../lib/wholePixel'
 import type { VaultStatus } from '../lib/tauri'
 import {
-  updateCheck,
-  updateInstall,
   vaultInit,
   vaultPickBackup,
   vaultRestore,
   vaultStatus,
   vaultUnlock,
 } from '../lib/tauri'
-import { asCommandError, commandErrorMessage, ERROR_CODE_KEYS } from '../lib/commandError'
+import { asCommandError, commandErrorMessage } from '../lib/commandError'
 import { restoreCommandError, restoreConfirm } from '../lib/vaultBackupUi'
 import { useI18n } from '../lib/I18nProvider'
 import { LanguagePill } from './LanguagePill'
-import { Button, ErrorBanner, Field, Input } from './ui'
+import { UnlockUpdateDialog } from './UnlockUpdateDialog'
+import { useUnlockUpdate } from './useUnlockUpdate'
+import { Button, ErrorBanner, Field, Input, Notice } from './ui'
 
 type Props = {
   status: Exclude<VaultStatus, 'unlocked'>
   onUnlocked: (status: VaultStatus) => void
-  /** Support mailbox from Rust `app_info`, shown so a locked-out user still has somewhere to write. */
+  /** Support mailbox from Rust `app_info`, so a locked-out user still has somewhere to write. */
   supportEmail?: string | null
+  /** Running version from Rust `app_info`, shown on the up-to-date frame. */
+  appVersion?: string | null
 }
-
-const IDLE: UpdateUiState = { kind: 'idle' }
 
 // Long enough for the logo's oik-logo-pulse to finish, short enough
 // that unlocking never feels slower.
 const SUCCESS_BEAT_MS = 420
 
 // Rounded, so the shared focus ring hugs the text instead of drawing a tight square.
-const footerLink =
-  'h-6 rounded-md px-1.5 text-[13px] font-medium text-[var(--color-muted)] hover:text-[var(--color-fg-secondary)] disabled:opacity-50'
+const footerLink = [
+  'h-6 rounded-md px-1.5 text-[13px] font-medium text-[var(--color-muted)]',
+  'hover:text-[var(--color-fg-secondary)] disabled:opacity-50',
+].join(' ')
 
-export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props) {
+const fieldIcon = [
+  'pointer-events-none absolute top-1/2 left-0 size-4 -translate-y-1/2',
+  'text-[var(--color-muted)]',
+].join(' ')
+
+export function UnlockScreen({
+  status,
+  onUnlocked,
+  supportEmail = null,
+  appVersion = null,
+}: Props) {
   const { t, locale, setLocale, languageChangeFailed } = useI18n()
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -56,9 +66,6 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
   const [restoreBusy, setRestoreBusy] = useState(false)
   const [restorePath, setRestorePath] = useState<string | undefined>(undefined)
   const [restorePicking, setRestorePicking] = useState(false)
-  const [update, setUpdate] = useState<UpdateUiState>(
-    () => readDevUnlockUpdatePreview() ?? IDLE,
-  )
   const [unlocking, setUnlocking] = useState(false)
   const [shaking, setShaking] = useState(false)
   // Scoped separately from `error`: the banner is shared with the restore
@@ -67,15 +74,36 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
   const [passwordInvalid, setPasswordInvalid] = useState(false)
   const passwordRef = useRef<HTMLInputElement>(null)
   const confirmRef = useRef<HTMLInputElement>(null)
-  const checkGeneration = useRef(0)
-  const updateRef = useRef(update)
+  const columnRef = useRef<HTMLDivElement>(null)
   const handoffTimer = useRef<number | undefined>(undefined)
   const errorId = useId()
+  const updateFlow = useUnlockUpdate()
 
   const isSetup = status === 'uninitialized'
   const restorePrompt = restoreConfirm(isSetup ? 'load' : 'replace')
 
   useEffect(() => () => window.clearTimeout(handoffTimer.current), [])
+
+  // m-auto centres on a fractional leftover. Shift by under half a pixel so
+  // the card's top is a whole pixel, before paint, so nothing appears to move.
+  useLayoutEffect(() => {
+    const column = columnRef.current
+    if (!column) return
+
+    const snap = () => {
+      column.style.translate = ''
+      const shift = wholePixelShift(column.getBoundingClientRect().top)
+      if (shift !== 0) column.style.translate = `0 ${shift}px`
+    }
+
+    snap()
+    if (typeof ResizeObserver === 'undefined') return
+    const parent = column.parentElement
+    const observer = new ResizeObserver(snap)
+    observer.observe(column)
+    if (parent) observer.observe(parent)
+    return () => observer.disconnect()
+  }, [status, locale])
 
   // Typing starts at once on arrival, and after a restore turns "create" into
   // "unlock", when the field would otherwise have lost focus.
@@ -85,16 +113,12 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
 
   // A dialog over the form hands focus back to the button that opened it, not
   // to the field the person was about to type in.
-  const dialogOpen = restoreOpen || update.kind !== 'idle'
+  const dialogOpen = restoreOpen || updateFlow.update.kind !== 'idle'
   const dialogWasOpen = useRef(false)
   useEffect(() => {
     if (dialogWasOpen.current && !dialogOpen) passwordRef.current?.focus()
     dialogWasOpen.current = dialogOpen
   }, [dialogOpen])
-
-  useEffect(() => {
-    updateRef.current = update
-  }, [update])
 
   /** Marks the fields as wrong, shakes the card and puts the caret in `field`. */
   function rejectInput(message: string, field: 'password' | 'confirm') {
@@ -190,58 +214,12 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
     }
   }
 
-  async function beginUpdateCheck() {
-    if (update.kind === 'checking' || update.kind === 'installing') return
-    const generation = ++checkGeneration.current
-    setUpdate({ kind: 'checking' })
-    try {
-      const result = await updateCheck()
-      if (generation !== checkGeneration.current) return
-      setUpdate(dialogStateFromCheck(result))
-    } catch {
-      if (generation !== checkGeneration.current) return
-      setUpdate({ kind: 'failed' })
-    }
-  }
-
-  function dismissUpdate() {
-    if (update.kind === 'installing') return
-    checkGeneration.current += 1
-    setUpdate(IDLE)
-  }
-
-  function applyCheckedUpdate(result: ParsedIpcUpdate) {
-    // A poll that resolves after we left the refused-check state must not
-    // paint over whatever the dialog is showing now.
-    if (!pollsRefusedInstall(updateRef.current)) return
-    setUpdate(dialogStateFromCheck(result))
-  }
-
-  function giveUpOnRefusedCheck() {
-    if (!pollsRefusedInstall(updateRef.current)) return
-    setUpdate({ kind: 'updateError' })
-  }
-
-  async function installAvailable() {
-    if (!isAvailableUpdate(update)) return
-    const available = update
-    setUpdate({ kind: 'installing', origin: 'local' })
-    try {
-      const result = await updateInstall(available)
-      if (result?.kind === 'failed') {
-        setUpdate(result)
-      }
-    } catch {
-      setUpdate({ kind: 'failed' })
-    }
-  }
-
   // m-auto instead of items-center: when the window is shorter than the
   // form, auto margins collapse and the top stays reachable by scrolling.
   return (
     <div className="relative flex h-full flex-col bg-[var(--color-canvas)]">
       <div className="flex min-h-0 flex-1 overflow-y-auto px-4">
-        <div className="m-auto w-full max-w-md pt-8 pb-24">
+        <div ref={columnRef} className="m-auto w-full max-w-md pt-8 pb-24">
           <div className="mb-8 flex flex-col items-center text-center">
             <Logo
               animateIn
@@ -252,7 +230,12 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
             />
             {/* Sofia Sans for every language: Barlow has no Greek, so the title would
                 change typeface when the language switches. */}
-            <h1 className="font-[family-name:var(--font-display)] text-2xl font-semibold tracking-tight">
+            <h1
+              className={cn(
+                'font-[family-name:var(--font-display)] text-2xl font-semibold',
+                'tracking-tight',
+              )}
+            >
               {isSetup ? t('unlock.titleCreate') : t('unlock.titleWelcome')}
             </h1>
             {/* Two lines tall in every language, so a longer translation cannot move the card. */}
@@ -278,7 +261,7 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
               <Field label={t('unlock.password')}>
                 <div className="relative">
                   {/* The icon starts on the label's edge; the text follows one gap later. */}
-                  <KeyRound className="pointer-events-none absolute top-1/2 left-0 size-4 -translate-y-1/2 text-[var(--color-muted)]" />
+                  <KeyRound className={fieldIcon} />
                   <Input
                     ref={passwordRef}
                     type="password"
@@ -301,7 +284,7 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
               {isSetup ? (
                 <Field label={t('unlock.confirmPassword')}>
                   <div className="relative">
-                    <KeyRound className="pointer-events-none absolute top-1/2 left-0 size-4 -translate-y-1/2 text-[var(--color-muted)]" />
+                    <KeyRound className={fieldIcon} />
                     <Input
                       ref={confirmRef}
                       type="password"
@@ -334,7 +317,12 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
           {/* Below the card, out of flow: an error must not push the fields
               and the Unlock button down. */}
           <div className="absolute inset-x-0 top-full mt-3">
-            <ErrorBanner id={errorId} message={error} className="text-center" onDismiss={() => setError(null)} />
+            <ErrorBanner
+              id={errorId}
+              message={error}
+              className="text-center"
+              onDismiss={() => setError(null)}
+            />
           </div>
           </div>
         </div>
@@ -355,7 +343,9 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
         <button
           type="button"
           className={footerLink}
-          onClick={() => void beginUpdateCheck()}
+          onClick={updateFlow.beginCheck}
+          disabled={updateFlow.busy}
+          aria-busy={updateFlow.busy}
         >
           {t('unlock.update.button')}
         </button>
@@ -374,12 +364,24 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
         ) : null}
       </div>
 
+      {updateFlow.notice ? (
+        <div className="pointer-events-none absolute inset-x-0 top-6 z-30 flex justify-center px-4">
+          <div className="oik-toast w-full max-w-md">
+            <Notice
+              message={t('unlock.update.updated.notice', { version: updateFlow.notice.to })}
+              onDismiss={updateFlow.dismissNotice}
+            />
+          </div>
+        </div>
+      ) : null}
+
       <UnlockUpdateDialog
-        state={update}
-        onDismiss={dismissUpdate}
-        onInstall={() => void installAvailable()}
-        onResolve={applyCheckedUpdate}
-        onCap={giveUpOnRefusedCheck}
+        state={updateFlow.update}
+        appVersion={appVersion}
+        onDismiss={updateFlow.dismiss}
+        onInstall={updateFlow.install}
+        onResolve={updateFlow.resolvePoll}
+        onCap={updateFlow.capPoll}
       />
 
       <ConfirmDialog
@@ -399,188 +401,4 @@ export function UnlockScreen({ status, onUnlocked, supportEmail = null }: Props)
       />
     </div>
   )
-}
-
-function UnlockUpdateDialog({
-  state,
-  onDismiss,
-  onInstall,
-  onResolve,
-  onCap,
-}: {
-  state: UpdateUiState
-  onDismiss: () => void
-  onInstall: () => void
-  onResolve: (result: ParsedIpcUpdate) => void
-  onCap: () => void
-}) {
-  const { t } = useI18n()
-  const titleId = useId()
-  const panelRef = useRef<HTMLDivElement>(null)
-  const open = state.kind !== 'idle'
-  const canDismiss = state.kind !== 'installing'
-  const onResolveRef = useRef(onResolve)
-  const onCapRef = useRef(onCap)
-  const watchRefused = pollsRefusedInstall(state)
-
-  useDialogFocus(panelRef, open, () => {
-    if (canDismiss) onDismiss()
-  })
-
-  useEffect(() => {
-    onResolveRef.current = onResolve
-    onCapRef.current = onCap
-  }, [onResolve, onCap])
-
-  // Only a check Rust refused reaches here. `{ origin: 'local' }` is the
-  // install this screen started, and `watchRefused` is false for it, so
-  // that install never polls. Cleanup drops a response that lands after
-  // unmount or after the dialog has moved on.
-  useEffect(() => {
-    if (!watchRefused) return
-
-    return watchRefusedInstall(
-      updateCheck,
-      (result) => {
-        onResolveRef.current(result)
-      },
-      () => {
-        onCapRef.current()
-      },
-    )
-  }, [watchRefused])
-
-  if (state.kind === 'idle') return null
-
-  const copy = dialogCopy(state, t)
-
-  return (
-    <div className="absolute inset-0 z-40 flex items-center justify-center bg-[rgba(0,0,0,0.5)] px-4">
-      <div
-        ref={panelRef}
-        tabIndex={-1}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        className="glass-dialog w-full max-w-md rounded-[24px] p-6 outline-none"
-      >
-        <h2
-          id={titleId}
-          className="text-xl leading-7 font-semibold text-[var(--color-fg)]"
-        >
-          {copy.title}
-        </h2>
-        <p className="mt-1 text-sm leading-5 font-normal text-[var(--color-muted)]">{copy.body}</p>
-        {state.kind === 'available' ? (
-          <p className="mt-4 text-[13px] leading-5 font-normal text-[var(--color-muted)]">
-            {t('unlock.update.available.honesty')}
-          </p>
-        ) : null}
-        {state.kind === 'availableManually' ? (
-          <p className="mt-4 text-[13px] leading-5 font-normal text-[var(--color-muted)]">
-            {t('unlock.update.availableManually.note')}
-          </p>
-        ) : null}
-        {state.kind === 'installing' ? (
-          <div
-            className="mt-6 h-1 overflow-hidden rounded-full bg-white/10"
-            role="progressbar"
-            aria-label={copy.title}
-          >
-            <div className="h-full w-[30%] rounded-full bg-[var(--color-accent)]" />
-          </div>
-        ) : null}
-        {copy.actions.length > 0 ? (
-          <div className="mt-6 flex justify-end gap-2">
-            {copy.actions.map((action) =>
-              action.kind === 'primary' ? (
-                <Button key={action.label} onClick={onInstall}>
-                  {action.label}
-                </Button>
-              ) : (
-                <Button key={action.label} variant="secondary" onClick={onDismiss}>
-                  {action.label}
-                </Button>
-              ),
-            )}
-          </div>
-        ) : null}
-      </div>
-    </div>
-  )
-}
-
-type DialogAction = { kind: 'secondary'; label: string } | { kind: 'primary'; label: string }
-
-type Translate = (key: string, vars?: Record<string, string | number>) => string
-
-/**
- * The sentence under "Couldn't check": the copy `commandError.ts` maps the
- * failure's code to, or the dialog's own sentence when the status names no
- * code, names one this build does not know, or the code has no copy.
- *
- * Read from the map here, not through `commandErrorMessage`: that logs, and
- * this runs on every render of the dialog.
- */
-function updateFailureBody(code: string | undefined, t: Translate): string {
-  const fallback = t('unlock.update.failed.body')
-  if (code === undefined || !Object.hasOwn(ERROR_CODE_KEYS, code)) return fallback
-
-  const key = ERROR_CODE_KEYS[code]
-  const copy = t(key)
-
-  return copy === key ? fallback : copy
-}
-
-function dialogCopy(
-  state: Exclude<UpdateUiState, { kind: 'idle' }>,
-  t: Translate,
-): { title: string; body: string; actions: DialogAction[] } {
-  switch (state.kind) {
-    case 'checking':
-      return {
-        title: t('unlock.update.checking.title'),
-        body: t('unlock.update.checking.body'),
-        actions: [{ kind: 'secondary', label: t('unlock.update.cancel') }],
-      }
-    case 'upToDate':
-      return {
-        title: t('unlock.update.upToDate.title'),
-        body: t('unlock.update.upToDate.body'),
-        actions: [{ kind: 'secondary', label: t('unlock.update.close') }],
-      }
-    case 'available':
-      return {
-        title: t('unlock.update.available.title'),
-        body: t('unlock.update.available.version', { version: state.version }),
-        actions: [
-          { kind: 'secondary', label: t('unlock.update.cancel') },
-          { kind: 'primary', label: t('unlock.update.available.confirm') },
-        ],
-      }
-    case 'availableManually':
-      return {
-        title: t('unlock.update.available.title'),
-        body: t('unlock.update.available.version', { version: state.version }),
-        actions: [{ kind: 'secondary', label: t('unlock.update.close') }],
-      }
-    case 'failed':
-      return {
-        title: t('unlock.update.failed.title'),
-        body: updateFailureBody(state.code, t),
-        actions: [{ kind: 'secondary', label: t('unlock.update.close') }],
-      }
-    case 'updateError':
-      return {
-        title: t('unlock.update.failed.title'),
-        body: t('error.update'),
-        actions: [{ kind: 'secondary', label: t('unlock.update.close') }],
-      }
-    case 'installing':
-      return {
-        title: t('unlock.update.installing.title'),
-        body: t('unlock.update.installing.body'),
-        actions: [],
-      }
-  }
 }

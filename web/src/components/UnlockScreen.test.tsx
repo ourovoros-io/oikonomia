@@ -13,11 +13,15 @@ vi.mock('../lib/tauri', () => ({
   vaultPickBackup: vi.fn(),
   updateCheck: vi.fn(),
   updateInstall: vi.fn(),
+  updateCancel: vi.fn(),
+  updateTakeNotice: vi.fn(),
 }))
 
 import {
+  updateCancel,
   updateCheck,
   updateInstall,
+  updateTakeNotice,
   vaultInit,
   vaultPickBackup,
   vaultRestore,
@@ -27,8 +31,10 @@ import {
 import { UnlockScreen } from './UnlockScreen'
 import { resetI18nForTests } from '../lib/i18n'
 import {
+  CHECKING_MIN_MS,
   REFUSED_CHECK_POLL_CAP_MS,
   REFUSED_CHECK_POLL_INTERVAL_MS,
+  resetStartupUpdateNoticeForTests,
 } from '../lib/updateCheck'
 
 const BACKUP_PATH = '/tmp/in.oikonomia-backup'
@@ -36,6 +42,7 @@ const BACKUP_PATH = '/tmp/in.oikonomia-backup'
 afterEach(() => {
   cleanup()
   resetI18nForTests()
+  resetStartupUpdateNoticeForTests()
 })
 
 beforeEach(() => {
@@ -47,6 +54,8 @@ beforeEach(() => {
   vi.mocked(vaultUnlock).mockReset().mockResolvedValue('unlocked')
   vi.mocked(updateCheck).mockReset().mockResolvedValue({ kind: 'upToDate' })
   vi.mocked(updateInstall).mockReset().mockResolvedValue(undefined)
+  vi.mocked(updateCancel).mockReset().mockResolvedValue(false)
+  vi.mocked(updateTakeNotice).mockReset().mockResolvedValue(null)
 })
 
 describe('UnlockScreen support pointer', () => {
@@ -481,7 +490,7 @@ describe('UnlockScreen check for update', () => {
     expect(screen.getByText('Oikonomia 0.2.0')).toBeTruthy()
     expect(
       screen.getByText(
-        'This copy was installed from a system package, so it cannot update itself. Download the new package from the Oikonomia releases page and install it the same way.',
+        'This copy was installed from a system package and cannot update itself. Install the new package from the releases page.',
       ),
     ).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Install and restart' })).toBeNull()
@@ -507,17 +516,21 @@ describe('UnlockScreen check for update', () => {
     expect(screen.queryByText('What’s new')).toBeNull()
     expect(screen.queryByText('{size}')).toBeNull()
     expect(screen.queryByText('12 MB')).toBeNull()
-    expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy()
+    expect(screen.queryByText('Shows progress while an update downloads.')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Later' })).toBeTruthy()
 
     await userEvent.click(screen.getByRole('button', { name: 'Install and restart' }))
     await waitFor(() => {
       expect(updateInstall).toHaveBeenCalledTimes(1)
     })
-    expect(updateInstall).toHaveBeenCalledWith({ kind: 'available', version: '0.1.1' })
-    expect(screen.getByRole('dialog', { name: 'Installing' })).toBeTruthy()
-    expect(screen.getByText('Oikonomia will restart when this finishes.')).toBeTruthy()
-    expect(screen.getByRole('progressbar')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
+    expect(updateInstall).toHaveBeenCalledWith(
+      { kind: 'available', version: '0.1.1' },
+      expect.any(Function),
+    )
+    expect(screen.getByRole('dialog', { name: 'Downloading' })).toBeTruthy()
+    expect(screen.getByText('Oikonomia 0.1.1')).toBeTruthy()
+    expect(screen.getByRole('progressbar')).toHaveAttribute('data-bar', 'indeterminate')
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Close' })).toBeNull()
   })
 
@@ -672,7 +685,7 @@ describe('UnlockScreen refused-check poll', () => {
   async function openRefusedCheck() {
     render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
     click('Check for updates')
-    await advance(0)
+    await advance(CHECKING_MIN_MS)
     expect(screen.getByRole('dialog', { name: 'Installing' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Close' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
@@ -734,7 +747,7 @@ describe('UnlockScreen refused-check poll', () => {
     vi.mocked(updateCheck).mockResolvedValue({ kind: 'installing' })
     const { unmount } = render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
     click('Check for updates')
-    await advance(0)
+    await advance(CHECKING_MIN_MS)
     expect(screen.getByRole('dialog', { name: 'Installing' })).toBeTruthy()
 
     const calls = vi.mocked(updateCheck).mock.calls.length
@@ -768,9 +781,13 @@ describe('UnlockScreen refused-check poll', () => {
 
   test('an install started from this screen does not poll', async () => {
     vi.mocked(updateCheck).mockResolvedValue({ kind: 'available', version: '0.1.1' })
+    vi.mocked(updateInstall).mockImplementation(async (_available, onProgress) => {
+      onProgress({ kind: 'downloading', received: 1, total: 4 })
+      onProgress({ kind: 'installing' })
+    })
     render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
     click('Check for updates')
-    await advance(0)
+    await advance(CHECKING_MIN_MS)
     expect(screen.getByRole('button', { name: 'Install and restart' })).toBeTruthy()
 
     click('Install and restart')
