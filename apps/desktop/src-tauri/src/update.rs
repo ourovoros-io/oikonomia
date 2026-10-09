@@ -558,9 +558,8 @@ impl<I: ArtifactInstaller> ArtifactInstaller for MarkingInstaller<'_, I> {
 /// downloads the artifact, verifies it in memory and writes the verified
 /// file ([`install_offer_reporting`]), reporting to the progress sink of
 /// `watch` and stopping when its control is cancelled; `installer` is then
-/// called with
-/// that file, after the marker and the hold of `handoff`. No updater plugin
-/// is involved and no unsigned feed URL is read.
+/// called with that file, after the marker and the hold of `handoff`. No
+/// updater plugin is involved and no unsigned feed URL is read.
 ///
 /// The machine is not locked during the download: [`PendingInstall`] puts
 /// it in its installing state, in which it refuses a second install and a
@@ -573,7 +572,9 @@ impl<I: ArtifactInstaller> ArtifactInstaller for MarkingInstaller<'_, I> {
 /// # Errors
 ///
 /// Returns [`oikonomia_update::UpdateError::InstallNotAvailable`] unless the
-/// machine holds an offer this copy may install.
+/// machine holds an offer this copy may install, and
+/// [`oikonomia_update::UpdateError::InvalidVersion`] when this build's own
+/// version does not parse, before the machine is touched.
 fn install_available_update(
     machine: &Mutex<UpdateMachine>,
     config: &ClientConfig,
@@ -581,15 +582,14 @@ fn install_available_update(
     handoff: &Handoff<'_>,
     Watch { control, progress }: Watch<'_>,
 ) -> oikonomia_update::Result<InstallOutcome> {
+    let from = running_version().ok_or_else(|| UpdateError::InvalidVersion {
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+    })?;
     let (pending, offer) = PendingInstall::begin(machine)?;
     let marking = MarkingInstaller {
         inner: installer,
         handoff,
-        from: Version::parse(env!("CARGO_PKG_VERSION")).map_err(|_| {
-            UpdateError::InvalidVersion {
-                version: env!("CARGO_PKG_VERSION").to_owned(),
-            }
-        })?,
+        from,
         to: offer.version().clone(),
     };
     let outcome = install_offer_reporting(config, &offer, &marking, control, progress);
