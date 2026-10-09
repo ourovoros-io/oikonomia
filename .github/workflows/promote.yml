@@ -185,7 +185,7 @@ jobs:
       - name: Assemble latest.json
         run: |
           set -euo pipefail
-          # tauri-action uploads its own latest.json to the draft; ours is the only one that ships.
+          # A draft from an older release run may hold tauri-action's latest.json; ours is the only one that ships.
           rm -f artifacts/latest.json artifacts/latest.json.sig
           printf '%s' "Oikonomia ${TAG}" > notes.txt
           # Fails when a platform has no artifact or more than one.
