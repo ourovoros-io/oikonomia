@@ -762,6 +762,12 @@ pub(crate) mod ipc_test_support {
             path.to_str().unwrap().to_owned()
         }
 
+        /// Hands `value` to the app as managed state, as `start` hands it
+        /// the [`AppState`], for commands that read state of their own.
+        pub(crate) fn manage<T: Send + Sync + 'static>(&self, value: T) {
+            self.app.manage(value);
+        }
+
         /// Returns the path a file named `name` has, or would have, in the
         /// app's temporary directory, which is also its data directory.
         pub(crate) fn path(&self, name: &str) -> PathBuf {

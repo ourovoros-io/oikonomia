@@ -98,3 +98,9 @@ pub(crate) use crate::commands::recurring::*;
 pub(crate) use crate::commands::reports::*;
 pub(crate) use crate::commands::settings::*;
 pub(crate) use crate::commands::vault::*;
+
+/// The mock IPC app, for the tests of the commands that live outside this
+/// module (`crate::update`).
+#[cfg(test)]
+#[cfg(not(windows))]
+pub(crate) use crate::commands::support::ipc_test_support;
