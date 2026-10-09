@@ -339,7 +339,10 @@ fn the_marker_of_a_completed_install_gives_the_notice_after_the_restart() {
 
     // What the new version finds when it starts.
     let notice = take_notice(config_dir.path(), &Version::new(0, 2, 0), None).expect("notice");
-    assert_eq!((notice.from(), notice.to()), ("0.1.0", "0.2.0"));
+    assert_eq!(
+        serde_json::to_value(&notice).expect("json"),
+        serde_json::json!({ "from": "0.1.0", "to": "0.2.0" })
+    );
     assert_eq!(
         take_notice(config_dir.path(), &Version::new(0, 2, 0), None),
         None

@@ -40,20 +40,6 @@ pub struct UpdateNotice {
     to: String,
 }
 
-impl UpdateNotice {
-    /// Returns the version that ran before.
-    #[must_use]
-    pub fn from(&self) -> &str {
-        &self.from
-    }
-
-    /// Returns the version running now.
-    #[must_use]
-    pub fn to(&self) -> &str {
-        &self.to
-    }
-}
-
 /// The marker as it is written to disk.
 #[derive(Debug, Serialize, Deserialize)]
 struct PendingMarker {
@@ -253,7 +239,10 @@ mod tests {
         let previous = record_last_run(dir.path(), &running);
         let notice = take_notice(dir.path(), &running, previous.as_ref()).expect("a notice");
 
-        assert_eq!((notice.from(), notice.to()), ("0.1.3", "0.1.4"));
+        assert_eq!(
+            (notice.from.as_str(), notice.to.as_str()),
+            ("0.1.3", "0.1.4")
+        );
         assert_eq!(
             std::fs::read_to_string(dir.path().join(LAST_RUN_FILE)).expect("record"),
             "0.1.4"
@@ -284,7 +273,10 @@ mod tests {
         let notice = take_notice(dir.path(), &version("0.1.5"), Some(&version("0.1.4")))
             .expect("the last run notice");
 
-        assert_eq!((notice.from(), notice.to()), ("0.1.4", "0.1.5"));
+        assert_eq!(
+            (notice.from.as_str(), notice.to.as_str()),
+            ("0.1.4", "0.1.5")
+        );
     }
 
     #[test]

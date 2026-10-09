@@ -9,7 +9,7 @@
 //!
 //! [`install_offer_reporting`]: crate::install_offer_reporting
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -27,7 +27,7 @@ pub(crate) const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 /// equal to the bytes that were downloaded, then at most one `installing`.
 /// An install that fails or is cancelled stops sending; the command's return
 /// value says how it ended.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum InstallProgress {
     /// The artifact is downloading.
