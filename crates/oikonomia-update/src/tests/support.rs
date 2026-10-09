@@ -165,7 +165,7 @@ pub(super) fn server_url(server: &Server, path: &str) -> Url {
 pub(super) fn policy_for(server: &Server) -> HostPolicy {
     let url = server_url(server, "/");
     let host = url.host_str().expect("host").to_owned();
-    HostPolicy::test_http_hosts([host])
+    HostPolicy::with_http_hosts([host])
 }
 
 /// Returns a config for a `linux-x86_64` app at `current_version` whose
@@ -409,7 +409,7 @@ pub(super) fn config_for_artifact_at(
         "0.1.0",
         "linux-x86_64",
         cache.to_path_buf(),
-        HostPolicy::test_http_hosts([feed_host, artifact_address.ip().to_string()]),
+        HostPolicy::with_http_hosts([feed_host, artifact_address.ip().to_string()]),
         Duration::from_millis(500),
     )
     .expect("config")

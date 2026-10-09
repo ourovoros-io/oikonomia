@@ -76,27 +76,15 @@ impl HostPolicy {
     /// Returns a policy that allows `http` and `https` to `hosts` and
     /// nothing else.
     ///
-    /// For the local feed of the `debug-feed` override and for tests; a
-    /// release build has neither.
+    /// For the local feed of the `debug-feed` override and for local test
+    /// servers. Compiled only for those, so a release build has no way to
+    /// accept plain `http` or a host outside [`PRODUCTION_HOSTS`].
     #[must_use]
     pub(crate) fn with_http_hosts(hosts: impl IntoIterator<Item = impl Into<String>>) -> Self {
         Self {
             allow_http: true,
             hosts: hosts.into_iter().map(Into::into).collect(),
         }
-    }
-}
-
-#[cfg(test)]
-impl HostPolicy {
-    /// Returns a policy for local test servers: `http` is accepted, and only
-    /// `hosts` may be contacted.
-    ///
-    /// Compiled for tests only, so a release build has no way to accept
-    /// plain `http` or a host outside [`PRODUCTION_HOSTS`].
-    #[must_use]
-    pub(crate) fn test_http_hosts(hosts: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        Self::with_http_hosts(hosts)
     }
 }
 
