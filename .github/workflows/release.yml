@@ -257,6 +257,13 @@ jobs:
           tauriScript: node ${{ github.workspace }}/web/node_modules/@tauri-apps/cli/tauri.js
           args: -- --locked
 
+      # The OIKONOMIA_UPDATE_FEED override is debug-only (the debug-feed
+      # feature, never enabled here). Fail if this release binary names it,
+      # so a build mistake cannot ship a feed users could be redirected to.
+      - name: Reject a release binary with the debug feed override
+        shell: bash
+        run: ./scripts/assert-no-debug-feed.sh target/release/oikonomia
+
       # The macOS updater artifact is the .app.tar.gz. Fail here, before
       # notarization, when it is larger than the client will download.
       # The binary reads MAX_ARTIFACT_BYTES; this step does not repeat it.
@@ -445,6 +452,13 @@ jobs:
           tauriScript: node ${{ github.workspace }}/web/node_modules/@tauri-apps/cli/tauri.js
           args: --bundles deb,appimage -- --locked
 
+      # The OIKONOMIA_UPDATE_FEED override is debug-only (the debug-feed
+      # feature, never enabled here). Fail if this release binary names it,
+      # so a build mistake cannot ship a feed users could be redirected to.
+      - name: Reject a release binary with the debug feed override
+        shell: bash
+        run: ./scripts/assert-no-debug-feed.sh target/release/oikonomia
+
       # The Linux updater artifact is the AppImage. The .deb is a manual
       # download and is not checked. The binary reads MAX_ARTIFACT_BYTES.
       - name: Reject a Linux updater artifact over the client's download limit
@@ -561,6 +575,13 @@ jobs:
           uploadWorkflowArtifacts: true
           tauriScript: node ${{ github.workspace }}/web/node_modules/@tauri-apps/cli/tauri.js
           args: --bundles nsis -- --locked
+
+      # The OIKONOMIA_UPDATE_FEED override is debug-only (the debug-feed
+      # feature, never enabled here). Fail if this release binary names it,
+      # so a build mistake cannot ship a feed users could be redirected to.
+      - name: Reject a release binary with the debug feed override
+        shell: bash
+        run: ./scripts/assert-no-debug-feed.sh target/release/oikonomia.exe
 
       # The NSIS setup is the Windows updater artifact. Fail in this job,
       # before the signature check, when it is over the client's cap.
