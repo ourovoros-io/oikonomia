@@ -108,6 +108,27 @@ jobs:
 
       - run: cargo build -p oikonomia --locked
 
+      # The workspace test above builds oikonomia-update without this feature,
+      # so the debug-feed tests never run there. Linux is enough: the feature
+      # is not platform-specific.
+      - name: Test the update crate with the debug feed
+        if: runner.os == 'Linux'
+        run: cargo test -p oikonomia-update --features debug-feed --locked
+
+      # Bundle jobs run assert-no-debug-feed.sh only on release binaries, which
+      # must pass. The desktop package exposes debug-feed and forwards it to
+      # oikonomia-update, which is what puts the variable's name in the binary.
+      # Build that binary and require the script to reject it, so a check that
+      # always exits zero cannot go green.
+      - name: Require the debug-feed check to reject a debug-feed binary
+        if: runner.os == 'Linux'
+        run: |
+          cargo build -p oikonomia --features debug-feed --locked
+          if scripts/assert-no-debug-feed.sh target/debug/oikonomia; then
+            echo 'check passed a debug-feed binary' >&2
+            exit 1
+          fi
+
   # Rustdoc warnings are errors: a broken intra-doc link fails here instead of
   # shipping a dead reference in the API docs. Private items are documented
   # too, because most of the workspace's docs are on private items and a
