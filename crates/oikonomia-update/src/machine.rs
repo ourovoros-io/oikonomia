@@ -11,6 +11,7 @@
 //! Checking ── abandon_check ──▶ Failed
 //! Installable ── begin_install ──▶ Installing
 //! Installing ── finish_install(Failed) | abandon_install ──▶ Failed
+//! Installing ── finish_install(Cancelled) ──▶ Installable
 //! ```
 //!
 //! A step that failed is finished with the error it failed with, and the
@@ -142,17 +143,20 @@ impl UpdateMachine {
         }
     }
 
-    /// Applies the outcome of the install begun with [`Self::begin_install`].
+    /// Applies the outcome of the install begun with [`Self::begin_install`],
+    /// and takes back the `offer` that call handed out.
     ///
     /// A failed install moves the machine to Failed, from where a new check
-    /// may start. After a successful one the process is about to restart or
-    /// exit, so the machine stays Installing and goes on refusing a check or
-    /// another install in the meantime. Does nothing unless the machine is
+    /// may start. A cancelled one moves it back to Available with `offer`,
+    /// so the same release can be installed again without a new check.
+    /// After a successful one the process is about to restart or exit, so
+    /// the machine stays Installing and goes on refusing a check or another
+    /// install in the meantime. Does nothing unless the machine is
     /// Installing.
     ///
     /// The outcome is borrowed: the caller still has to act on it, by
     /// restarting or by reporting the error.
-    pub fn finish_install(&mut self, outcome: &InstallOutcome) {
+    pub fn finish_install(&mut self, outcome: &InstallOutcome, offer: VerifiedOffer) {
         if !matches!(self.state, State::Installing) {
             return;
         }
@@ -163,6 +167,7 @@ impl UpdateMachine {
                     code: Some(error.code()),
                 };
             }
+            InstallOutcome::Cancelled => self.state = State::Installable(offer),
             InstallOutcome::Installed(_) => {}
         }
     }

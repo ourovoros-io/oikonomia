@@ -82,9 +82,17 @@
 //!    found and did not use: a planted symbolic link is removed, never
 //!    written through. A directory at that name is not replaced, and the
 //!    install fails here.
-//! 8. Hands the path to the caller's [`ArtifactInstaller`].
-//! 9. Deletes the file, unless the installer reports a separate installer
-//!    process that is still running from it.
+//! 8. Moves the install's [`InstallControl`] to installing, after which a
+//!    cancel is refused, and reports [`InstallProgress::Installing`]. A
+//!    cancel that came first ends the install as
+//!    [`InstallOutcome::Cancelled`] and removes the file.
+//! 9. Hands the path to the caller's [`ArtifactInstaller`].
+//! 10. Deletes the file, unless the installer reports a separate installer
+//!     process that is still running from it.
+//!
+//! [`install_offer_reporting`] reports [`InstallProgress::Downloading`]
+//! during step 4, at most ten times a second plus a last report with the
+//! whole length, and stops at the next chunk when the install is cancelled.
 //!
 //! After a failure at any step the artifact, if it was written at all, is
 //! removed, and the install ends as [`InstallOutcome::Failed`], which holds
@@ -94,6 +102,15 @@
 //! what to record of it. The one thing logged here is the transport error of
 //! a request that got no response: [`UpdateError::Network`] does not carry
 //! it, so it would be lost where it is dropped.
+//!
+//! # Updated notice
+//!
+//! The desktop writes a small marker with [`write_pending_marker`] once the
+//! artifact has verified and before the handoff, and records the running
+//! version on every start with [`record_last_run`]. After the restart
+//! [`take_notice`] turns either into a one-time "updated from X to Y"
+//! notice for the webview. The `notice` module describes when a marker is
+//! believed.
 //!
 //! # Host allow-list
 //!
@@ -188,11 +205,15 @@
 
 mod artifact_limit;
 mod client;
+#[cfg(feature = "debug-feed")]
+mod debug_feed;
 mod error;
 mod feed;
 mod hosts;
 mod machine;
 mod notes;
+mod notice;
+mod progress;
 mod release_set;
 mod status;
 mod verify;
@@ -201,11 +222,16 @@ mod version;
 pub use crate::artifact_limit::{ArtifactSizeError, MAX_ARTIFACT_BYTES, check_artifact_file};
 pub use crate::client::{
     ArtifactInstaller, CheckOutcome, ClientConfig, InstallHandoff, InstallOutcome, InstallRoute,
-    VerifiedOffer, check_feed_as_client, install_offer, perform_check,
+    VerifiedOffer, check_feed_as_client, install_offer, install_offer_reporting, perform_check,
 };
 pub use crate::error::{FeedRefusal, InstallStep, Result, UpdateError};
 pub use crate::feed::{FeedArtifact, assemble_manifest};
 pub use crate::machine::{CheckStart, UpdateMachine};
+pub use crate::notice::{
+    LAST_RUN_FILE, PENDING_MARKER_FILE, UpdateNotice, record_last_run, remove_pending_marker,
+    take_notice, write_pending_marker,
+};
+pub use crate::progress::{InstallControl, InstallProgress};
 pub use crate::release_set::{
     ReleaseSetError, UpdaterArtifactKind, WindowsBuild, checksum_line, checksummed_assets,
     feed_entries, feed_platform_keys, fixed_name_copies, fixed_names, is_published_asset,

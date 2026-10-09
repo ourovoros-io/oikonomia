@@ -463,9 +463,15 @@ fn an_install_that_dies_leaves_a_usable_machine() {
 
 #[test]
 fn a_finished_install_is_ignored_by_a_machine_that_is_not_installing() {
+    let (public_key, secret_key) = test_keys();
+    let server = Server::run();
+    let cache = cache_dir();
+    let (mut other, _config) =
+        machine_with_an_offer(&server, &public_key, &secret_key, cache.path());
+    let offer = other.begin_install().expect("available");
     let mut machine = UpdateMachine::new();
 
-    machine.finish_install(&InstallOutcome::Failed(UpdateError::Network));
+    machine.finish_install(&InstallOutcome::Cancelled, offer);
     machine.abandon_install();
 
     assert_eq!(machine.status(), UpdateStatus::Idle);

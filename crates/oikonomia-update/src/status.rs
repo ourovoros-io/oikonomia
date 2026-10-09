@@ -46,6 +46,13 @@ pub enum UpdateStatus {
     /// An install is downloading, verifying or handing over the artifact.
     /// No check and no second install starts until it ends.
     Installing,
+    /// The install was cancelled before the artifact reached the installer.
+    /// Nothing was replaced and the offer stands: the machine reads
+    /// [`Self::Available`] again, so the install can be started anew.
+    ///
+    /// Only `update_install` returns this, as the answer to the install
+    /// that was cancelled; the machine's own status never is.
+    Cancelled,
     /// The last check or install failed. The rest of the application is
     /// unaffected, and a new check may be started.
     Failed {
@@ -76,6 +83,14 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&bare).expect("json"),
             r#"{"kind":"failed"}"#
+        );
+    }
+
+    #[test]
+    fn a_cancelled_install_serializes_as_its_kind_alone() {
+        assert_eq!(
+            serde_json::to_string(&UpdateStatus::Cancelled).expect("json"),
+            r#"{"kind":"cancelled"}"#
         );
     }
 
