@@ -80,7 +80,7 @@ where
 /// Dropping the returned future does not stop `work`: once the task is
 /// spawned, which happens when the future is first polled, it runs to the
 /// end and its result is discarded.
-pub(super) async fn run_blocking<T, F>(work: F) -> CommandResult<T>
+pub(crate) async fn run_blocking<T, F>(work: F) -> CommandResult<T>
 where
     T: Send + 'static,
     F: FnOnce() -> CommandResult<T> + Send + 'static,

@@ -99,6 +99,10 @@ pub(crate) use crate::commands::reports::*;
 pub(crate) use crate::commands::settings::*;
 pub(crate) use crate::commands::vault::*;
 
+/// The blocking-pool runner, for the commands that live outside this module
+/// (`crate::update`).
+pub(crate) use crate::commands::support::run_blocking;
+
 /// The mock IPC app, for the tests of the commands that live outside this
 /// module (`crate::update`).
 #[cfg(test)]

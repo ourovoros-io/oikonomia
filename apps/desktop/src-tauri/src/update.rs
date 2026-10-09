@@ -23,6 +23,7 @@
 //! [`crate::update_exec::VerifiedPathInstaller`], which replaces the running
 //! copy.
 
+use crate::commands::run_blocking;
 use crate::error::{CommandError, CommandResult, DesktopError};
 use crate::state::AppState;
 use crate::update_exec::{InstallKind, VerifiedPathInstaller};
@@ -378,15 +379,10 @@ pub(crate) async fn update_install<R: tauri::Runtime>(
     let control = InstallControl::new();
     let _registered = RegisteredInstall::new(&updater, control.clone());
 
-    let outcome = match tauri::async_runtime::spawn_blocking(move || {
+    let outcome = run_blocking(move || {
         let kind = InstallKind::detect();
         let config = ClientConfig::production(UPDATER_PUBLIC_KEY, &version, cache, kind.route())?;
-        let mut progress = |report: InstallProgress| {
-            if let Err(err) = on_progress.send(report) {
-                log::warn!("update progress could not be sent: {err}");
-            }
-        };
-        install_available_update(
+        let outcome = install_available_update(
             &machine,
             &config,
             &VerifiedPathInstaller::new(kind),
@@ -396,33 +392,34 @@ pub(crate) async fn update_install<R: tauri::Runtime>(
             },
             Watch {
                 control: &control,
-                progress: &mut progress,
+                progress: &mut |report| forward_progress(&on_progress, report),
             },
-        )
+        )?;
+        Ok(outcome)
     })
-    .await
-    {
-        Ok(Ok(outcome)) => outcome,
-        Ok(Err(err)) => return Err(CommandError::from(err)),
-        Err(err) => {
-            return Err(CommandError::desktop(
-                DesktopError::TaskFailed,
-                format!("background task failed: {err}"),
-            ));
-        }
-    };
+    .await?;
 
+    Ok(answer_install(&app, outcome))
+}
+
+/// Returns the status that answers the install that ended in `outcome`,
+/// after restarting or closing the app when the installer took over.
+///
+/// Built from the outcome, not read back from the machine: a check may have
+/// begun since, and its `Checking` is not the answer to this install.
+fn answer_install<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    outcome: InstallOutcome,
+) -> UpdateStatus {
     match outcome {
-        // Built from the outcome, not read back from the machine: a check may
-        // have begun since, and its `Checking` is not the answer to this install.
-        InstallOutcome::Failed(error) => Ok(UpdateStatus::Failed {
+        InstallOutcome::Failed(error) => UpdateStatus::Failed {
             code: Some(error.code().to_owned()),
-        }),
-        InstallOutcome::Cancelled => Ok(UpdateStatus::Cancelled),
+        },
+        InstallOutcome::Cancelled => UpdateStatus::Cancelled,
         InstallOutcome::Installed(InstallHandoff::Replaced) => app.restart(),
         InstallOutcome::Installed(InstallHandoff::InstallerStarted) => {
             app.exit(0);
-            Ok(UpdateStatus::Idle)
+            UpdateStatus::Idle
         }
     }
 }
@@ -473,18 +470,26 @@ pub(crate) async fn update_take_notice(
         .unwrap_or_else(PoisonError::into_inner)
         .take();
 
-    tauri::async_runtime::spawn_blocking(move || {
-        let running = running_version()?;
-        let config_dir = config_dir?;
-        take_notice(&config_dir, &running, last_run.as_ref())
+    run_blocking(move || {
+        let notice = match (config_dir, running_version()) {
+            (Some(config_dir), Some(running)) => {
+                take_notice(&config_dir, &running, last_run.as_ref())
+            }
+            (None, _) | (_, None) => None,
+        };
+        Ok(notice)
     })
     .await
-    .map_err(|err| {
-        CommandError::desktop(
-            DesktopError::TaskFailed,
-            format!("background task failed: {err}"),
-        )
-    })
+}
+
+/// Sends `report` to the webview over `channel`.
+///
+/// A webview that is gone misses the report, and the install goes on
+/// without it, so the failure is logged and not returned.
+fn forward_progress(channel: &Channel<InstallProgress>, report: InstallProgress) {
+    if let Err(err) = channel.send(report) {
+        log::warn!("update progress could not be sent: {err}");
+    }
 }
 
 /// Who follows an install: the switch that cancels it and the sink of its
