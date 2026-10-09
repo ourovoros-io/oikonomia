@@ -216,11 +216,7 @@ export function TransactionsPage({
     [visibleEntries, detailId],
   )
 
-  const filtersActive = Boolean(
-    debouncedSearch.trim() || fromDate || toDate || accountFilter,
-  )
-
-  /** The summary follows dates only; these filters narrow the list, not it. */
+  /** Search and account narrow the list and leave the summary whole; the dates do the reverse. */
   const filtersNarrowList = Boolean(debouncedSearch.trim() || accountFilter)
 
   const expenseAccounts = useMemo(() => accountsOf(accounts, ['expense']), [accounts])
@@ -278,8 +274,6 @@ export function TransactionsPage({
     const [e, a, d, roles] = await Promise.all([
       api.entryList(entity.id, {
         search: debouncedSearch.trim() || undefined,
-        from: fromDate || undefined,
-        to: toDate || undefined,
         accountId: accountFilter || undefined,
       }),
       api.accountList(entity.id),
@@ -1246,7 +1240,7 @@ export function TransactionsPage({
         error={openDialog === 'viewer' ? error : null}
       />
 
-      {visibleEntries.length === 0 && filtersActive ? (
+      {visibleEntries.length === 0 && filtersNarrowList ? (
         // The header buttons stay: Recurring, Import and Export do not depend on the search.
         <Panel
           title={t('tx.allEntries')}

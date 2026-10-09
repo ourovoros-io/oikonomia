@@ -1245,6 +1245,23 @@ describe('TransactionsPage summary', () => {
     })
   })
 
+  test('a date filter leaves the entry list whole', async () => {
+    vi.mocked(api.entryList).mockResolvedValue([])
+    await renderReady()
+
+    await userEvent.type(screen.getByLabelText('Filter from date'), '01/08/2026')
+    await userEvent.tab()
+
+    await waitFor(() => {
+      expect(api.cashFlowSeries).toHaveBeenLastCalledWith('e1', '2026-08-01', null)
+    })
+    for (const [, filters] of vi.mocked(api.entryList).mock.calls) {
+      expect(filters).toEqual({})
+    }
+    // An empty book under a date choice is still an empty book, not a failed search.
+    expect(screen.queryByText('No matching entries')).toBeNull()
+  })
+
   test('the account filter leaves the summary whole, and says so', async () => {
     await renderReady()
     const select = screen.getByRole('combobox', { name: 'Account' }) as HTMLSelectElement
