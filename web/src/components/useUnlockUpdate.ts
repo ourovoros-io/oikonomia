@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
+import { asCommandError } from '../lib/commandError'
 import {
   checkingHoldMs,
+  failedWithCode,
   readDevUnlockUpdatePreview,
   readDevUpdateNotice,
   reduceUpdate,
   takeStartupUpdateNotice,
+  type FailedUpdate,
   type InstallProgress,
   type ParsedIpcUpdate,
   type UpdateUiState,
@@ -26,6 +29,10 @@ type Session = {
   generation: { current: number }
   current: () => UpdateUiState
   setUpdate: SetUpdate
+}
+
+function commandFailure(err: unknown): FailedUpdate {
+  return failedWithCode(asCommandError(err).code)
 }
 
 function holdFor(ms: number): Promise<void> {
@@ -58,8 +65,8 @@ async function runCheck(session: Session): Promise<void> {
   try {
     const result = await updateCheck()
     await publishCheck(session, generation, startedAt, result)
-  } catch {
-    await publishCheck(session, generation, startedAt, { kind: 'failed' })
+  } catch (err) {
+    await publishCheck(session, generation, startedAt, commandFailure(err))
   }
 }
 
@@ -69,7 +76,16 @@ async function runCheck(session: Session): Promise<void> {
  * overwrite a second press of Install.
  */
 async function abortDownload(session: Session): Promise<void> {
-  const aborted = await updateCancel()
+  let aborted = false
+  try {
+    aborted = await updateCancel()
+  } catch (err) {
+    session.generation.current += 1
+    session.setUpdate((state) =>
+      reduceUpdate(state, { type: 'installResult', result: commandFailure(err) }),
+    )
+    return
+  }
   if (!aborted) return
   session.generation.current += 1
   session.setUpdate((state) => reduceUpdate(state, { type: 'downloadAborted' }))
@@ -115,8 +131,8 @@ async function installAvailable(session: Session): Promise<void> {
       applyProgress(session, generation, progress)
     })
     applyOutcome(session, generation, outcome)
-  } catch {
-    applyOutcome(session, generation, { kind: 'failed' })
+  } catch (err) {
+    applyOutcome(session, generation, commandFailure(err))
   }
 }
 

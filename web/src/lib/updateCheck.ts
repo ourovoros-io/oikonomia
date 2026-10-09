@@ -29,6 +29,17 @@ export type UpdateCheckResult =
 /** A check or an install that failed, with the code of its cause when known. */
 export type FailedUpdate = { kind: 'failed'; code?: string }
 
+/**
+ * A thrown command's code on the failed status.
+ *
+ * `unknown` is what a throw with no code becomes, so it stays a bare
+ * failure and the dialog uses its own sentence.
+ */
+export function failedWithCode(code: string): FailedUpdate {
+  if (code === '' || code === 'unknown') return { kind: 'failed' }
+  return { kind: 'failed', code }
+}
+
 /** The only state from which `update_install` may be invoked. */
 export type AvailableUpdate = Extract<UpdateCheckResult, { kind: 'available' }>
 
@@ -617,8 +628,8 @@ export function upToDateVersion(appVersion: string | null | undefined): string |
 }
 
 /**
- * Local answer when Rust has not registered `update_check` yet.
- * Designer can pick a terminal result via `?unlockUpdate=`.
+ * Browser answer for the DEV `?unlockUpdate=` paint hook.
+ * The desktop app calls `update_check` instead.
  */
 export function stubUpdateCheckResult(): UpdateCheckResult {
   const preview = readDevUnlockUpdatePreview()
@@ -636,6 +647,8 @@ let startupNotice: Promise<{ from: string; to: string } | null> | undefined
 /**
  * Ask once per page load. Strict mode mounts twice; a second call would
  * read the marker after Rust had already cleared it and the notice would vanish.
+ * A thrown read (`task_failed`) is no notice: the marker is optional and
+ * must not block unlock.
  */
 export function takeStartupUpdateNotice(
   ask: () => Promise<{ from: string; to: string } | null>,

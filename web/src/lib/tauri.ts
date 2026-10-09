@@ -1,6 +1,7 @@
 import { Channel, invoke } from '@tauri-apps/api/core'
-import { asCommandError, isMissingIpcCommand } from './commandError'
+import { asCommandError } from './commandError'
 import {
+  failedWithCode,
   hasDevUnlockUpdateQuery,
   isAvailableUpdate,
   parseInstallCommandResult,
@@ -189,8 +190,9 @@ export async function vaultRestore(opts: {
  * Ask Rust whether a new application is available. The webview only renders
  * the returned enum — it does not fetch, and it does not see a download URL.
  *
- * Until `update_check` exists on the backend, a local stub answers so paint
- * and tests stay reviewable.
+ * A thrown command error (`cache_dir_unavailable`, `task_failed`) becomes
+ * `failed` with that code. The browser, including the DEV paint hook,
+ * answers locally and does not invoke.
  */
 export async function updateCheck(): Promise<ParsedIpcUpdate> {
   if (!isTauri()) {
@@ -200,11 +202,7 @@ export async function updateCheck(): Promise<ParsedIpcUpdate> {
     const raw = await invoke<unknown>('update_check')
     return parseUpdateCheckResult(raw)
   } catch (err) {
-    const cmd = asCommandError(err)
-    if (isMissingIpcCommand(cmd, 'update_check')) {
-      return stubUpdateCheckResult()
-    }
-    return { kind: 'failed' }
+    return failedWithCode(asCommandError(err).code)
   }
 }
 
@@ -241,11 +239,7 @@ export async function updateInstall(
     if (raw === undefined || raw === null) return undefined
     return parseInstallCommandResult(raw)
   } catch (err) {
-    const cmd = asCommandError(err)
-    if (isMissingIpcCommand(cmd, 'update_install')) {
-      return undefined
-    }
-    throw cmd
+    throw asCommandError(err)
   }
 }
 
@@ -263,9 +257,7 @@ export async function updateCancel(): Promise<boolean> {
     const raw = await invoke<unknown>('update_cancel')
     return raw === true
   } catch (err) {
-    const cmd = asCommandError(err)
-    if (isMissingIpcCommand(cmd, 'update_cancel')) return false
-    return false
+    throw asCommandError(err)
   }
 }
 
@@ -279,8 +271,6 @@ export async function updateTakeNotice(): Promise<UpdateNotice | null> {
     const raw = await invoke<unknown>('update_take_notice')
     return parseUpdateNotice(raw)
   } catch (err) {
-    const cmd = asCommandError(err)
-    if (isMissingIpcCommand(cmd, 'update_take_notice')) return null
-    return null
+    throw asCommandError(err)
   }
 }

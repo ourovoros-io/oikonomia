@@ -37,10 +37,19 @@ describe('updateCheck / updateInstall wrappers', () => {
     expect(result).not.toHaveProperty('url')
   })
 
-  test('missing update_check command uses the local stub', async () => {
+  test('a thrown update_check keeps the command code and does not stub', async () => {
     Object.defineProperty(window, '__TAURI_INTERNALS__', { value: {}, configurable: true })
-    invoke.mockRejectedValue({ code: 'unknown', message: 'command update_check not found' })
-    await expect(updateCheck()).resolves.toEqual({ kind: 'upToDate' })
+    invoke.mockRejectedValue({
+      code: 'cache_dir_unavailable',
+      message: 'no cache directory for updates',
+    })
+    await expect(updateCheck()).resolves.toEqual({
+      kind: 'failed',
+      code: 'cache_dir_unavailable',
+    })
+
+    invoke.mockRejectedValue(new Error('boom'))
+    await expect(updateCheck()).resolves.toEqual({ kind: 'failed' })
   })
 
   test('registered update_check accepts snake_case up_to_date', async () => {
@@ -109,6 +118,9 @@ describe('updateCheck / updateInstall wrappers', () => {
 
     invoke.mockResolvedValue(undefined)
     await expect(updateCancel()).resolves.toBe(false)
+
+    invoke.mockRejectedValue({ code: 'task_failed', message: 'panicked' })
+    await expect(updateCancel()).rejects.toMatchObject({ code: 'task_failed' })
   })
 
   test('update_take_notice keeps from and to, and nothing else', async () => {
@@ -119,6 +131,9 @@ describe('updateCheck / updateInstall wrappers', () => {
 
     invoke.mockResolvedValue(null)
     await expect(updateTakeNotice()).resolves.toBeNull()
+
+    invoke.mockRejectedValue({ code: 'task_failed', message: 'panicked' })
+    await expect(updateTakeNotice()).rejects.toMatchObject({ code: 'task_failed' })
   })
 
   test('update_install returns failed when Rust yields { kind: failed }', async () => {
@@ -151,5 +166,13 @@ describe('updateCheck / updateInstall wrappers', () => {
     ).resolves.toEqual({
       kind: 'cancelled',
     })
+
+    invoke.mockRejectedValue({
+      code: 'update_install_not_allowed',
+      message: 'no offer',
+    })
+    await expect(
+      updateInstall({ kind: 'available', version: '0.1.1' }, () => undefined),
+    ).rejects.toMatchObject({ code: 'update_install_not_allowed' })
   })
 })

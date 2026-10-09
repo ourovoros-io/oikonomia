@@ -261,6 +261,53 @@ describe('download bars and cancel', () => {
     }
   })
 
+  test('a thrown install keeps the command code on the failed frame', async () => {
+    const sentence = 'Could not check for or install the update. Try again later.'
+    vi.mocked(updateCheck).mockResolvedValue({ kind: 'available', version: '0.1.4' })
+    vi.mocked(updateInstall).mockRejectedValue({
+      code: 'update_install_not_allowed',
+      message: 'no offer',
+    })
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Install and restart' })).toBeTruthy()
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'Install and restart' }))
+    await waitFor(() => {
+      expect(screen.getByText(sentence)).toBeTruthy()
+    })
+    expect(screen.queryByText('update_install_not_allowed')).toBeNull()
+    expect(screen.queryByText('Nothing was changed. You can try again later.')).toBeNull()
+  })
+
+  test('a thrown cancel leaves the download and shows the command sentence', async () => {
+    vi.mocked(updateCheck).mockResolvedValue({ kind: 'available', version: '0.1.4' })
+    vi.mocked(updateInstall).mockImplementation(() => new Promise(() => undefined))
+    vi.mocked(updateCancel).mockRejectedValue({
+      code: 'task_failed',
+      message: 'panicked',
+    })
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Install and restart' })).toBeTruthy()
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'Install and restart' }))
+    expect(screen.getByRole('dialog', { name: 'Downloading' })).toBeTruthy()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => {
+      expect(
+        screen.getByText('Something went wrong in the background. Please try again.'),
+      ).toBeTruthy()
+    })
+    expect(screen.queryByRole('dialog', { name: 'Downloading' })).toBeNull()
+    expect(screen.queryByText('task_failed')).toBeNull()
+  })
+
   test('installing has no cancel and ignores Escape', () => {
     window.history.replaceState({}, '', '/?unlockUpdate=installing')
     render(<UnlockScreen status="locked" onUnlocked={() => {}} />)

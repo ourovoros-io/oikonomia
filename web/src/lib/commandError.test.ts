@@ -8,7 +8,6 @@ import {
   commandErrorMessage,
   ERROR_CODE_KEYS,
   fileReadError,
-  isMissingIpcCommand,
   logCommandError,
   VARIANT_KEYS,
   WEB_ERROR_KEYS,
@@ -629,12 +628,5 @@ describe('command error localization', () => {
 
       expect(commandErrorMessage(fileReadError()), locale).toMatch(/\.$/)
     }
-  })
-
-  it('detects an unregistered Tauri command', () => {
-    expect(isMissingIpcCommand({ code: 'unknown', message: 'command update_check not found' }, 'update_check')).toBe(
-      true,
-    )
-    expect(isMissingIpcCommand({ code: 'io', message: 'disk full' }, 'update_check')).toBe(false)
   })
 })
