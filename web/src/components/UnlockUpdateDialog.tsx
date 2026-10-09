@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, type ReactNode } from 'react'
+import { useEffect, useId, useRef, type ReactNode, type RefObject } from 'react'
 import { cn } from '../lib/cn'
 import { ERROR_CODE_KEYS } from '../lib/commandError'
 import type { Locale } from '../lib/i18n'
@@ -49,6 +49,25 @@ type Props = {
   onCap: () => void
 }
 
+/**
+ * A focused button that unmounts drops focus onto the page: Install leaving
+ * the offer, Cancel leaving the download. Put it back on the panel.
+ * Closing does not run this: the panel is already gone, so Escape still
+ * returns to the password field.
+ */
+function useReclaimDialogFocus(
+  panelRef: RefObject<HTMLElement | null>,
+  kind: UpdateUiState['kind'],
+): void {
+  useEffect(() => {
+    const panel = panelRef.current
+    if (!panel) return
+    const active = document.activeElement
+    if (active instanceof Node && panel.contains(active)) return
+    panel.focus()
+  }, [panelRef, kind])
+}
+
 export function UnlockUpdateDialog({
   state,
   appVersion,
@@ -68,6 +87,7 @@ export function UnlockUpdateDialog({
   useDialogFocus(panelRef, open, () => {
     if (state.kind !== 'installing' && state.kind !== 'idle') onDismiss()
   })
+  useReclaimDialogFocus(panelRef, state.kind)
 
   useEffect(() => {
     onResolveRef.current = onResolve
@@ -205,12 +225,7 @@ function upToDateCopy(t: Translate, currentVersion: string | null): DialogRegion
     title: t('unlock.update.upToDate.title'),
     body: <p>{t('unlock.update.upToDate.body')}</p>,
     detail: currentVersion ? (
-      <p
-        className={cn(
-          'h-5 text-[13px] leading-5 font-medium',
-          'text-[var(--color-fg-secondary)] tabular-nums',
-        )}
-      >
+      <p className="h-5 text-[13px] leading-5 text-[var(--color-muted)] tabular-nums">
         {t('unlock.update.available.version', { version: currentVersion })}
       </p>
     ) : null,

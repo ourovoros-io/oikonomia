@@ -28,7 +28,11 @@ import {
 } from '../lib/tauri'
 import { UnlockScreen } from './UnlockScreen'
 import { resetI18nForTests, setLocale } from '../lib/i18n'
-import { CHECKING_MIN_MS, resetStartupUpdateNoticeForTests } from '../lib/updateCheck'
+import {
+  CHECKING_MIN_MS,
+  resetStartupUpdateNoticeForTests,
+  type InstallProgress,
+} from '../lib/updateCheck'
 
 afterEach(() => {
   cleanup()
@@ -323,6 +327,54 @@ describe('download bars and cancel', () => {
 
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(screen.getByRole('dialog', { name: 'Installing' })).toBeTruthy()
+  })
+
+  test('focus returns to the dialog when its button unmounts', async () => {
+    vi.mocked(updateCheck).mockResolvedValue({ kind: 'upToDate' })
+    const first = render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
+    const close = await screen.findByRole('button', { name: 'Close' })
+    close.focus()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => {
+      expect(screen.getByLabelText('Password')).toHaveFocus()
+    })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    first.unmount()
+
+    let report: (progress: InstallProgress) => void = () => {}
+    vi.mocked(updateCheck).mockResolvedValue({ kind: 'available', version: '0.1.4' })
+    vi.mocked(updateInstall).mockImplementation((_available, onProgress) => {
+      report = onProgress
+      return new Promise(() => undefined)
+    })
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
+    const install = await screen.findByRole('button', { name: 'Install and restart' })
+    install.focus()
+    await userEvent.click(install)
+
+    // 04 and 04b are both Downloading. Install unmounts as that frame opens.
+    const downloading = await screen.findByRole('dialog', { name: 'Downloading' })
+    await waitFor(() => {
+      expect(downloading).toHaveFocus()
+    })
+
+    act(() => {
+      report({ kind: 'downloading', received: 9_600_000, total: 24_000_000 })
+    })
+    const cancel = screen.getByRole('button', { name: 'Cancel' })
+    cancel.focus()
+    act(() => {
+      report({ kind: 'installing' })
+    })
+
+    const installing = await screen.findByRole('dialog', { name: 'Installing' })
+    await waitFor(() => {
+      expect(installing).toHaveFocus()
+    })
   })
 
   test('available shows the version, an empty second line, and locale widths', () => {
