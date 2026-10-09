@@ -822,8 +822,8 @@
       "from": "Du",
       "to": "Au",
       "account": "Compte",
-      "fromAria": "Filtrer à partir de la date",
-      "toAria": "Filtrer jusqu’à la date",
+      "fromAria": "Date de début du résumé",
+      "toAria": "Date de fin du résumé",
       "allAccounts": "Tous les comptes"
     },
     "summary": {

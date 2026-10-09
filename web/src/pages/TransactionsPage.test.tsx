@@ -1234,15 +1234,36 @@ describe('TransactionsPage summary', () => {
     expect(pane?.querySelector('[data-money-pill="out"]')).toHaveTextContent(plain(`Out ${formatMoney(4250, { code: 'EUR', decimals: 2 })}`))
   })
 
-  test('a date filter narrows the summary', async () => {
+  test('the dates narrow the summary', async () => {
     await renderReady()
 
-    await userEvent.type(screen.getByLabelText('Filter from date'), '01/08/2026')
+    await userEvent.type(screen.getByLabelText('Summary from date'), '01/08/2026')
     await userEvent.tab()
 
     await waitFor(() => {
       expect(api.cashFlowSeries).toHaveBeenLastCalledWith('e1', '2026-08-01', null)
     })
+  })
+
+  test('the dates leave the entry list whole, and do not fetch it again', async () => {
+    vi.mocked(api.entryList).mockResolvedValue([])
+    await renderReady()
+    await waitFor(() => expect(api.entryList).toHaveBeenCalled())
+    const listFetches = vi.mocked(api.entryList).mock.calls.length
+
+    await userEvent.type(screen.getByLabelText('Summary from date'), '01/08/2026')
+    await userEvent.tab()
+
+    await waitFor(() => {
+      expect(api.cashFlowSeries).toHaveBeenLastCalledWith('e1', '2026-08-01', null)
+    })
+    expect(api.entryList).toHaveBeenCalledTimes(listFetches)
+    for (const [, filters] of vi.mocked(api.entryList).mock.calls) {
+      expect(filters?.from).toBeUndefined()
+      expect(filters?.to).toBeUndefined()
+    }
+    // An empty book under a date choice is still an empty book, not a failed search.
+    expect(screen.queryByText('No matching entries')).toBeNull()
   })
 
   test('the account filter leaves the summary whole, and says so', async () => {
@@ -1267,9 +1288,9 @@ describe('TransactionsPage summary', () => {
     })
     await renderReady()
 
-    await userEvent.type(screen.getByLabelText('Filter from date'), '31/08/2026')
+    await userEvent.type(screen.getByLabelText('Summary from date'), '31/08/2026')
     await userEvent.tab()
-    await userEvent.type(screen.getByLabelText('Filter to date'), '01/08/2026')
+    await userEvent.type(screen.getByLabelText('Summary to date'), '01/08/2026')
     await userEvent.tab()
 
     expect(await screen.findByText('The From date must be on or before the To date.')).toBeInTheDocument()

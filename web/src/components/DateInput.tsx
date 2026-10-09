@@ -1,30 +1,10 @@
-import { useEffect, useId, useRef, useState } from 'react'
-import { CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useCallback, useEffect, useId, useState } from 'react'
+import { CalendarDays } from 'lucide-react'
 import { cn } from '../lib/cn'
-import { daysInMonth, formatDate, parseEuropeanDateToISO } from '../lib/money'
+import { formatDate, parseEuropeanDateToISO } from '../lib/money'
+import { CalendarPopover, type YearMonth } from './CalendarPopover'
 import { Button, Input } from './ui'
 import { useI18n } from '../lib/I18nProvider'
-
-const WEEKDAY_KEYS = [
-  'date.weekday.mo',
-  'date.weekday.tu',
-  'date.weekday.we',
-  'date.weekday.th',
-  'date.weekday.fr',
-  'date.weekday.sa',
-  'date.weekday.su',
-] as const
-
-type YearMonth = { y: number; m: number }
-
-function toIso(y: number, m: number, d: number): string {
-  return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
-}
-
-function todayIso(): string {
-  const now = new Date()
-  return toIso(now.getFullYear(), now.getMonth() + 1, now.getDate())
-}
 
 function viewFromIso(iso: string): YearMonth {
   const m = /^(\d{4})-(\d{2})/.exec(iso)
@@ -59,7 +39,8 @@ export function DateInput({
   const [invalid, setInvalid] = useState(false)
   const [open, setOpen] = useState(false)
   const [view, setView] = useState<YearMonth>(() => viewFromIso(value))
-  const rootRef = useRef<HTMLDivElement>(null)
+  // State, not a ref: the calendar is drawn from the field's element.
+  const [field, setField] = useState<HTMLDivElement | null>(null)
   const messageId = useId()
 
   // The parent commits values only through onChange, so an external value
@@ -74,16 +55,7 @@ export function DateInput({
     if (disabled) setOpen(false)
   }, [disabled])
 
-  useEffect(() => {
-    if (!open || disabled) return
-    const onDown = (e: MouseEvent) => {
-      if (rootRef.current && e.target instanceof Node && !rootRef.current.contains(e.target)) {
-        setOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [open, disabled])
+  const closeCalendar = useCallback(() => setOpen(false), [])
 
   function commit() {
     const trimmed = text.trim()
@@ -114,8 +86,7 @@ export function DateInput({
     if (iso && iso !== value) onChange(iso)
   }
 
-  function pick(day: number) {
-    const iso = toIso(view.y, view.m, day)
+  function pick(iso: string) {
     setInvalid(false)
     setOpen(false)
     if (iso !== value) onChange(iso)
@@ -129,27 +100,17 @@ export function DateInput({
     })
   }
 
-  const offset = (new Date(view.y, view.m - 1, 1).getDay() + 6) % 7
-  const days = daysInMonth(view.y, view.m)
-  const today = todayIso()
-
   return (
-    <div
-      ref={rootRef}
-      className="relative"
-      onKeyDown={(e) => {
-        if (e.key === 'Escape' && open) {
-          e.stopPropagation()
-          setOpen(false)
-        }
-      }}
-    >
+    <div ref={setField}>
       <div className="relative">
         <Input
           value={text}
           onChange={(e) => {
             setText(e.target.value)
             setInvalid(false)
+            // Typing is the other way to give the date, and what it leads to
+            // (the message below, a new month) would move under the calendar.
+            setOpen(false)
             commitWhenComplete(e.target.value)
           }}
           onBlur={commit}
@@ -195,64 +156,15 @@ export function DateInput({
         </p>
       ) : null}
 
-      {open && !disabled ? (
-        <div className="glass-dialog absolute top-full left-0 z-30 mt-2 w-64 rounded-[16px] p-3">
-          <div className="mb-2 flex items-center justify-between">
-            <Button
-              type="button"
-              variant="ghost"
-              size="iconSm"
-              onClick={() => shiftMonth(-1)}
-              aria-label={t('date.prevMonth')}
-            >
-              <ChevronLeft className="size-4" />
-            </Button>
-            <span className="text-sm font-medium text-[var(--color-fg)]">
-              {t(`date.month.${view.m}`)} {view.y}
-            </span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="iconSm"
-              onClick={() => shiftMonth(1)}
-              aria-label={t('date.nextMonth')}
-            >
-              <ChevronRight className="size-4" />
-            </Button>
-          </div>
-
-          <div className="grid grid-cols-7 gap-0.5 text-center">
-            {WEEKDAY_KEYS.map((key) => (
-              <span key={key} className="py-1 text-[11px] font-medium text-[var(--color-muted)]">
-                {t(key)}
-              </span>
-            ))}
-            {Array.from({ length: offset }, (_, i) => (
-              <span key={`pad-${i}`} />
-            ))}
-            {Array.from({ length: days }, (_, i) => {
-              const day = i + 1
-              const iso = toIso(view.y, view.m, day)
-              const selected = iso === value
-              return (
-                <button
-                  key={day}
-                  type="button"
-                  onClick={() => pick(day)}
-                  className={cn(
-                    'h-8 rounded-lg text-sm tabular-nums transition',
-                    selected
-                      ? 'bg-[var(--color-accent)] font-semibold text-white'
-                      : 'text-[var(--color-fg-secondary)] hover:bg-[var(--color-surface-elevated)] hover:text-[var(--color-fg)]',
-                    !selected && iso === today && 'ring-1 ring-[var(--color-accent)]/50',
-                  )}
-                >
-                  {day}
-                </button>
-              )
-            })}
-          </div>
-        </div>
+      {open && !disabled && field ? (
+        <CalendarPopover
+          field={field}
+          value={value}
+          view={view}
+          onShiftMonth={shiftMonth}
+          onPick={pick}
+          onClose={closeCalendar}
+        />
       ) : null}
     </div>
   )
