@@ -88,10 +88,11 @@
         "title": "Ein Update ist verfügbar",
         "version": "Oikonomia {version}",
         "honesty": "Das ist das einzige Mal, dass Oikonomia sich mit dem Internet verbindet, und nur, um ein Update herunterzuladen.",
-        "confirm": "Installieren und neu starten"
+        "confirm": "Installieren und neu starten",
+        "later": "Später"
       },
       "availableManually": {
-        "note": "Diese Kopie wurde aus einem Systempaket installiert und kann sich daher nicht selbst aktualisieren. Laden Sie das neue Paket von der Release-Seite von Oikonomia herunter und installieren Sie es auf dieselbe Weise."
+        "note": "Aus einem Systempaket installiert, aktualisiert sich diese Kopie nicht selbst. Installieren Sie das neue Paket von der Release-Seite."
       },
       "failed": {
         "title": "Prüfung nicht möglich",
@@ -99,10 +100,20 @@
       },
       "installing": {
         "title": "Installation",
-        "body": "Oikonomia startet neu, wenn dies fertig ist."
+        "body": "Oikonomia startet neu, wenn dies fertig ist.",
+        "restartNote": "Das Fenster schließt sich und öffnet sich danach von selbst wieder."
       },
       "cancel": "Abbrechen",
-      "close": "Schließen"
+      "close": "Schließen",
+      "downloading": {
+        "title": "Download",
+        "progress": "{done} MB von {total} MB",
+        "percent": "{percent} %",
+        "unknownSize": "{done} MB heruntergeladen"
+      },
+      "updated": {
+        "notice": "Oikonomia wurde auf Version {version} aktualisiert."
+      }
     },
     "error": {
       "mismatch": "Die Passwörter stimmen nicht überein.",

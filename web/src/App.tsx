@@ -252,6 +252,7 @@ export default function App() {
       <UnlockScreen
         status={status}
         supportEmail={info?.support_email}
+        appVersion={info?.version}
         onUnlocked={(next) => {
           setStatus(next)
           void refresh()

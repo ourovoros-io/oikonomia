@@ -88,10 +88,11 @@
         "title": "Une mise à jour est disponible",
         "version": "Oikonomia {version}",
         "honesty": "C’est la seule fois où Oikonomia se connecte à Internet, et uniquement pour télécharger une mise à jour.",
-        "confirm": "Installer et redémarrer"
+        "confirm": "Installer et redémarrer",
+        "later": "Plus tard"
       },
       "availableManually": {
-        "note": "Cette copie a été installée à partir d’un paquet système ; elle ne peut donc pas se mettre à jour elle-même. Téléchargez le nouveau paquet depuis la page des versions d’Oikonomia et installez-le de la même façon."
+        "note": "Installée depuis un paquet système, cette copie ne se met pas à jour seule. Installez le nouveau paquet depuis la page des versions."
       },
       "failed": {
         "title": "Vérification impossible",
@@ -99,10 +100,20 @@
       },
       "installing": {
         "title": "Installation",
-        "body": "Oikonomia redémarrera une fois terminé."
+        "body": "Oikonomia redémarrera une fois terminé.",
+        "restartNote": "La fenêtre va se fermer puis se rouvrir d’elle-même."
       },
       "cancel": "Annuler",
-      "close": "Fermer"
+      "close": "Fermer",
+      "downloading": {
+        "title": "Téléchargement",
+        "progress": "{done} Mo sur {total} Mo",
+        "percent": "{percent} %",
+        "unknownSize": "{done} Mo téléchargés"
+      },
+      "updated": {
+        "notice": "Oikonomia a été mis à jour vers la version {version}."
+      }
     },
     "error": {
       "mismatch": "Les mots de passe ne correspondent pas.",

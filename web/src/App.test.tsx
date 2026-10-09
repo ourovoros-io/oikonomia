@@ -29,6 +29,8 @@ vi.mock('./lib/tauri', () => ({
   vaultUnlock: vi.fn(),
   updateCheck: vi.fn(),
   updateInstall: vi.fn(),
+  updateCancel: vi.fn(),
+  updateTakeNotice: vi.fn(async () => null),
 }))
 
 vi.mock('./lib/api', () => ({

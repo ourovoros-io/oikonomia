@@ -13,6 +13,8 @@ vi.mock('../lib/tauri', () => ({
   vaultPickBackup: vi.fn(),
   updateCheck: vi.fn(),
   updateInstall: vi.fn(),
+  updateCancel: vi.fn(),
+  updateTakeNotice: vi.fn(async () => null),
 }))
 
 import { UnlockScreen } from './UnlockScreen'
