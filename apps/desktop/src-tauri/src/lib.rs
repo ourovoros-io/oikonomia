@@ -126,6 +126,12 @@ fn start(app: &mut tauri::App) -> Result<(), StartupError> {
 
     app.manage(app_state);
 
+    // Records this start's version, for the notice after an update. No
+    // network: the updater only connects when the user asks it to.
+    app.manage(update::UpdaterState::at_start(
+        app.path().app_config_dir().ok(),
+    ));
+
     Ok(())
 }
 
@@ -252,6 +258,8 @@ fn ipc_commands() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         commands::vault_unlock,
         update::update_check,
         update::update_install,
+        update::update_cancel,
+        update::update_take_notice,
         commands::vault_lock,
         commands::vault_change_password,
         commands::vault_backup,

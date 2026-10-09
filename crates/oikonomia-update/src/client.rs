@@ -47,15 +47,18 @@ use crate::artifact_limit::{ArtifactSizeError, MAX_ARTIFACT_BYTES, check_artifac
 use crate::error::{FeedRefusal, Result, UpdateError};
 use crate::hosts::HostPolicy;
 use crate::notes::sanitize_notes;
+use crate::progress::{InstallControl, InstallProgress, PROGRESS_INTERVAL, ProgressThrottle};
 use crate::verify::{parse_public_key, parse_sha256_hex, sha256, to_hex, verify_minisign};
 use crate::version::parse_version;
 use minisign_verify::PublicKey;
 use semver::Version;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::io::Read;
+use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use url::Url;
 
 /// The URL of `latest.json` in the newest published release of the source
@@ -136,6 +139,10 @@ pub enum InstallOutcome {
     Failed(UpdateError),
     /// The installer ran; the caller restarts or exits as the handoff says.
     Installed(InstallHandoff),
+    /// The install was cancelled through its [`InstallControl`] before the
+    /// artifact reached the installer. Nothing was replaced and no artifact
+    /// is left in the cache.
+    Cancelled,
 }
 
 /// The inputs of a check or an install.
@@ -197,8 +204,7 @@ impl ClientConfig {
         cache_dir: PathBuf,
         install_route: InstallRoute,
     ) -> Result<Self> {
-        let feed_url = Url::parse(UPDATE_FEED_URL).map_err(|_| UpdateError::InvalidFeedUrl)?;
-        let host_policy = HostPolicy::production();
+        let (feed_url, host_policy) = production_feed()?;
         if !host_policy.is_allowed_fetch_url(&feed_url) {
             return Err(UpdateError::ArtifactUrl);
         }
@@ -214,6 +220,38 @@ impl ClientConfig {
             install_route,
         })
     }
+}
+
+/// Returns the feed URL and the host policy of a production configuration:
+/// the ones built into the crate.
+///
+/// # Errors
+///
+/// Returns [`UpdateError::InvalidFeedUrl`] when the feed constant does not
+/// parse.
+#[cfg(not(feature = "debug-feed"))]
+fn production_feed() -> Result<(Url, HostPolicy)> {
+    let feed_url = Url::parse(UPDATE_FEED_URL).map_err(|_| UpdateError::InvalidFeedUrl)?;
+    Ok((feed_url, HostPolicy::production()))
+}
+
+/// Returns the feed URL and the host policy of a production configuration,
+/// or of the feed the debug override names.
+///
+/// Compiled only with the `debug-feed` feature, which no release build
+/// enables (see [`crate::debug_feed`]).
+///
+/// # Errors
+///
+/// Returns [`UpdateError::InvalidFeedUrl`] when the feed constant, or the
+/// override that is set, does not parse.
+#[cfg(feature = "debug-feed")]
+fn production_feed() -> Result<(Url, HostPolicy)> {
+    if let Some(overridden) = crate::debug_feed::from_env()? {
+        return Ok(overridden);
+    }
+    let feed_url = Url::parse(UPDATE_FEED_URL).map_err(|_| UpdateError::InvalidFeedUrl)?;
+    Ok((feed_url, HostPolicy::production()))
 }
 
 #[cfg(test)]
@@ -355,11 +393,48 @@ pub fn perform_check(config: &ClientConfig) -> CheckOutcome {
 
 /// Downloads and verifies the artifact of `offer`, then hands it to `installer`.
 ///
+/// [`install_offer_reporting`] without progress reports and without a way
+/// to cancel; see there.
+#[must_use]
+pub fn install_offer(
+    config: &ClientConfig,
+    offer: &VerifiedOffer,
+    installer: &impl ArtifactInstaller,
+) -> InstallOutcome {
+    install_offer_reporting(
+        config,
+        offer,
+        installer,
+        &InstallControl::new(),
+        &mut |_progress| {},
+    )
+}
+
+/// Downloads and verifies the artifact of `offer`, then hands it to
+/// `installer`, reporting progress to `progress` and stopping when
+/// `control` is cancelled.
+///
 /// Does not touch an [`UpdateMachine`](crate::UpdateMachine), so the caller
 /// need not hold one locked for the minutes a download may take. The offer
 /// comes from [`UpdateMachine::begin_install`](crate::UpdateMachine::begin_install)
 /// and the outcome goes to
 /// [`UpdateMachine::finish_install`](crate::UpdateMachine::finish_install).
+///
+/// `progress` receives [`InstallProgress::Downloading`] when the response
+/// arrives, then at most one per `PROGRESS_INTERVAL` (100 ms) while the
+/// body arrives, and always a last one whose `received` is the number of
+/// bytes downloaded. `total` is the response's `Content-Length`, or `None`
+/// without one. An artifact an earlier attempt left in the cache, which
+/// passes the checks and is used without a download, is reported as one
+/// report with `received` and `total` both its length. Once the artifact
+/// has verified and `control` has moved to installing, `progress` receives
+/// [`InstallProgress::Installing`] once, and then `installer` is called.
+///
+/// A cancel through `control` is honoured until that move: the download
+/// stops at the next chunk (or when a stalled read times out), no artifact
+/// is left in the cache, `installer` is not called, and the outcome is
+/// [`InstallOutcome::Cancelled`]. The artifact is held in memory until it
+/// verifies, so a cancelled download never exists as a file.
 ///
 /// The artifact is verified in memory before it is written, so a failed
 /// download or check leaves no file and `installer` is not called. The
@@ -369,15 +444,31 @@ pub fn perform_check(config: &ClientConfig) -> CheckOutcome {
 /// [`perform_check`], the outcome is not logged here; only the transport
 /// error of a request that got no response is.
 #[must_use]
-pub fn install_offer(
+pub fn install_offer_reporting(
     config: &ClientConfig,
     offer: &VerifiedOffer,
     installer: &impl ArtifactInstaller,
+    control: &InstallControl,
+    progress: &mut dyn FnMut(InstallProgress),
 ) -> InstallOutcome {
-    let path = match download_and_verify(config, offer) {
-        Ok(path) => path,
-        Err(error) => return InstallOutcome::Failed(error),
+    let downloaded = {
+        let mut watch = ArtifactWatch::new(control, progress);
+        download_and_verify_watched(config, offer, &mut watch)
     };
+    let path = match downloaded {
+        Ok(path) => path,
+        Err(Interrupted::Failed(error)) => return InstallOutcome::Failed(error),
+        Err(Interrupted::Cancelled) => return InstallOutcome::Cancelled,
+    };
+
+    // The last moment a cancel is honoured. After this the installer may
+    // already be replacing the app, and stopping it half way would be worse
+    // than finishing.
+    if !control.begin_installing() {
+        delete_artifact(&path);
+        return InstallOutcome::Cancelled;
+    }
+    progress(InstallProgress::Installing);
 
     match installer.install(&path) {
         Ok(InstallHandoff::Replaced) => {
@@ -536,8 +627,33 @@ pub(crate) fn perform_check_inner(config: &ClientConfig) -> Result<CheckOutcome>
     })
 }
 
+/// [`download_and_verify_watched`] with no progress and no cancel, for the
+/// tests of the download.
+///
+/// # Errors
+///
+/// The errors of [`download_and_verify_watched`].
+#[cfg(test)]
+#[expect(
+    clippy::panic,
+    clippy::panic_in_result_fn,
+    reason = "a test helper whose download nothing can cancel"
+)]
+pub(crate) fn download_and_verify(config: &ClientConfig, offer: &VerifiedOffer) -> Result<PathBuf> {
+    let control = InstallControl::new();
+    let mut ignore = |_progress| {};
+    let mut watch = ArtifactWatch::new(&control, &mut ignore);
+    download_and_verify_watched(config, offer, &mut watch).map_err(
+        |interrupted| match interrupted {
+            Interrupted::Failed(error) => error,
+            Interrupted::Cancelled => panic!("nothing cancels this download"),
+        },
+    )
+}
+
 /// Puts the verified artifact of `offer` in the cache directory and returns
-/// the path of the file.
+/// the path of the file, reporting to `watch` and stopping when its control
+/// is cancelled.
 ///
 /// A file an earlier attempt left under the artifact's name is used as it is
 /// when its bytes pass the digest and signature checks; nothing is
@@ -551,16 +667,22 @@ pub(crate) fn perform_check_inner(config: &ClientConfig) -> Result<CheckOutcome>
 ///
 /// # Errors
 ///
-/// Returns [`UpdateError::CacheIo`] when the cache directory cannot be
-/// created or made private, or the file cannot be written or moved to its
-/// name, as when a directory is at that name;
+/// Returns [`Interrupted::Cancelled`] when the download was cancelled, and
+/// otherwise, in [`Interrupted::Failed`], [`UpdateError::CacheIo`] when the
+/// cache directory cannot be created or made private, or the file cannot be
+/// written or moved to its name, as when a directory is at that name;
 /// [`UpdateError::ArtifactUrl`] when the artifact URL, or a redirect from it,
 /// is off the allow-list; [`UpdateError::Network`] when the download fails or
 /// the server answers 204; [`UpdateError::ArtifactTooLarge`] when the
 /// artifact, or a regular file already under its name, exceeds
 /// [`MAX_ARTIFACT_BYTES`]; and [`UpdateError::ArtifactIntegrity`] when the
-/// digest or the signature of the download does not match.
-pub(crate) fn download_and_verify(config: &ClientConfig, offer: &VerifiedOffer) -> Result<PathBuf> {
+/// digest or the signature of the download does not match. Either way no file
+/// is left at the artifact's name.
+fn download_and_verify_watched(
+    config: &ClientConfig,
+    offer: &VerifiedOffer,
+    watch: &mut ArtifactWatch<'_>,
+) -> std::result::Result<PathBuf, Interrupted> {
     prepare_cache_dir(&config.cache_dir).map_err(UpdateError::CacheIo)?;
 
     // The digest makes the name unique to these exact bytes; the URL's file
@@ -572,13 +694,17 @@ pub(crate) fn download_and_verify(config: &ClientConfig, offer: &VerifiedOffer) 
     ));
     purge_cache(&config.cache_dir, &destination);
 
-    let placed = holds_verified_artifact(config, offer, &destination).and_then(|held| {
-        if held {
-            Ok(())
-        } else {
-            download_and_verify_into(config, offer, &destination)
-        }
-    });
+    let placed = holds_verified_artifact(config, offer, &destination)
+        .map_err(Interrupted::from)
+        .and_then(|held| {
+            if held {
+                let length = std::fs::symlink_metadata(&destination).map_or(0, |meta| meta.len());
+                watch.finish(length, Some(length));
+                Ok(())
+            } else {
+                download_and_verify_into(config, offer, &destination, watch)
+            }
+        });
 
     match placed {
         Ok(()) => Ok(destination),
@@ -593,8 +719,8 @@ pub(crate) fn download_and_verify(config: &ClientConfig, offer: &VerifiedOffer) 
 ///
 /// `keep` is the path the artifact of the install in flight will have. What
 /// an earlier attempt at the same release left there is not removed here:
-/// [`download_and_verify`] reuses it when it is the artifact and replaces it
-/// when it is not.
+/// [`download_and_verify_watched`] reuses it when it is the artifact and
+/// replaces it when it is not.
 ///
 /// Best effort: a file that cannot be removed, such as an installer that is
 /// still running on Windows, stays until a later install clears it. Every
@@ -765,7 +891,11 @@ enum Fetched {
 }
 
 /// Why a fetch ended without a body or a 204.
-enum FetchFailure {
+///
+/// `S` is what a [`BodyWatch`] may stop the read with: [`Infallible`] for
+/// the feed and its signature, which nothing stops, and [`Cancelled`] for
+/// the artifact.
+enum FetchFailure<S> {
     /// No response arrived, a redirect could not be followed, or the body
     /// could not be read to its end.
     Network,
@@ -776,6 +906,116 @@ enum FetchFailure {
     Denied,
     /// The body was larger than the cap of the resource.
     TooLarge,
+    /// The watch stopped the read.
+    Stopped(S),
+}
+
+impl<S> FetchFailure<S> {
+    /// Separates a stop from the failures the HTTP exchange itself had.
+    fn into_exchange_failure(self) -> std::result::Result<FetchFailure<Infallible>, S> {
+        match self {
+            Self::Network => Ok(FetchFailure::Network),
+            Self::Status(status) => Ok(FetchFailure::Status(status)),
+            Self::Denied => Ok(FetchFailure::Denied),
+            Self::TooLarge => Ok(FetchFailure::TooLarge),
+            Self::Stopped(stop) => Err(stop),
+        }
+    }
+}
+
+/// The download was cancelled through its [`InstallControl`].
+#[derive(Debug)]
+struct Cancelled;
+
+/// Why the artifact did not end up verified in the cache.
+#[derive(Debug)]
+enum Interrupted {
+    /// A step failed with this error.
+    Failed(UpdateError),
+    /// The install was cancelled.
+    Cancelled,
+}
+
+impl From<UpdateError> for Interrupted {
+    fn from(error: UpdateError) -> Self {
+        Self::Failed(error)
+    }
+}
+
+/// Watches a response body as it arrives and may stop the read.
+trait BodyWatch {
+    /// What the watch stops a read with.
+    type Stop;
+
+    /// Called when the body starts, with `received` zero, and after each
+    /// chunk, with the bytes received so far and the `Content-Length` of
+    /// the response, when it has one. A break stops the read.
+    fn on_body(&mut self, received: u64, total: Option<u64>) -> ControlFlow<Self::Stop>;
+
+    /// Called once the whole body has arrived, with its length.
+    fn on_end(&mut self, received: u64, total: Option<u64>);
+}
+
+/// The watch of a feed or signature fetch: it sees nothing and stops
+/// nothing.
+struct Unwatched;
+
+impl BodyWatch for Unwatched {
+    type Stop = Infallible;
+
+    fn on_body(&mut self, _received: u64, _total: Option<u64>) -> ControlFlow<Infallible> {
+        ControlFlow::Continue(())
+    }
+
+    fn on_end(&mut self, _received: u64, _total: Option<u64>) {}
+}
+
+/// The watch of an artifact download: reports throttled progress and stops
+/// when the install is cancelled.
+struct ArtifactWatch<'a> {
+    /// The install's cancel switch.
+    control: &'a InstallControl,
+    /// Which reports are sent.
+    throttle: ProgressThrottle,
+    /// Where reports go.
+    progress: &'a mut dyn FnMut(InstallProgress),
+}
+
+impl<'a> ArtifactWatch<'a> {
+    /// Returns a watch reporting to `progress` and stopped by `control`.
+    fn new(control: &'a InstallControl, progress: &'a mut dyn FnMut(InstallProgress)) -> Self {
+        Self {
+            control,
+            throttle: ProgressThrottle::new(PROGRESS_INTERVAL),
+            progress,
+        }
+    }
+
+    /// Sends the last report, of `received` bytes, unless the last report
+    /// sent said the same.
+    fn finish(&mut self, received: u64, total: Option<u64>) {
+        if self.throttle.admit_final(Instant::now(), received) {
+            (self.progress)(InstallProgress::Downloading { received, total });
+        }
+    }
+}
+
+impl BodyWatch for ArtifactWatch<'_> {
+    type Stop = Cancelled;
+
+    fn on_body(&mut self, received: u64, total: Option<u64>) -> ControlFlow<Cancelled> {
+        if self.control.is_cancelled() {
+            return ControlFlow::Break(Cancelled);
+        }
+        if self.throttle.admit(Instant::now(), received) {
+            (self.progress)(InstallProgress::Downloading { received, total });
+        }
+        ControlFlow::Continue(())
+    }
+
+    fn on_end(&mut self, received: u64, total: Option<u64>) {
+        self.finish(received, total);
+    }
 }
 
 /// Parses a feed body, and the version it states, the way every copy does.
@@ -1035,28 +1275,30 @@ fn replace_with_private_file(destination: &Path, bytes: &[u8]) -> std::io::Resul
 ///
 /// # Errors
 ///
-/// As [`download_and_verify`], except for the cache directory, which the
-/// caller has prepared.
+/// As [`download_and_verify_watched`], except for the cache directory,
+/// which the caller has prepared.
 fn download_and_verify_into(
     config: &ClientConfig,
     offer: &VerifiedOffer,
     destination: &Path,
-) -> Result<()> {
+    watch: &mut ArtifactWatch<'_>,
+) -> std::result::Result<(), Interrupted> {
     // Checked when the offer was built, and again here: the offer may have
     // waited, and this is the last step before the request.
     if !config
         .host_policy
         .is_allowed_artifact_url(&offer.artifact_url)
     {
-        return Err(UpdateError::ArtifactUrl);
+        return Err(UpdateError::ArtifactUrl.into());
     }
-    let Fetched::Body(bytes) = fetch(config, &offer.artifact_url, Resource::Artifact)? else {
-        return Err(UpdateError::Network);
+    let Fetched::Body(bytes) = fetch_artifact(config, &offer.artifact_url, watch)? else {
+        return Err(UpdateError::Network.into());
     };
 
     verify_artifact(config, offer, &bytes)?;
 
-    replace_with_private_file(destination, &bytes).map_err(UpdateError::CacheIo)
+    replace_with_private_file(destination, &bytes)
+        .map_err(|error| Interrupted::Failed(UpdateError::CacheIo(error)))
 }
 
 /// Creates the cache directory for this user only.
@@ -1149,32 +1391,59 @@ fn fetch(config: &ClientConfig, url: &Url, resource: Resource) -> Result<Fetched
         append_identity_query(&mut request_url, config);
     }
 
-    fetch_following_redirects(config, request_url, resource).map_err(|failure| {
-        match (failure, resource) {
-            (FetchFailure::Denied, _) => UpdateError::ArtifactUrl,
-            // Retrying cannot help, so the user must not be told to check the
-            // connection.
-            (FetchFailure::TooLarge, Resource::Artifact) => UpdateError::ArtifactTooLarge,
-            // A feed published without its signature is a feed that cannot be
-            // trusted, which is a different finding from a server in trouble.
-            (FetchFailure::Status(404), Resource::ManifestSignature) => {
-                UpdateError::ManifestSignature
-            }
-            // An oversized manifest or signature is a broken feed and is
-            // reported like one that could not be fetched.
-            (FetchFailure::TooLarge, Resource::Manifest | Resource::ManifestSignature)
-            | (FetchFailure::Status(_) | FetchFailure::Network, _) => UpdateError::Network,
+    fetch_following_redirects(config, request_url, resource, &mut Unwatched).map_err(|failure| {
+        match failure.into_exchange_failure() {
+            Ok(failure) => fetch_error(failure, resource),
+            Err(never) => match never {},
         }
     })
 }
 
+/// Fetches the artifact at `url`, reporting to `watch`.
+///
+/// # Errors
+///
+/// As [`fetch`] for [`Resource::Artifact`], in [`Interrupted::Failed`], and
+/// [`Interrupted::Cancelled`] when `watch` stopped the read.
+fn fetch_artifact(
+    config: &ClientConfig,
+    url: &Url,
+    watch: &mut ArtifactWatch<'_>,
+) -> std::result::Result<Fetched, Interrupted> {
+    fetch_following_redirects(config, url.clone(), Resource::Artifact, watch).map_err(|failure| {
+        match failure.into_exchange_failure() {
+            Ok(failure) => Interrupted::Failed(fetch_error(failure, Resource::Artifact)),
+            Err(Cancelled) => Interrupted::Cancelled,
+        }
+    })
+}
+
+/// Returns the error a fetch of `resource` that ended in `failure` reports.
+fn fetch_error(failure: FetchFailure<Infallible>, resource: Resource) -> UpdateError {
+    match (failure, resource) {
+        (FetchFailure::Denied, _) => UpdateError::ArtifactUrl,
+        // Retrying cannot help, so the user must not be told to check the
+        // connection.
+        (FetchFailure::TooLarge, Resource::Artifact) => UpdateError::ArtifactTooLarge,
+        // A feed published without its signature is a feed that cannot be
+        // trusted, which is a different finding from a server in trouble.
+        (FetchFailure::Status(404), Resource::ManifestSignature) => UpdateError::ManifestSignature,
+        // An oversized manifest or signature is a broken feed and is
+        // reported like one that could not be fetched.
+        (FetchFailure::TooLarge, Resource::Manifest | Resource::ManifestSignature)
+        | (FetchFailure::Status(_) | FetchFailure::Network, _) => UpdateError::Network,
+        (FetchFailure::Stopped(never), _) => match never {},
+    }
+}
+
 /// Requests `url` and follows up to [`MAX_REDIRECTS`] redirects, checking
 /// every URL against the host policy before it is requested.
-fn fetch_following_redirects(
+fn fetch_following_redirects<W: BodyWatch>(
     config: &ClientConfig,
     mut url: Url,
     resource: Resource,
-) -> std::result::Result<Fetched, FetchFailure> {
+    watch: &mut W,
+) -> std::result::Result<Fetched, FetchFailure<W::Stop>> {
     let agent = agent_for(config, resource);
 
     let mut redirects_followed = 0_u8;
@@ -1197,7 +1466,7 @@ fn fetch_following_redirects(
 
         match response.status() {
             200 => {
-                let body = read_capped(response, resource.max_bytes())?;
+                let body = read_capped(response, resource.max_bytes(), watch)?;
                 return Ok(Fetched::Body(body));
             }
             204 => return Ok(Fetched::NoContent),
@@ -1267,18 +1536,29 @@ fn append_identity_query(url: &mut Url, config: &ClientConfig) {
 /// larger than `max_bytes`.
 ///
 /// The size is counted as the body arrives and not taken from
-/// `Content-Length`, which a server can omit or misstate.
-fn read_capped(
+/// `Content-Length`, which a server can omit or misstate. `Content-Length`
+/// is only passed on to `watch`, as the size to show.
+fn read_capped<W: BodyWatch>(
     response: ureq::Response,
     max_bytes: usize,
-) -> std::result::Result<Vec<u8>, FetchFailure> {
+    watch: &mut W,
+) -> std::result::Result<Vec<u8>, FetchFailure<W::Stop>> {
+    let total = response
+        .header("Content-Length")
+        .and_then(|length| length.trim().parse::<u64>().ok());
     let mut reader = response.into_reader();
     let mut body = Vec::new();
     let mut chunk = [0_u8; 8192];
 
+    if let ControlFlow::Break(stop) = watch.on_body(0, total) {
+        return Err(FetchFailure::Stopped(stop));
+    }
     loop {
         let count = match reader.read(&mut chunk) {
-            Ok(0) => return Ok(body),
+            Ok(0) => {
+                watch.on_end(byte_count(&body), total);
+                return Ok(body);
+            }
             Ok(count) => count,
             Err(_) => return Err(FetchFailure::Network),
         };
@@ -1286,7 +1566,15 @@ fn read_capped(
             return Err(FetchFailure::TooLarge);
         }
         body.extend_from_slice(&chunk[..count]);
+        if let ControlFlow::Break(stop) = watch.on_body(byte_count(&body), total) {
+            return Err(FetchFailure::Stopped(stop));
+        }
     }
+}
+
+/// Returns the length of `body` as a byte count for a progress report.
+fn byte_count(body: &[u8]) -> u64 {
+    u64::try_from(body.len()).unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]

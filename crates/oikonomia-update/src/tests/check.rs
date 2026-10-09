@@ -65,7 +65,7 @@ fn a_refused_connection_is_a_failed_check_and_writes_nothing() {
         "0.1.0",
         "linux-x86_64",
         cache.path().to_path_buf(),
-        HostPolicy::test_http_hosts(["127.0.0.1"]),
+        HostPolicy::with_http_hosts(["127.0.0.1"]),
         Duration::from_secs(2),
     )
     .expect("config");
@@ -95,7 +95,7 @@ fn timeout_check_is_failed_no_file_no_exec() {
         "0.1.0",
         "linux-x86_64",
         cache.path().to_path_buf(),
-        HostPolicy::test_http_hosts(["127.0.0.1"]),
+        HostPolicy::with_http_hosts(["127.0.0.1"]),
         Duration::from_millis(200),
     )
     .expect("config");
@@ -834,7 +834,7 @@ fn a_running_version_that_is_not_semver_is_refused_as_an_invalid_version() {
         "nightly",
         "linux-x86_64",
         cache.path().to_path_buf(),
-        HostPolicy::test_http_hosts(["127.0.0.1"]),
+        HostPolicy::with_http_hosts(["127.0.0.1"]),
         Duration::from_secs(1),
     )
     .expect_err("not semver");

@@ -80,7 +80,7 @@ where
 /// Dropping the returned future does not stop `work`: once the task is
 /// spawned, which happens when the future is first polled, it runs to the
 /// end and its result is discarded.
-pub(super) async fn run_blocking<T, F>(work: F) -> CommandResult<T>
+pub(crate) async fn run_blocking<T, F>(work: F) -> CommandResult<T>
 where
     T: Send + 'static,
     F: FnOnce() -> CommandResult<T> + Send + 'static,
@@ -760,6 +760,12 @@ pub(crate) mod ipc_test_support {
             let path = self.data_dir.join(name);
             std::fs::write(&path, bytes).unwrap();
             path.to_str().unwrap().to_owned()
+        }
+
+        /// Hands `value` to the app as managed state, as `start` hands it
+        /// the [`AppState`], for commands that read state of their own.
+        pub(crate) fn manage<T: Send + Sync + 'static>(&self, value: T) {
+            self.app.manage(value);
         }
 
         /// Returns the path a file named `name` has, or would have, in the

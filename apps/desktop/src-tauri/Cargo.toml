@@ -34,11 +34,19 @@ tauri-plugin-dialog = "2"
 tauri-plugin-window-state = "2"
 tauri-plugin-opener = "2"
 log = "0.4"
+semver = "1"
 thiserror = { workspace = true }
+
+[features]
+# Lets OIKONOMIA_UPDATE_FEED point a debug build at a local update feed, to
+# walk the update screens end to end. Debug builds only; release.yml never
+# enables it and fails a bundle whose binary names the variable.
+debug-feed = ["oikonomia-update/debug-feed"]
 
 [dev-dependencies]
 oikonomia-test-support = { workspace = true }
 proptest = { workspace = true }
+tempfile = { workspace = true }
 
 # The mock runtime, to invoke a command through the real IPC path in a test.
 # The feature adds no crate, and only test builds of this package enable it.

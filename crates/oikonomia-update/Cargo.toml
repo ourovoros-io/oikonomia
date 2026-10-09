@@ -13,13 +13,20 @@ publish = false
 base64 = { workspace = true }
 log = "0.4"
 minisign-verify = "0.3"
-semver = "1"
+semver = { version = "1", features = ["serde"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.11"
 thiserror = { workspace = true }
 ureq = { version = "2.12", default-features = false, features = ["tls"] }
 url = { version = "2", features = ["serde"] }
+
+[features]
+# Reads OIKONOMIA_UPDATE_FEED to point a debug build at a local feed
+# (src/debug_feed.rs). Debug builds only: an optimised build with it does not
+# compile, release.yml never enables it, and the bundle jobs fail when the
+# variable's name is found in a release binary.
+debug-feed = []
 
 [dev-dependencies]
 httptest = "0.16"

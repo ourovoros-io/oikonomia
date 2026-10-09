@@ -2966,6 +2966,7 @@ dependencies = [
  "oikonomia-test-support",
  "oikonomia-update",
  "proptest",
+ "semver",
  "serde",
  "serde_json",
  "tauri",
@@ -2975,6 +2976,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
  "tauri-plugin-window-state",
+ "tempfile",
  "thiserror 2.0.21",
  "zeroize",
 ]

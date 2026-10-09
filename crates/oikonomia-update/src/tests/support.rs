@@ -82,7 +82,7 @@ pub(super) fn install(
 ) -> crate::Result<InstallOutcome> {
     let offer = machine.begin_install()?;
     let outcome = install_offer(config, &offer, installer);
-    machine.finish_install(&outcome);
+    machine.finish_install(&outcome, offer);
     Ok(outcome)
 }
 
@@ -165,7 +165,7 @@ pub(super) fn server_url(server: &Server, path: &str) -> Url {
 pub(super) fn policy_for(server: &Server) -> HostPolicy {
     let url = server_url(server, "/");
     let host = url.host_str().expect("host").to_owned();
-    HostPolicy::test_http_hosts([host])
+    HostPolicy::with_http_hosts([host])
 }
 
 /// Returns a config for a `linux-x86_64` app at `current_version` whose
@@ -326,15 +326,41 @@ pub(super) fn serve_zero_bytes(
     piece_bytes: usize,
     pause: Duration,
 ) -> SocketAddr {
+    serve_zero_bytes_announcing(total_bytes, piece_bytes, pause, true)
+}
+
+/// As [`serve_zero_bytes`], but the response has no `Content-Length`: the
+/// body ends when the server closes the connection.
+pub(super) fn serve_zero_bytes_without_length(
+    total_bytes: usize,
+    piece_bytes: usize,
+    pause: Duration,
+) -> SocketAddr {
+    serve_zero_bytes_announcing(total_bytes, piece_bytes, pause, false)
+}
+
+/// Serves `total_bytes` zero bytes as [`serve_zero_bytes`] describes, with a
+/// `Content-Length` when `announce_length` is set.
+fn serve_zero_bytes_announcing(
+    total_bytes: usize,
+    piece_bytes: usize,
+    pause: Duration,
+    announce_length: bool,
+) -> SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let address = listener.local_addr().expect("address");
 
     std::thread::spawn(move || {
         let (mut stream, _peer) = listener.accept().expect("accept");
         read_request_head(&mut stream);
+        let length = if announce_length {
+            format!("Content-Length: {total_bytes}\r\n")
+        } else {
+            String::new()
+        };
         write!(
             stream,
-            "HTTP/1.1 200 OK\r\nContent-Length: {total_bytes}\r\nConnection: close\r\n\r\n"
+            "HTTP/1.1 200 OK\r\n{length}Connection: close\r\n\r\n"
         )
         .expect("response head");
 
@@ -383,7 +409,7 @@ pub(super) fn config_for_artifact_at(
         "0.1.0",
         "linux-x86_64",
         cache.to_path_buf(),
-        HostPolicy::test_http_hosts([feed_host, artifact_address.ip().to_string()]),
+        HostPolicy::with_http_hosts([feed_host, artifact_address.ip().to_string()]),
         Duration::from_millis(500),
     )
     .expect("config")
