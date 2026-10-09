@@ -20,7 +20,7 @@ Required secrets:
 - The Apple set: `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_TEAM_ID`, `APPLE_API_ISSUER`, `APPLE_API_KEY` (or `APPLE_API_KEY_ID`) and `APPLE_API_KEY_P8`.
 - The updater key: `TAURI_SIGNING_PRIVATE_KEY` (optional `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`).
 
-The workflow builds three platforms into one draft, one job after another: macOS on Apple Silicon (signed and notarized), Linux x86_64 (`.deb` and AppImage) and Windows x86_64 (NSIS installer, updater-signed, not Authenticode-signed). The Linux and Windows jobs install and run what they built (`scripts/smoke-linux.sh`, `scripts/smoke-windows.ps1`) and fail the release if the app does not start, draw its window, stay a single process, or come back after its window is closed.
+The workflow first creates one draft (the `draft release` job, no environment and no secrets), then builds three platforms side by side and uploads them to it: macOS on Apple Silicon (signed and notarized), Linux x86_64 (`.deb` and AppImage) and Windows x86_64 (NSIS installer, updater-signed, not Authenticode-signed). The three builds wait for Environment `release` at the same time, so one "Review deployments" click approves all of them. The Linux and Windows jobs install and run what they built (`scripts/smoke-linux.sh`, `scripts/smoke-windows.ps1`) and fail the release if the app does not start, draw its window, stay a single process, or come back after its window is closed.
 
 All three are published. The Windows installer ships without Authenticode only because `WINDOWS_SIGNING` is `none`; without that variable the release fails in its first job (see [Windows code signing](#windows-code-signing)).
 
@@ -57,7 +57,7 @@ Tauri app updates are signed with minisign.
 2. Confirm `ci.yml` is green on `main` and the repository variable `WINDOWS_SIGNING` is `none` (`gh variable list`).
 3. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 4. The Release workflow runs on that tag and uses Environment `release`.
-5. The workflow leaves a draft release. Download and test the build from the draft, then promote it (next section). The `latest.json` that tauri-action uploads is discarded; promotion assembles and signs the real one.
+5. The workflow leaves a draft release. Download and test the build from the draft, then promote it (next section). tauri-action is told not to upload its own `latest.json` (three builds uploading the same name at once would collide); promotion assembles and signs the real one.
 
 After the build, the macOS job checks the app with `codesign --verify --deep --strict`, requires a Developer ID Application authority, the team in `APPLE_TEAM_ID` and the hardened runtime, and requires `spctl` to report it notarized and `xcrun stapler validate` to pass. Tauri does not notarize the disk image, so the job notarizes it with the same App Store Connect key, staples it, checks it with `spctl` and `stapler`, and replaces the copy on the draft. Any failed check fails the release.
 
@@ -67,9 +67,9 @@ Right after each platform's bundle, and again during promotion for every file th
 
 The first job, `windows signing mode`, fails the run in seconds when `WINDOWS_SIGNING` is unset or is anything but `none`, before any approval or build. The Windows job checks it again, since a variable of the same name on Environment `release` overrides the repository one there.
 
-Until the Apple secrets are present, the macOS job **fails closed**: it will not publish an unsigned Mac build as if it were signed, and the Linux and Windows jobs, which run after it, do not start. Every job **fails closed** if `TAURI_SIGNING_PRIVATE_KEY` is empty, so no installer reaches the draft without its updater signature. macOS uses Tauri's official `APPLE_*` environment variables once those secrets are set.
+Until the Apple secrets are present, the macOS job **fails closed**: it will not publish an unsigned Mac build as if it were signed. The Linux and Windows jobs run beside it and are not stopped by that failure; promotion refuses a draft that lacks a platform, so nothing incomplete is published. Every job **fails closed** if `TAURI_SIGNING_PRIVATE_KEY` is empty, so no installer reaches the draft without its updater signature. macOS uses Tauri's official `APPLE_*` environment variables once those secrets are set.
 
-Optional: Actions → Release → Run workflow with `dry_run` still requires Environment `release` and does not attach a GitHub Release. Start it from `main`: the environment accepts deployments only from `main` and `v*` tags. The installers land on the run as workflow artifacts. From the command line: `gh workflow run release.yml --ref main -f dry_run=true`, then approve each of the three jobs under the run's "Review deployments". It needs the Apple secrets too: without them the macOS job fails and Linux and Windows never start.
+Optional: Actions → Release → Run workflow with `dry_run` still requires Environment `release` and does not attach a GitHub Release. Start it from `main`: the environment accepts deployments only from `main` and `v*` tags. The installers land on the run as workflow artifacts. From the command line: `gh workflow run release.yml --ref main -f dry_run=true`, then approve the three jobs together under the run's "Review deployments". It needs the Apple secrets too: without them the macOS job fails, and promotion would refuse that draft.
 
 ## Promote the draft to a published release
 

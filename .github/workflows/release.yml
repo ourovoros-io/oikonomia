@@ -11,8 +11,10 @@
 # scripts/require-windows-signing-mode.sh). Each job also refuses an updater
 # artifact larger than the client will download (`assemble_feed check-sizes`
 # reads `MAX_ARTIFACT_BYTES` from oikonomia-update).
-# Every job adds to the same draft; the jobs run one after another so they
-# cannot race to create it.
+# The draft is created once, by the `draft` job, before the three builds. The
+# builds then run side by side and only upload to it, so they cannot race to
+# create it, and their approvals for Environment `release` are all pending at
+# once: one "Review deployments" click approves the three.
 #
 # Trigger: version tags `v*` (e.g. v0.1.0). Optional workflow_dispatch with
 # dry_run still requires the GitHub Environment named `release` and never
@@ -76,8 +78,9 @@ on:
         type: boolean
         default: false
 
-# Read-only by default. Only the three build jobs, which attach binaries to
-# the tag's draft release, widen this to `contents: write`.
+# Read-only by default. Only the `draft` job and the three build jobs, which
+# create the tag's draft release and attach binaries to it, widen this to
+# `contents: write`.
 permissions:
   contents: read
 
@@ -107,13 +110,42 @@ jobs:
           WINDOWS_SIGNING: ${{ vars.WINDOWS_SIGNING }}
         run: bash ./scripts/require-windows-signing-mode.sh
 
+  # Creates the draft once, so the three builds below only upload to it. No
+  # environment and no secrets: it needs the workflow token and nothing else.
+  # Does nothing on dry_run or a non-tag run (RELEASE_TAG is empty there), and
+  # nothing on a re-run of a tag whose draft already exists.
+  draft:
+    name: draft release
+    needs: windows-signing-mode
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # creates the draft release
+    steps:
+      - name: Create the draft release for the tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RELEASE_TAG}" ]; then
+            echo "No release tag on this run; nothing to create."
+            exit 0
+          fi
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "A release for ${RELEASE_TAG} already exists."
+            exit 0
+          fi
+          gh release create "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" \
+            --verify-tag --draft \
+            --title "Oikonomia ${RELEASE_TAG}" \
+            --notes "Draft build. Test it, then run the Promote workflow to publish."
+
   macos:
     name: macos
-    needs: windows-signing-mode
+    needs: draft
     runs-on: macos-latest
     environment: release
     permissions:
-      contents: write # creates the draft release and uploads to it
+      contents: write # uploads to the draft release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -217,7 +249,9 @@ jobs:
           releaseBody: Draft build. Test it, then run the Promote workflow to publish.
           releaseDraft: true
           prerelease: false
-          uploadUpdaterJson: true
+          # Each build would upload its own latest.json to the same asset name
+          # at the same time; promotion discards it and assembles the real one.
+          uploadUpdaterJson: false
           uploadUpdaterSignatures: true
           uploadWorkflowArtifacts: true
           tauriScript: node ${{ github.workspace }}/web/node_modules/@tauri-apps/cli/tauri.js
@@ -322,9 +356,9 @@ jobs:
 
   linux:
     name: linux
-    # After macos, so the two jobs cannot race to create the draft release and
+    # After the draft exists, so the builds only upload to it and cannot
     # leave two drafts for one tag (promotion would then refuse to run).
-    needs: macos
+    needs: draft
     runs-on: ubuntu-22.04
     environment: release
     permissions:
@@ -403,7 +437,9 @@ jobs:
           releaseBody: Draft build. Test it, then run the Promote workflow to publish.
           releaseDraft: true
           prerelease: false
-          uploadUpdaterJson: true
+          # Each build would upload its own latest.json to the same asset name
+          # at the same time; promotion discards it and assembles the real one.
+          uploadUpdaterJson: false
           uploadUpdaterSignatures: true
           uploadWorkflowArtifacts: true
           tauriScript: node ${{ github.workspace }}/web/node_modules/@tauri-apps/cli/tauri.js
@@ -420,8 +456,8 @@ jobs:
 
   windows:
     name: windows
-    # After linux, for the same reason linux runs after macos: one draft.
-    needs: linux
+    # After the draft exists, for the same reason as linux.
+    needs: draft
     runs-on: windows-latest
     environment: release
     permissions:
@@ -518,7 +554,9 @@ jobs:
           releaseBody: Draft build. Test it, then run the Promote workflow to publish.
           releaseDraft: true
           prerelease: false
-          uploadUpdaterJson: true
+          # Each build would upload its own latest.json to the same asset name
+          # at the same time; promotion discards it and assembles the real one.
+          uploadUpdaterJson: false
           uploadUpdaterSignatures: true
           uploadWorkflowArtifacts: true
           tauriScript: node ${{ github.workspace }}/web/node_modules/@tauri-apps/cli/tauri.js
