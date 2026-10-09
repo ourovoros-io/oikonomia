@@ -269,7 +269,8 @@ export function TransactionsPage({
     )
   }
 
-  async function reload() {
+  /** The entry list and what its rows are drawn from. The dates play no part in it. */
+  async function loadList() {
     if (!entity) return
     const [e, a, d, roles] = await Promise.all([
       api.entryList(entity.id, {
@@ -284,10 +285,15 @@ export function TransactionsPage({
     setAccounts(a)
     setDefaults(roles)
     setDocs(d)
-    loadSeries()
     if (!categoryId && !walletId) {
       applyKindDefaults(kind, roles)
     }
+  }
+
+  /** After a change to the books: the list and the summary both. */
+  async function reload() {
+    loadSeries()
+    await loadList()
   }
 
   function closeCsvFlow() {
@@ -468,19 +474,27 @@ export function TransactionsPage({
       // book 300 ms later.
       setSearch('')
       setDebouncedSearch('')
+      // The summary's effect below runs again on these, for the new book.
+      setFromDate('')
+      setToDate('')
       // Gate the early return on tracked deps only: resetting `search`
       // alone changes no dependency, and returning then would skip the
       // reload and leave the old book's entries on screen.
-      if (debouncedSearch || fromDate || toDate || accountFilter) {
-        setFromDate('')
-        setToDate('')
+      if (debouncedSearch || accountFilter) {
         setAccountFilter('')
         return
       }
     }
-    void reload().catch((err) => setError(commandErrorMessage(err)))
+    void loadList().catch((err) => setError(commandErrorMessage(err)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entity?.id, debouncedSearch, fromDate, toDate, accountFilter])
+  }, [entity?.id, debouncedSearch, accountFilter])
+
+  // The dates scope the summary and nothing else, so a date change fetches
+  // the summary alone: it neither waits for the list nor fails with it.
+  useEffect(() => {
+    loadSeries()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entity?.id, fromDate, toDate])
 
   // The sidebar's Quick add lands here. Reporting it handled lets App reset the
   // intent, so a later remount does not reopen the dialog.

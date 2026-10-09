@@ -822,8 +822,8 @@
       "from": "Von",
       "to": "Bis",
       "account": "Konto",
-      "fromAria": "Filtern ab Datum",
-      "toAria": "Filtern bis Datum",
+      "fromAria": "Übersicht ab Datum",
+      "toAria": "Übersicht bis Datum",
       "allAccounts": "Alle Konten"
     },
     "summary": {

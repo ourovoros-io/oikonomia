@@ -5,9 +5,9 @@ const GAP = 8
 const EDGE = 8
 
 /** Where the field sits in the window, as `getBoundingClientRect` reports it. */
-export type AnchorBox = { top: number; bottom: number; left: number }
+type AnchorBox = { top: number; bottom: number; left: number }
 
-export type Size = { width: number; height: number }
+type Size = { width: number; height: number }
 
 function clamp(value: number, min: number, max: number): number {
   // A popover larger than the window keeps its top-left corner on screen.

@@ -38,6 +38,12 @@ describe('placePopover', () => {
     expect(place.left).toBe(960 - 8 - 256)
   })
 
+  test('is pulled back from the left edge of the window', () => {
+    const place = placePopover({ top: 100, bottom: 140, left: -40 }, calendar, window960)
+
+    expect(place.left).toBe(8)
+  })
+
   test('keeps its top-left corner on screen in a window smaller than itself', () => {
     const tiny = { width: 200, height: 200 }
     const place = placePopover({ top: 20, bottom: 60, left: 40 }, calendar, tiny)
