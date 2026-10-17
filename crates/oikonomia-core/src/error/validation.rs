@@ -209,6 +209,15 @@ pub enum ValidationError {
         code: String,
     },
 
+    /// Rows of a bank import are booked to no category the import lists:
+    /// none, or one that is not an active expense account for an expense or
+    /// an active income account for an income of the book.
+    #[error("import rows without a listed category: {count}")]
+    ImportCategoryRequired {
+        /// How many rows of the batch.
+        count: usize,
+    },
+
     /// Both sides of an entry resolve to the same account.
     #[error("entry needs two different accounts")]
     SameAccount,
@@ -323,6 +332,7 @@ impl ValidationError {
         "account_inactive",
         "account_required",
         "account_wrong_type",
+        "import_category_required",
         "same_account",
         "amount_not_positive",
         "bill_status_required",
@@ -358,6 +368,7 @@ impl ValidationError {
             Self::AccountInactive { .. } => "account_inactive",
             Self::AccountRequired { .. } => "account_required",
             Self::AccountWrongType { .. } => "account_wrong_type",
+            Self::ImportCategoryRequired { .. } => "import_category_required",
             Self::SameAccount => "same_account",
             Self::AmountNotPositive => "amount_not_positive",
             Self::BillStatusRequired => "bill_status_required",
@@ -408,6 +419,9 @@ impl ValidationError {
             Self::AccountWrongType { role, code } => {
                 params.insert("code", code.clone());
                 params.insert("role", role.identifier().to_owned());
+            }
+            Self::ImportCategoryRequired { count } => {
+                params.insert("count", count.to_string());
             }
             Self::InvalidDate { value } => {
                 params.insert("value", value.clone());
@@ -639,6 +653,14 @@ mod tests {
     }
 
     #[test]
+    fn import_category_required_reports_how_many_rows() {
+        let error = ValidationError::ImportCategoryRequired { count: 3 };
+
+        assert_eq!(error.code(), "import_category_required");
+        assert_eq!(params_of(&error), vec![("count", "3".to_owned())]);
+    }
+
+    #[test]
     fn invalid_date_reports_the_offending_text() {
         let error = ValidationError::InvalidDate {
             value: "2026-13-01".into(),
@@ -691,6 +713,7 @@ mod tests {
             ValidationError::AccountInactive { .. },
             ValidationError::AccountRequired { .. },
             ValidationError::AccountWrongType { .. },
+            ValidationError::ImportCategoryRequired { .. },
             ValidationError::SameAccount,
             ValidationError::AmountNotPositive,
             ValidationError::BillStatusRequired,
@@ -732,6 +755,7 @@ mod tests {
                 role: AccountRole::Category,
                 code: "x".into(),
             },
+            ValidationError::ImportCategoryRequired { count: 2 },
             ValidationError::SameAccount,
             ValidationError::AmountNotPositive,
             ValidationError::BillStatusRequired,

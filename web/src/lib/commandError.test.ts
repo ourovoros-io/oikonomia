@@ -221,6 +221,18 @@ describe('command error localization', () => {
     ).toBe('“31/31/2026” is not a valid date.')
   })
 
+  it('says rows to import need a category, with the count, never the raw text', () => {
+    const refused = { code: 'import_category_required', message: 'raw', params: { count: '2' } }
+
+    expect(commandErrorMessage(refused)).toBe(
+      'Some rows to import have no category (2). Choose a category for each before importing.',
+    )
+    setLocale('el')
+    expect(commandErrorMessage(refused)).toBe(
+      'Ορισμένες γραμμές προς εισαγωγή δεν έχουν κατηγορία (2). Επιλέξτε κατηγορία για καθεμία πριν από την εισαγωγή.',
+    )
+  })
+
   it('has a sentence for every mapping problem Rust names, in every language', () => {
     const { param, keys } = VARIANT_KEYS.csv_invalid_mapping
 
