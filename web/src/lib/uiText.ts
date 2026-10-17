@@ -12,7 +12,7 @@ export type UiText = {
 }
 
 /**
- * Coded text -> catalog key: analyzer notes and CSV import row problems. Every code Rust can emit is listed in
+ * Coded text -> catalog key: analyzer notes, CSV import row problems and CSV column labels. Every code Rust can emit is listed in
  * uiTextCodes.json, and a test fails when the two sides differ.
  */
 export const NOTE_CODE_KEYS: Record<string, string> = {
@@ -47,6 +47,9 @@ export const NOTE_CODE_KEYS: Record<string, string> = {
   csv_zero_amount: 'tx.csv.rowProblem.zeroAmount',
   csv_amount_overflow: 'tx.csv.rowProblem.amountOverflow',
   csv_unreadable_row: 'tx.csv.rowProblem.unreadable',
+  csv_unnamed_column: 'tx.csv.column.unnamed',
+  csv_unnamed_repeated_column: 'tx.csv.column.unnamedRepeated',
+  csv_repeated_column: 'tx.csv.column.repeated',
 }
 
 /** Analyzer status hint code -> catalog key. */

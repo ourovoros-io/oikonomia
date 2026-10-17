@@ -344,6 +344,61 @@ pub(crate) fn count_hidden_entries_as_of(
     Ok(usize::try_from(count).unwrap_or(0))
 }
 
+/// Counts the hidden active entries a dashboard's figures include: those
+/// dated in `from..=to` that touch an income or expense account, and those
+/// dated through `assets_as_of` that touch an asset account.
+///
+/// The first set is [`count_hidden_pnl_entries`] over the window, the second
+/// the part of [`count_hidden_entries_as_of`] that reaches the assets total,
+/// so a hidden transfer between two liabilities is left out. Summing the two
+/// counts would count an expense paid from an asset twice, so one query
+/// takes their union. Like the balance sheet's count it includes a transfer
+/// between two asset accounts, whose lines are in the total although they
+/// cancel.
+///
+/// # Errors
+///
+/// [`Error::Database`] when the query fails.
+pub(crate) fn count_hidden_dashboard_entries(
+    conn: &Connection,
+    entity_id: EntityId,
+    from: Date,
+    to: Date,
+    assets_as_of: Date,
+) -> Result<usize> {
+    let sql = format!(
+        "
+        SELECT COUNT(DISTINCT je.id)
+        FROM journal_entries je
+        JOIN journal_lines jl ON jl.entry_id = je.id
+        JOIN accounts a ON a.id = jl.account_id
+        WHERE je.entity_id = ?1
+          AND je.hidden = 1
+          AND {ACTIVE_ENTRY_PREDICATE}
+          AND (
+            (a.account_type IN ('income', 'expense')
+              AND je.entry_date >= ?2 AND je.entry_date <= ?3)
+            OR (a.account_type = 'asset' AND je.entry_date <= ?4)
+          )
+        "
+    );
+
+    let count: i64 = conn
+        .query_row(
+            &sql,
+            rusqlite::params![
+                entity_id.to_string(),
+                format_date(from),
+                format_date(to),
+                format_date(assets_as_of),
+            ],
+            |row| row.get(0),
+        )
+        .database("count hidden dashboard entries")?;
+
+    Ok(usize::try_from(count).unwrap_or(0))
+}
+
 /// Parses the text [`AccountType::identifier`] writes into
 /// `accounts.account_type`.
 ///

@@ -17,14 +17,14 @@ afterEach(() => {
 
 const DETECTED: CsvImportPreview = {
   source: 'first.csv',
-  headers: ['Date', 'Text', 'Amount'],
+  headers: [{ name: 'Date' }, { name: 'Text' }, { name: 'Amount' }],
   detected_mapping: { date: 'Date', description: 'Text', amount: 'Amount' },
   rows: [],
 }
 
 const AMOUNT_UNDETECTED: CsvImportPreview = {
   source: 'second.csv',
-  headers: ['Date', 'Memo', 'Value'],
+  headers: [{ name: 'Date' }, { name: 'Memo' }, { name: 'Value' }],
   detected_mapping: { date: 'Date', description: 'Memo' },
   missing_columns: ['amount'],
   rows: [],

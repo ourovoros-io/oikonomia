@@ -918,16 +918,12 @@ fn account_id_text(id: Option<AccountId>) -> Option<String> {
 /// [`Error::VaultCorrupt`] naming `recurring_templates.kind` when `stored` is
 /// none of those strings.
 fn parse_kind(stored: &str) -> Result<SimpleEntryKind> {
-    match stored {
-        "expense" => Ok(SimpleEntryKind::Expense),
-        "income" => Ok(SimpleEntryKind::Income),
-        "bill" => Ok(SimpleEntryKind::Bill),
-        "transfer" => Ok(SimpleEntryKind::Transfer),
-        other => Err(corrupt_column(
+    SimpleEntryKind::from_identifier(stored).ok_or_else(|| {
+        corrupt_column(
             "recurring_templates.kind",
-            format_args!("unknown recurring kind: {other}"),
-        )),
-    }
+            format_args!("unknown recurring kind: {stored}"),
+        )
+    })
 }
 
 /// Parses the text [`RecurringCadence::identifier`] writes.

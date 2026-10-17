@@ -41,6 +41,7 @@ const posted: RecurringPostResult = {
     },
     lines: [],
     is_voided: false,
+    listed_kind: 'expense',
   },
   template: { ...row, next_date: '2026-09-01', due: false },
 }

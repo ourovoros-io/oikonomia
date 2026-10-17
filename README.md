@@ -236,6 +236,7 @@ the author's model card declares as CC BY-SA 4.0; see `apps/desktop/src-tauri/re
 | `crates/oikonomia-core` | Domain, vault, ledger, reports |
 | `crates/oikonomia-update` | Signed update check (network isolated from core) |
 | `crates/macos-dock-icon` | Sets the macOS Dock icon in dev mode (`make app`) |
+| `crates/appindicator-probe` | Checks the Linux tray library loads before the tray is created |
 | `crates/oikonomia-test-support` | Test-only macros shared by the crates |
 | `apps/desktop/src-tauri` | Tauri shell + IPC |
 | `web` | React UI |

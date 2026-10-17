@@ -2,16 +2,17 @@ import { kindDefaultAccounts, type AccountLike } from './simpleEntry'
 import type {
   AccountDefaults,
   CsvColumnMapping,
+  CsvHeader,
   CsvImportPreviewRow,
   CsvRequiredColumn,
   LastRoleAccounts,
   SimpleEntryInput,
 } from './api'
 import { t, type MessageKey } from './i18n'
-import type { UiText } from './uiText'
+import { renderUiText, type UiText } from './uiText'
 
 /** True when preview includes a header row to drive mapping selects. */
-export function previewHasColumnMap(preview: { headers?: string[] | null }): boolean {
+export function previewHasColumnMap(preview: { headers?: CsvHeader[] | null }): boolean {
   return (preview.headers?.length ?? 0) > 0
 }
 
@@ -48,11 +49,29 @@ function eqIgnoreAsciiCase(a: string, b: string): boolean {
   return a.localeCompare(b, 'en', { sensitivity: 'accent' }) === 0
 }
 
-/** Pick the file header that matches a detected name (ASCII case-insensitive). */
-export function matchHeader(headers: string[], name: string | null | undefined): string {
+/**
+ * Pick the column whose name matches a detected name. An exact match wins:
+ * Rust names are unique only up to ASCII case, and `eqIgnoreAsciiCase` also
+ * folds non-ASCII case, so `Ποσό` and `ΠΟΣΌ` are two columns it cannot tell
+ * apart.
+ */
+export function matchHeader(headers: CsvHeader[], name: string | null | undefined): string {
   const needle = name?.trim()
   if (!needle) return ''
-  return headers.find((h) => eqIgnoreAsciiCase(h.trim(), needle)) ?? ''
+  const exact = headers.find((h) => h.name === needle)
+  if (exact) return exact.name
+  return headers.find((h) => eqIgnoreAsciiCase(h.name.trim(), needle))?.name ?? ''
+}
+
+/**
+ * What a Map columns option shows for a column: the header as written, or the
+ * worded label of a name Rust made up for an empty or repeated header. A label
+ * this UI cannot word (a version mismatch, logged by `renderUiText`) falls
+ * back to the made-up name, since an option with no text cannot be chosen.
+ */
+export function headerLabel(header: CsvHeader): string {
+  if (!header.label) return header.name
+  return renderUiText(header.label, null) || header.name
 }
 
 export function amountModeFromMapping(mapping: CsvColumnMapping): CsvMapDraft['amountMode'] {
@@ -63,7 +82,7 @@ export function amountModeFromMapping(mapping: CsvColumnMapping): CsvMapDraft['a
   return 'amount'
 }
 
-export function draftFromDetected(headers: string[], detected: CsvColumnMapping): CsvMapDraft {
+export function draftFromDetected(headers: CsvHeader[], detected: CsvColumnMapping): CsvMapDraft {
   const amountMode = amountModeFromMapping(detected)
   return {
     date: matchHeader(headers, detected.date),
@@ -249,6 +268,26 @@ export function rowCategoryOptions<A extends AccountLike>(
   if (kind === 'expense') return lists.expense
   if (kind === 'income') return lists.income
   return []
+}
+
+/**
+ * Whether an expense or income row has no category its list offers: none
+ * chosen, or one that is archived or of the other kind. Core refuses to
+ * import such a row (`import_category_required`); this lets the preview say
+ * so before the user tries.
+ */
+export function rowNeedsCategory<A extends AccountLike>(
+  suggested: Pick<SimpleEntryInput, 'kind' | 'category_account_id'> | null,
+  lists: { expense: readonly A[]; income: readonly A[] },
+): boolean {
+  if (suggested?.kind !== 'expense' && suggested?.kind !== 'income') return false
+  const options = rowCategoryOptions(suggested.kind, lists)
+  return !options.some((account) => account.id === suggested.category_account_id)
+}
+
+/** The sentence that keeps Import disabled while `n` selected rows need a category. */
+export function needsCategoryMessage(n: number): string {
+  return t(n === 1 ? 'tx.csv.needsCategoryOne' : 'tx.csv.needsCategoryMany', { n })
 }
 
 /**

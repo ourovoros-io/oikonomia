@@ -1,12 +1,14 @@
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { AccountDefaults, CsvColumnMapping, CsvImportPreviewRow, SimpleEntryInput } from './api'
 import mappingVerdicts from './csvMappingVerdicts.json'
+import { resetI18nForTests, setLocale } from './i18n'
 import {
   applyBulkAccounts,
   csvImportAccountDefaults,
   defaultChecked,
   draftFromDetected,
   draftToMapping,
+  headerLabel,
   initialBulkAccounts,
   mapNeededKey,
   mappingProblemKey,
@@ -17,6 +19,7 @@ import {
   previewHasColumnMap,
   previewSubtitle,
   rowCategoryOptions,
+  rowNeedsCategory,
   rowSelectable,
 } from './csvImport'
 
@@ -93,6 +96,30 @@ describe('rowCategoryOptions', () => {
   test('bills and transfers get no list', () => {
     expect(rowCategoryOptions('bill', lists)).toEqual([])
     expect(rowCategoryOptions('transfer', lists)).toEqual([])
+  })
+})
+
+describe('rowNeedsCategory', () => {
+  const lists = {
+    expense: [{ id: 'exp1', name: 'Groceries', account_type: 'expense', is_active: true }],
+    income: [{ id: 'inc1', name: 'Salary', account_type: 'income', is_active: true }],
+  } as const
+
+  test('a row booked to a listed account of its kind needs nothing', () => {
+    expect(rowNeedsCategory(suggested('expense'), lists)).toBe(false)
+    expect(rowNeedsCategory(suggested('income'), lists)).toBe(false)
+  })
+
+  test('a row with no category, an unlisted one or one of the other kind needs one', () => {
+    expect(rowNeedsCategory({ kind: 'expense', category_account_id: null }, lists)).toBe(true)
+    expect(rowNeedsCategory({ kind: 'expense', category_account_id: 'archived' }, lists)).toBe(true)
+    expect(rowNeedsCategory({ kind: 'income', category_account_id: 'exp1' }, lists)).toBe(true)
+  })
+
+  test('bills, transfers and unreadable rows are not asked for one', () => {
+    expect(rowNeedsCategory({ kind: 'bill', category_account_id: null }, lists)).toBe(false)
+    expect(rowNeedsCategory({ kind: 'transfer', category_account_id: null }, lists)).toBe(false)
+    expect(rowNeedsCategory(null, lists)).toBe(false)
   })
 })
 
@@ -215,7 +242,7 @@ describe('initialBulkAccounts', () => {
 })
 
 describe('column mapping helpers', () => {
-  const headers = ['Date', 'Payee', 'Notes', 'Amount']
+  const headers = ['Date', 'Payee', 'Notes', 'Amount'].map((name) => ({ name }))
   const detected: CsvColumnMapping = {
     date: 'Date',
     description: 'Payee',
@@ -228,6 +255,12 @@ describe('column mapping helpers', () => {
   test('matchHeader is ASCII case-insensitive', () => {
     expect(matchHeader(headers, 'payee')).toBe('Payee')
     expect(matchHeader(headers, 'DATE')).toBe('Date')
+  })
+
+  test('matchHeader prefers the column of exactly that name', () => {
+    const greek = [{ name: 'Ποσό' }, { name: 'ΠΟΣΌ' }]
+    expect(matchHeader(greek, 'ΠΟΣΌ')).toBe('ΠΟΣΌ')
+    expect(matchHeader(greek, 'Ποσό')).toBe('Ποσό')
   })
 
   test('draftFromDetected pre-fills header names', () => {
@@ -279,7 +312,7 @@ describe('column mapping helpers', () => {
   })
 
   test('an edited mapping keeps the detected direction column', () => {
-    const typed = [...headers, 'Type']
+    const typed = [...headers, { name: 'Type' }]
     const draft = draftFromDetected(typed, { ...detected, direction: 'type' })
     expect(draft.direction).toBe('Type')
 
@@ -289,7 +322,7 @@ describe('column mapping helpers', () => {
   })
 
   test('debit and credit columns drop the direction column', () => {
-    const draft = draftFromDetected([...headers, 'Type'], { ...detected, direction: 'Type' })
+    const draft = draftFromDetected([...headers, { name: 'Type' }], { ...detected, direction: 'Type' })
     const mapping = draftToMapping({
       ...draft,
       amountMode: 'debit_credit',
@@ -311,7 +344,7 @@ describe('column mapping helpers', () => {
   })
 
   test('previewHasColumnMap is false until headers exist', () => {
-    expect(previewHasColumnMap({ headers: ['Date'] })).toBe(true)
+    expect(previewHasColumnMap({ headers: [{ name: 'Date' }] })).toBe(true)
     expect(previewHasColumnMap({ headers: [] })).toBe(false)
     expect(previewHasColumnMap({})).toBe(false)
   })
@@ -329,5 +362,50 @@ describe('mapNeededKey', () => {
     expect(mapNeededKey([])).toBeNull()
     expect(mapNeededKey(undefined)).toBeNull()
     expect(mapNeededKey(null)).toBeNull()
+  })
+})
+
+describe('headerLabel', () => {
+  afterEach(() => {
+    resetI18nForTests()
+    vi.restoreAllMocks()
+  })
+
+  const unnamed = {
+    name: 'Column 2',
+    label: { code: 'csv_unnamed_column', params: { position: '2' } },
+  }
+  const repeated = {
+    name: 'Amount (2)',
+    label: { code: 'csv_repeated_column', params: { name: 'Amount', occurrence: '2' } },
+  }
+
+  test('a clean header is shown as written', () => {
+    expect(headerLabel({ name: 'Ποσό' })).toBe('Ποσό')
+    expect(headerLabel({ name: 'Date', label: null })).toBe('Date')
+  })
+
+  test('a made-up name is shown in the user language, not as Rust spelled it', () => {
+    setLocale('el')
+    expect(headerLabel(unnamed)).toBe('Στήλη 2')
+    expect(headerLabel(repeated)).toBe('Amount (2)')
+
+    setLocale('de')
+    expect(headerLabel(unnamed)).toBe('Spalte 2')
+  })
+
+  test('an empty header whose plain name was taken shows its number', () => {
+    const bumped = {
+      name: 'Column 1 (2)',
+      label: { code: 'csv_unnamed_repeated_column', params: { position: '1', occurrence: '2' } },
+    }
+    expect(headerLabel(bumped)).toBe('Column 1 (2)')
+    setLocale('fr')
+    expect(headerLabel(bumped)).toBe('Colonne 1 (2)')
+  })
+
+  test('a label this UI cannot word falls back to the name', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(headerLabel({ name: 'Column 2', label: { code: 'csv_future_label' } })).toBe('Column 2')
   })
 })

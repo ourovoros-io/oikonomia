@@ -11,6 +11,7 @@ master-password unlock.
 | `crates/oikonomia-core` | Domain, vault, ledger, reports |
 | `crates/oikonomia-update` | Signed update check, the only network path |
 | `crates/macos-dock-icon` | macOS Dock icon in dev mode |
+| `crates/appindicator-probe` | Linux: checks the appindicator library loads before the tray is created |
 | `crates/oikonomia-test-support` | Test-only macros shared by the crates (a dev-dependency) |
 | `apps/desktop/src-tauri` | Tauri shell: windows, tray, watchdog (`state.rs`), updates |
 | `apps/desktop/src-tauri/src/commands/` | IPC commands, one module per subject; shared helpers and the mock-IPC test support in `support.rs` |
@@ -98,5 +99,5 @@ See [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Schema
 
-- `vault_meta.schema_version` starts at 1 on init; `db::migrate` upgrades to current (v9 = `replaces_entry_id`, the entry a correction replaced; v8 = indexes on void links and entry lines; v7 = recurring templates).
+- `vault_meta.schema_version` starts at 1 on init; `db::migrate` upgrades to current (v10 = `journal_entries.kind`, the simple-entry kind an entry was posted as (a void reversal takes the original's), NULL for manual entries, opening balances and older rows; v9 = `replaces_entry_id`, the entry a correction replaced; v8 = indexes on void links and entry lines; v7 = recurring templates).
 - Migrations run on vault init and unlock.

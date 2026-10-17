@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useState } from 'react'
 import { Modal } from './Modal'
 import { Button, Field, Select } from './ui'
 import { cn } from '../lib/cn'
@@ -7,9 +7,11 @@ import {
   applyBulkAccounts,
   defaultChecked,
   initialBulkAccounts,
+  needsCategoryMessage,
   postLabel,
   previewSubtitle,
   rowCategoryOptions,
+  rowNeedsCategory,
   rowSelectable,
 } from '../lib/csvImport'
 import { useI18n } from '../lib/I18nProvider'
@@ -29,6 +31,36 @@ type Props = {
   error?: string | null
   onClose: () => void
   onConfirm: (input: { rows: SimpleEntryInput[]; include_duplicates: boolean }) => void
+}
+
+/** What the Note column says about a row: why it cannot or should not be imported as it is. */
+function RowNote({
+  row,
+  needsCategory,
+  currency,
+}: {
+  row: DraftRow
+  needsCategory: boolean
+  currency: Currency
+}) {
+  const { t } = useI18n()
+  if (row.error) {
+    return (
+      <span className="text-[var(--color-danger)]">
+        {renderUiText(row.error, currency) || t('tx.csv.rowProblem.unreadable')}
+      </span>
+    )
+  }
+  return (
+    <>
+      {needsCategory ? (
+        <span className="block text-[var(--color-danger)]">{t('tx.csv.needsCategory')}</span>
+      ) : null}
+      {row.duplicate ? (
+        <span className="block text-[var(--color-warning)]">{t('tx.csv.duplicate')}</span>
+      ) : null}
+    </>
+  )
 }
 
 function kindLabelKey(kind: SimpleEntryInput['kind']): string {
@@ -96,6 +128,7 @@ export function CsvPreviewModal({
   onConfirm,
 }: Props) {
   const { t } = useI18n()
+  const needsCategoryId = useId()
   const [drafts, setDrafts] = useState<DraftRow[]>([])
   const [bulkWallet, setBulkWallet] = useState('')
   const [bulkCategory, setBulkCategory] = useState('')
@@ -123,7 +156,15 @@ export function CsvPreviewModal({
     return { list: [...expenseAccounts, ...incomeAccounts], type: catType ?? null }
   }, [bulkCategory, expenseAccounts, incomeAccounts])
 
+  const categoryLists = useMemo(
+    () => ({ expense: expenseAccounts, income: incomeAccounts }),
+    [expenseAccounts, incomeAccounts],
+  )
   const selected = drafts.filter((row) => row.checked && row.suggested)
+  // Core refuses a batch with any such row, so Import waits until each has one.
+  const needingCategory = selected.filter((row) =>
+    rowNeedsCategory(row.suggested, categoryLists),
+  ).length
   const duplicateCount = preview?.rows.filter((row) => row.duplicate).length ?? 0
   const selectable = drafts.filter(rowSelectable)
   const allSelectableChecked = selectable.length > 0 && selectable.every((row) => row.checked)
@@ -170,7 +211,7 @@ export function CsvPreviewModal({
 
   function confirm() {
     const rows = selected.map((row) => row.suggested).filter((s): s is SimpleEntryInput => s != null)
-    if (rows.length === 0) return
+    if (rows.length === 0 || needingCategory > 0) return
     onConfirm({
       rows,
       include_duplicates: selected.some((row) => row.duplicate),
@@ -331,10 +372,7 @@ export function CsvPreviewModal({
                     {kind ? (
                       <RowCategoryCell
                         row={row}
-                        options={rowCategoryOptions(kind, {
-                          expense: expenseAccounts,
-                          income: incomeAccounts,
-                        })}
+                        options={rowCategoryOptions(kind, categoryLists)}
                         disabled={busy}
                         onChange={(id) => setRowCategory(row.source_row, id)}
                       />
@@ -343,13 +381,11 @@ export function CsvPreviewModal({
                     )}
                   </td>
                   <td className="px-3 py-2.5 text-xs">
-                    {row.error ? (
-                      <span className="text-[var(--color-danger)]">
-                        {renderUiText(row.error, currency) || t('tx.csv.rowProblem.unreadable')}
-                      </span>
-                    ) : row.duplicate ? (
-                      <span className="text-[var(--color-warning)]">{t('tx.csv.duplicate')}</span>
-                    ) : null}
+                    <RowNote
+                      row={row}
+                      needsCategory={rowNeedsCategory(row.suggested, categoryLists)}
+                      currency={currency}
+                    />
                   </td>
                 </tr>
               )
@@ -358,15 +394,21 @@ export function CsvPreviewModal({
         </table>
       </div>
 
-      <div className="mt-5 flex justify-end gap-2 border-t border-[var(--color-border)] pt-4">
+      <div className="mt-5 flex flex-wrap items-center justify-end gap-2 border-t border-[var(--color-border)] pt-4">
+        {needingCategory > 0 ? (
+          <p id={needsCategoryId} className="mr-auto text-sm text-[var(--color-danger)]">
+            {needsCategoryMessage(needingCategory)}
+          </p>
+        ) : null}
         <Button type="button" variant="secondary" disabled={busy} onClick={onClose}>
           {t('common.cancel')}
         </Button>
         <Button
           type="button"
-          disabled={selected.length === 0}
+          disabled={selected.length === 0 || needingCategory > 0}
           busy={busy}
           onClick={confirm}
+          aria-describedby={needingCategory > 0 ? needsCategoryId : undefined}
         >
           {postLabel(selected.length)}
         </Button>

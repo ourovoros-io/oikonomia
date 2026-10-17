@@ -4,6 +4,7 @@ import type {
   AccountType,
   DocumentMeta,
   Entity,
+  ListedEntryKind,
   PostedEntryView,
   RecurringTemplate,
 } from '../../src/lib/api'
@@ -231,7 +232,14 @@ function line(entryId: string, n: number, account: string, debit: number, credit
   }
 }
 
-function entry(id: string, date: string, description: string, debitAcc: string, creditAcc: string, amount: number): PostedEntryView {
+function entry(
+  id: string,
+  date: string,
+  description: string,
+  [debitAcc, creditAcc]: [string, string],
+  amount: number,
+  listedKind: ListedEntryKind,
+): PostedEntryView {
   return {
     entry: {
       id,
@@ -244,6 +252,7 @@ function entry(id: string, date: string, description: string, debitAcc: string, 
     },
     lines: [line(id, 1, debitAcc, amount, 0), line(id, 2, creditAcc, 0, amount)],
     is_voided: false,
+    listed_kind: listedKind,
   }
 }
 
@@ -273,7 +282,7 @@ export function buildLedger(lang: DemoLang): DemoLedger {
   }))
 
   const entries: PostedEntryView[] = [
-    entry('e-opening', '2026-06-01', OPENING[lang], '1020', '3000', 850000),
+    entry('e-opening', '2026-06-01', OPENING[lang], ['1020', '3000'], 850000, 'other'),
   ]
   const documents: DocumentMeta[] = []
 
@@ -286,7 +295,7 @@ export function buildLedger(lang: DemoLang): DemoLedger {
       const amount = p.amount(m)
       const [debit, credit] = p.kind === 'income' ? [p.wallet, p.account] : [p.account, p.wallet]
 
-      entries.push(entry(id, date, p.description[lang], debit, credit, amount))
+      entries.push(entry(id, date, p.description[lang], [debit, credit], amount, p.kind))
 
       if (p.receipt) {
         documents.push({

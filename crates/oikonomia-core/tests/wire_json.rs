@@ -18,16 +18,17 @@
 )]
 
 use oikonomia_core::csv::{
-    CsvImportPostInput, CsvImportPostResult, CsvImportPreview, CsvImportPreviewRow,
+    CsvHeader, CsvImportPostInput, CsvImportPostResult, CsvImportPreview, CsvImportPreviewRow,
     CsvRequiredColumn, JournalCsvLine,
 };
 use oikonomia_core::documents::{AnalyzerStatus, DocumentMeta, DocumentSuggestion};
 use oikonomia_core::domain::{Account, Entity, JournalEntry, JournalLine};
 use oikonomia_core::ledger::{
     BalanceSheet, CashFlowSeries, CreateAccount, CreateEntity, CreateRecurringTemplateRequest,
-    DashboardSummary, EntryHistoryItem, JournalLineRequest, PnL, PostJournalRequest,
-    PostSimpleEntryRequest, PostedEntryView, RecurringPostResult, RecurringTemplateView,
-    RegisterLine, TrialBalance, UpdateAccount, UpdateRecurringTemplateRequest, VoidResult,
+    DashboardSummary, EntryHistoryItem, JournalLineRequest, ListedEntryKind, PnL,
+    PostJournalRequest, PostSimpleEntryRequest, PostedEntryView, RecurringPostResult,
+    RecurringTemplateView, RegisterLine, TrialBalance, UpdateAccount,
+    UpdateRecurringTemplateRequest, VoidResult,
 };
 use oikonomia_core::prefs::{UiPrefs, load_ui_prefs_view, ui_prefs_path};
 use serde::Serialize;
@@ -148,8 +149,17 @@ fn posted_entry_view() {
         r#""amount_minor":0},"memo":null},{"id":"55555555-5555-4555-8555-555555555555","#,
         r#""entry_id":"33333333-3333-4333-8333-333333333333","account_id":"#,
         r#""66666666-6666-4666-8666-666666666666","debit":{"amount_minor":0},"credit":{"#,
-        r#""amount_minor":4500},"memo":null}],"is_voided":false}"#,
+        r#""amount_minor":4500},"memo":null}],"is_voided":false,"listed_kind":"expense"}"#,
     ));
+}
+
+/// The UI words each of these codes, so a renamed one would show a missing
+/// translation key.
+#[test]
+fn listed_entry_kind_of_each_code() {
+    for code in ["expense", "income", "bill", "transfer", "other"] {
+        assert_json_is_pinned::<ListedEntryKind>(&format!(r#""{code}""#));
+    }
 }
 
 #[test]
@@ -300,7 +310,8 @@ fn recurring_post_result() {
         r#"{"entry":{"entry":{"id":"33333333-3333-4333-8333-333333333333","entity_id":"#,
         r#""11111111-1111-4111-8111-111111111111","entry_date":"2026-08-10","description":"#,
         r#""Power","reference":null,"status":"posted","hidden":false},"lines":[],"is_voided":"#,
-        r#"false},"template":{"id":"88888888-8888-4888-8888-888888888888","entity_id":"#,
+        r#"false,"listed_kind":"bill"},"template":{"id":"88888888-8888-4888-8888-888888888888","#,
+        r#""entity_id":"#,
         r#""11111111-1111-4111-8111-111111111111","name":"Power","kind":"bill","bill_status":"#,
         r#""unpaid","amount_minor":9900,"cadence":"monthly","day_of_month":10,"#,
         r#""category_account_id":"22222222-2222-4222-8222-222222222222","wallet_account_id":"#,
@@ -377,11 +388,22 @@ fn csv_import_rows_carry_the_simple_entry_request() {
 #[test]
 fn csv_import_preview_and_result() {
     assert_json_is_pinned::<CsvImportPreview>(concat!(
-        r#"{"source":"bank.csv","headers":["Date","Amount"],"detected_mapping":{"date":"Date","#,
+        r#"{"source":"bank.csv","headers":[{"name":"Date","label":null},"#,
+        r#"{"name":"Amount","label":null}],"#,
+        r#""detected_mapping":{"date":"Date","#,
         r#""description":null,"amount":"Amount","debit":null,"credit":null,"reference":null,"#,
         r#""direction":null},"missing_columns":[],"other_currency":null,"rows":[]}"#,
     ));
     assert_json_is_pinned::<CsvImportPostResult>(r#"{"posted":[],"skipped_duplicate_count":2}"#);
+}
+
+/// A column whose name was made up carries the label the Map columns step words.
+#[test]
+fn csv_header_with_a_made_up_name() {
+    assert_json_is_pinned::<CsvHeader>(concat!(
+        r#"{"name":"Amount (2)","label":{"code":"csv_repeated_column","#,
+        r#""params":{"name":"Amount","occurrence":"2"}}}"#,
+    ));
 }
 
 /// A file whose columns have to be mapped by hand names the missing ones by
@@ -389,7 +411,9 @@ fn csv_import_preview_and_result() {
 #[test]
 fn csv_import_preview_of_a_file_that_needs_a_mapping() {
     assert_json_is_pinned::<CsvImportPreview>(concat!(
-        r#"{"source":"bank.csv","headers":["When","Paid"],"detected_mapping":{"date":null,"#,
+        r#"{"source":"bank.csv","headers":[{"name":"When","label":null},"#,
+        r#"{"name":"Paid","label":null}],"#,
+        r#""detected_mapping":{"date":null,"#,
         r#""description":null,"amount":null,"debit":null,"credit":null,"reference":null,"#,
         r#""direction":null},"missing_columns":["date","amount"],"other_currency":null,"rows":[]}"#,
     ));

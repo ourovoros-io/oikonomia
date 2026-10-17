@@ -22,7 +22,7 @@ use crate::documents::file::{CheckedDocument, NewDocument};
 use crate::domain::{Account, EntityId, JournalEntry, JournalEntryId, define_id};
 use crate::error::{DatabaseContext, Error, Resource, Result, ValidationError};
 use crate::ledger::{
-    PostSimpleEntry, PostedEntryView, ensure_writable_entity, get_entry, list_accounts,
+    PostSimpleEntry, PostedEntryView, ensure_writable_entity, list_accounts, load_entry,
     post_simple_entry_unchecked,
 };
 use crate::util::now_utc_string;
@@ -83,7 +83,7 @@ pub fn attach_document(
     entry_id: JournalEntryId,
     document: &NewDocument<'_>,
 ) -> Result<DocumentMeta> {
-    let entry = get_entry(conn, entry_id)?.entry;
+    let entry = load_entry(conn, entry_id)?.entry;
     if entry.entity_id != entity_id {
         return Err(ValidationError::WrongBook.into());
     }

@@ -2,11 +2,12 @@ import { useId, useState } from 'react'
 import { ArrowRight } from 'lucide-react'
 import { Modal } from './Modal'
 import { Button, Input, Select } from './ui'
-import type { CsvColumnMapping, CsvImportPreview } from '../lib/api'
+import type { CsvColumnMapping, CsvHeader, CsvImportPreview } from '../lib/api'
 import {
   draftFromDetected,
   draftToMapping,
   draftsEqual,
+  headerLabel,
   mapNeededKey,
   mappingProblemKey,
   mappingReady,
@@ -43,7 +44,7 @@ function HeaderSelect({
   label: string
   target: string
   value: string
-  headers: string[]
+  headers: CsvHeader[]
   onChange: (value: string) => void
 }) {
   const { t } = useI18n()
@@ -62,8 +63,8 @@ function HeaderSelect({
             Continue button stays blocked until the mapping is complete. */}
         <option value="">{t('tx.csv.notMapped')}</option>
         {headers.map((header) => (
-          <option key={header} value={header}>
-            {header}
+          <option key={header.name} value={header.name}>
+            {headerLabel(header)}
           </option>
         ))}
       </Select>

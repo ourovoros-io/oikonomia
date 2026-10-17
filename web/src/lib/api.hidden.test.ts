@@ -21,6 +21,7 @@ const posted: PostedEntryView = {
   },
   lines: [],
   is_voided: false,
+  listed_kind: 'expense',
 }
 
 beforeEach(() => {

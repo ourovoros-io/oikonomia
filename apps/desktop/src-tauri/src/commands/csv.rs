@@ -97,8 +97,10 @@ pub(crate) async fn csv_import_preview<R: Runtime>(
 /// # Errors
 ///
 /// Returns `validation_internal` when the rows belong to more than one
-/// entity, `not_found` when that entity does not exist, the
-/// [simple-entry errors](crate::commands::journal#simple-entry-errors) for a
+/// entity, `not_found` when that entity does not exist,
+/// `import_category_required` (with the number of rows as `count`) when
+/// expense or income rows to post have no active category of their kind in
+/// the book, the [simple-entry errors](crate::commands::journal#simple-entry-errors) for a
 /// row that cannot be posted, and the
 /// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
@@ -277,7 +279,11 @@ mod ipc_tests {
             preview,
             serde_json::json!({
                 "source": null,
-                "headers": ["When", "Memo", "Paid"],
+                "headers": [
+                    { "name": "When", "label": null },
+                    { "name": "Memo", "label": null },
+                    { "name": "Paid", "label": null },
+                ],
                 "detected_mapping": {
                     "date": null,
                     "description": "Memo",

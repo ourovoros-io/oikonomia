@@ -72,7 +72,7 @@ function renderSettings() {
       <SettingsPage
         entities={[]}
         onEntitiesChange={async () => {}}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />
     </I18nProvider>,
