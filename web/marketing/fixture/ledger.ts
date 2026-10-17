@@ -277,12 +277,12 @@ export function buildLedger(lang: DemoLang): DemoLedger {
     name: seed.name[lang],
     account_type: seed.type,
     is_active: true,
-    is_system: false,
+    is_system: seed.code === '3000',
     sort_order: i,
   }))
 
   const entries: PostedEntryView[] = [
-    entry('e-opening', '2026-06-01', OPENING[lang], ['1020', '3000'], 850000, 'other'),
+    entry('e-opening', '2026-06-01', OPENING[lang], ['1020', '3000'], 850000, 'opening_balance'),
   ]
   const documents: DocumentMeta[] = []
 

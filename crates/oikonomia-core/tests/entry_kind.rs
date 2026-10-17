@@ -390,7 +390,85 @@ fn manual_entries_reversals_and_opening_balances_store_no_kind() {
         assert_eq!(stored_kind(conn, id), None);
     }
     assert_listed_as(conn, &manual, ListedEntryKind::Expense);
-    assert_listed_as(conn, &opening, ListedEntryKind::Other);
+    assert_listed_as(conn, &opening, ListedEntryKind::OpeningBalance);
+}
+
+#[test]
+fn an_opening_balance_and_its_reversal_list_as_opening_balances_even_on_the_payable() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn);
+    let opening = set_account_opening_balance(
+        conn,
+        book.bills_payable,
+        12_000,
+        common::date("2026-01-01"),
+        Locale::En,
+    )
+    .expect("opening balance");
+    let voided = void_entry(conn, opening.entry.id, Locale::En).expect("void");
+
+    assert_listed_as(conn, &opening, ListedEntryKind::OpeningBalance);
+    assert_eq!(
+        get_entry(conn, voided.reverse_id)
+            .expect("get the reversal")
+            .listed_kind,
+        ListedEntryKind::OpeningBalance
+    );
+}
+
+#[test]
+fn a_journal_entry_on_other_equity_is_other() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn);
+
+    // An owner's contribution: checking debited, Owner's Equity credited.
+    let contribution =
+        common::post_two_line(conn, book.entity_id, "2026-03-02", ("1010", "3100"), 50_000);
+
+    assert_listed_as(conn, &contribution, ListedEntryKind::Other);
+}
+
+#[test]
+fn a_blank_book_lists_entries_on_its_first_equity_account_as_opening_balances() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = common::book(conn, "Blank", ChartTemplate::Blank);
+    let create = |code: &str, account_type| {
+        let input = CreateAccount {
+            entity_id,
+            code: code.into(),
+            name: code.into(),
+            account_type,
+            sort_order: None,
+        };
+        create_account(conn, &input).expect("account")
+    };
+    let checking = create("1000", AccountType::Asset);
+    let opening_equity = create("3000", AccountType::Equity);
+    create("3100", AccountType::Equity);
+
+    let opening = set_account_opening_balance(
+        conn,
+        checking.id,
+        5_000,
+        common::date("2026-01-01"),
+        Locale::En,
+    )
+    .expect("opening balance");
+    let contribution =
+        common::post_two_line(conn, entity_id, "2026-03-02", ("1000", "3100"), 50_000);
+
+    assert!(
+        opening
+            .lines
+            .iter()
+            .any(|line| line.account_id == opening_equity.id),
+        "the opening balance posts against the first equity account"
+    );
+    assert_listed_as(conn, &opening, ListedEntryKind::OpeningBalance);
+    assert_listed_as(conn, &contribution, ListedEntryKind::Other);
 }
 
 #[test]

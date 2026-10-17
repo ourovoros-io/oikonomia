@@ -313,11 +313,16 @@ with its reason so that it is not raised again without something new to say.
   `ledger/journals.rs` for every simple entry). A positive-amount type would
   say the same thing once, but it would touch every place money is
   constructed, for little gain over two checks that already exist.
-- **A bill paid at once is listed as an expense.** It posts the same two lines
-  as an expense (category debited, wallet credited), so the list cannot tell
-  them apart. Showing a Bill badge would need the entry kind stored on
-  `journal_entries`, a schema migration, for a label only. Unpaid bills and
-  bill payments do show as Bill.
+- **Some entries are listed by a guess from their lines.** Since schema v10 a
+  simple entry stores its kind (`journal_entries.kind`). Older entries, journal
+  entries posted line by line and opening balances do not, so the list
+  classifies them from their lines (`ListedEntryKind` in
+  `ledger/entry_kind.rs`): an older bill paid at once lists as an expense, and
+  any entry on the account opening balances post against lists as an opening
+  balance. In a blank book that account is its first active equity account, so
+  reordering or archiving its equity accounts can relabel older entries.
+  Storing an opening-balance kind would mean widening the column's `CHECK`,
+  which `SQLite` can only do by rebuilding `journal_entries`, for a label only.
 - **The app's own journal CSV export cannot be imported.** The import refuses
   it with a clear message (`csv_journal_export`). A journal line has no wallet
   side, so importing two-line entries as bank rows would create unrelated

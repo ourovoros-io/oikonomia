@@ -16,7 +16,7 @@ The earlier reviewer flagged these as doubtful.
 | Bill | `tx.form.kind.bill`, `quickAdd.kind.bill`, `tx.csv.kind.bill` | Bill | Τιμολόγιο | Is "Τιμολόγιο" the right word, or is "Πάγιο" or "Λογαριασμός ρεύματος" closer to a utility bill? Elsewhere "τιμολόγιο" also means invoice (`dropzone.title.idle`). |
 | Debit/credit indicator | `tx.csv.field.direction`, `tx.csv.field.directionOptional` | Debit/credit indicator | Ένδειξη Χ/Π | Will a Greek user recognise "Χ/Π" (Χρέωση/Πίστωση) as the debit/credit column of a bank export? |
 | Due count | `recurring.dueCount.one`, `recurring.dueCount.other`, `recurring.due` | {n} due | {n} οφειλή / {n} οφειλές | "Οφειλή" reads as a debt owed; the English means "due to be posted". |
-| Other | `entry.kind.other` | Opening balance | Υπόλοιπο έναρξης | The kind label went "άλλο", then "Άλλο" (commit 3bbfcae), and now says "Υπόλοιπο έναρξης". Please check the wording you want for this kind, and for the similar "Άλλα…" (`moreOption`). |
+| Other | `entry.kind.other`, `entry.kind.openingBalance` | Journal entry / Opening balance | Εγγραφή ημερολογίου / Υπόλοιπο έναρξης | Opening balances now have their own label; `entry.kind.other` is the neutral label for any other entry posted line by line, such as an owner's contribution. Please check both, and the similar "Άλλα…" (`moreOption`). |
 | "Δεν ήταν δυνατή η ..." | every string with this opening (book errors, `settings.language.error`, `settings.prefs.resetFailed`, `error.*`) | Could not ... | Δεν ήταν δυνατή η ... | This replaced the headline style "Αποτυχία ...". Please check it reads naturally with each noun. Older ones (`documents.error.*`, `dropzone.error.analyze`) still lack a full stop. |
 | Data folder unreadable | startup message `DataFolderUnreadable` in `apps/desktop/src-tauri/src/startup.rs` (not in `el.json`) | Its data folder cannot be read. | Ο φάκελος δεδομένων του δεν μπορεί να διαβαστεί. | Please check the sentence and how it follows the vault-damaged sentence. |
 | CSV integer message | `error.csvInvalidInteger` | see the Error messages table | Το «{value}» δεν είναι ακέραιος αριθμός. ... | Please check that "ακέραιες μονάδες υποδιαίρεσης του νομίσματος (π.χ. λεπτά)" is clear to a non-accountant. |
@@ -101,7 +101,8 @@ The earlier reviewer flagged these as doubtful.
 
 | Key path | English source | Current Greek | Your edit |
 | --- | --- | --- | --- |
-| `entry.kind.other` | Opening balance | Υπόλοιπο έναρξης | |
+| `entry.kind.openingBalance` | Opening balance | Υπόλοιπο έναρξης | |
+| `entry.kind.other` | Journal entry | Εγγραφή ημερολογίου | |
 
 ### Other (form)
 
