@@ -1269,21 +1269,6 @@ describe('TransactionsPage default accounts', () => {
     })
     expect(api.accountDefaults).toHaveBeenCalledWith('e1')
   })
-
-  test('the loaded ledger and defaults are dropped when the book goes away', async () => {
-    const { rerender } = render(
-      <TransactionsPage entity={entity} newEntryIntent={0} onNewEntryIntentHandled={vi.fn()} />,
-    )
-    await waitFor(() => {
-      expect(api.accountDefaults).toHaveBeenCalledTimes(1)
-    })
-
-    rerender(<TransactionsPage entity={null} newEntryIntent={0} onNewEntryIntentHandled={vi.fn()} />)
-
-    // No book, so nothing is fetched again and nothing from the old one stays.
-    expect(api.accountDefaults).toHaveBeenCalledTimes(1)
-    expect(screen.queryByText('Meals & dining')).toBeNull()
-  })
 })
 
 describe('TransactionsPage Quick add intent', () => {

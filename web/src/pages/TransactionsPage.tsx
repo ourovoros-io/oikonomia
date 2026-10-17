@@ -157,7 +157,6 @@ export function TransactionsPage({
   const [series, setSeries] = useState<CashFlowSeries | null>(null)
   const [seriesError, setSeriesError] = useState<CommandError | null>(null)
   const summaryHeadingId = useId()
-  const prevEntityId = useRef<string | null>(null)
   const busyRef = useRef(false)
   const csvBusyRef = useRef(false)
   const seriesRequestRef = useRef(0)
@@ -459,39 +458,10 @@ export function TransactionsPage({
     setShowForm(true)
   }
 
+  // App keys this page by book, so another book or no book at all remounts it
+  // with fresh state: nothing here resets for a book change.
   useEffect(() => {
-    if (!entity) {
-      setEntries([])
-      setAccounts([])
-      setDefaults(null)
-      setDocs([])
-      prevEntityId.current = null
-      // A list still in flight belongs to the book that went away.
-      listRequestRef.current += 1
-      return
-    }
-    if (prevEntityId.current !== entity.id) {
-      prevEntityId.current = entity.id
-      setDetailId(null)
-      setViewerDocId(null)
-      setCsvStep('closed')
-      setCsvPreview(null)
-      setCsvRoles(null)
-      // Clear the un-debounced fragment too, so it cannot filter the new
-      // book 300 ms later.
-      setSearch('')
-      setDebouncedSearch('')
-      // Both effects run again on these, for the new book.
-      setFromDate('')
-      setToDate('')
-      // Gate the early return on tracked deps only: resetting `search`
-      // alone changes no dependency, and returning then would skip the
-      // reload and leave the old book's entries on screen.
-      if (debouncedSearch || accountFilter || fromDate || toDate) {
-        setAccountFilter('')
-        return
-      }
-    }
+    if (!entity) return
     void loadList().catch((err) => setError(commandErrorMessage(err)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity?.id, debouncedSearch, accountFilter, fromDate, toDate])
