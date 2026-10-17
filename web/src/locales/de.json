@@ -1070,7 +1070,8 @@
       "cadenceYearly": "Jährlich",
       "dayOfWeek": "Wochentag",
       "month": "Monat",
-      "nextDate": "Nächstes Datum: {date}"
+      "nextDate": "Nächstes Datum: {date}",
+      "payExistingHint": "Bei jeder Buchung wird die älteste offene Rechnung auf diesem Konto über den gebuchten Betrag beglichen. Gibt es keine solche Rechnung, wird ohne Rechnung gebucht."
     },
     "delete": {
       "title": "Vorlage löschen?",

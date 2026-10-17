@@ -19,14 +19,14 @@ import {
   type RecurringCadence,
   type RecurringKind,
   type RecurringTemplate,
+  type SimpleEntryAccounts,
 } from '../lib/api'
 import { parseMajorToMinor } from '../lib/amountParse'
 import { amountProblemKey, bookCurrency, minorToInputText } from '../lib/money'
 import { beginExclusive } from '../lib/guards'
 import { useDialogError } from '../lib/useDialogError'
-import { kindDefaultAccounts } from '../lib/simpleEntry'
+import { formBillStatus, kindDefaultAccounts, type BillStatus } from '../lib/simpleEntry'
 import {
-  billStatusForKind,
   cadenceLabelKey,
   dayOfMonthForCadence,
   firstOnOrAfterMonthDay,
@@ -37,7 +37,6 @@ import {
   kindLabelKey,
   maxDayOfMonth,
   monthAndDayOfIso,
-  recurringAccountIds,
   weekdayOfIso,
 } from '../lib/recurring'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -68,6 +67,7 @@ type Props = {
 }
 
 const CADENCES: RecurringCadence[] = ['monthly', 'weekly', 'yearly']
+const BILL_STATUSES: readonly BillStatus[] = ['paid', 'unpaid', 'pay_existing']
 
 function accountsOf(accounts: Account[], types: Account['account_type'][]): Account[] {
   return accounts.filter((a) => a.is_active && types.includes(a.account_type))
@@ -124,6 +124,9 @@ export function RecurringPage({ entity, onBack }: Props) {
   const [showForm, setShowForm] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
   const [kind, setKind] = useState<RecurringKind>('expense')
+  const [billStatus, setBillStatus] = useState<BillStatus>('paid')
+  // An income invoiced and not yet received, owed on the receivable account.
+  const [incomeUnpaid, setIncomeUnpaid] = useState(false)
   const [name, setName] = useState('')
   const [amount, setAmount] = useState('')
   const [cadence, setCadence] = useState<RecurringCadence>('monthly')
@@ -135,6 +138,8 @@ export function RecurringPage({ entity, onBack }: Props) {
   const [yearDay, setYearDay] = useState(String(monthAndDayOfIso(todayISO()).day))
   const [categoryId, setCategoryId] = useState('')
   const [walletId, setWalletId] = useState('')
+  // Bills payable, or the receivable of an unpaid income.
+  const [payableId, setPayableId] = useState('')
   const [fromId, setFromId] = useState('')
   const [toId, setToId] = useState('')
   const [memo, setMemo] = useState('')
@@ -162,7 +167,8 @@ export function RecurringPage({ entity, onBack }: Props) {
   const expenseAccounts = useMemo(() => accountsOf(accounts, ['expense']), [accounts])
   const incomeAccounts = useMemo(() => accountsOf(accounts, ['income']), [accounts])
   const walletAccounts = useMemo(() => accountsOf(accounts, ['asset', 'liability']), [accounts])
-  const categoryAccounts = kind === 'income' ? incomeAccounts : expenseAccounts
+  const payableAccounts = useMemo(() => accountsOf(accounts, ['liability']), [accounts])
+  const assetAccounts = useMemo(() => accountsOf(accounts, ['asset']), [accounts])
 
   function applyKindDefaults(nextKind: RecurringKind, roles: AccountDefaults | null) {
     if (nextKind === 'transfer') {
@@ -176,6 +182,26 @@ export function RecurringPage({ entity, onBack }: Props) {
     const picked = kindDefaultAccounts(nextKind === 'income' ? 'income' : 'bill', roles)
     setCategoryId(picked.categoryId)
     setWalletId(picked.walletId)
+    setPayableId(picked.payableId)
+    setBillStatus('paid')
+    setIncomeUnpaid(false)
+  }
+
+  /**
+   * Fills the form from the kind, status and accounts Rust returned for a
+   * template, which name its shape exactly. The kind's defaults go first, so
+   * a part the template does not have holds the default, as in New entry.
+   */
+  function fillAccounts(form: SimpleEntryAccounts) {
+    setKind(form.kind)
+    applyKindDefaults(form.kind, defaults)
+    if (form.kind === 'bill' && form.bill_status) setBillStatus(form.bill_status)
+    setIncomeUnpaid(form.kind === 'income' && form.bill_status === 'unpaid')
+    if (form.category_account_id) setCategoryId(form.category_account_id)
+    if (form.wallet_account_id) setWalletId(form.wallet_account_id)
+    if (form.payable_account_id) setPayableId(form.payable_account_id)
+    if (form.from_account_id) setFromId(form.from_account_id)
+    if (form.to_account_id) setToId(form.to_account_id)
   }
 
   async function reload() {
@@ -240,15 +266,11 @@ export function RecurringPage({ entity, onBack }: Props) {
 
   function openEdit(row: RecurringTemplate) {
     setEditId(row.id)
-    setKind(row.kind)
+    fillAccounts(row)
     setName(row.name)
     setAmount(minorToInputText(row.amount_minor, currency))
     setCadence(row.cadence)
     setDayOfMonth(String(row.day_of_month ?? 1))
-    setCategoryId(row.category_account_id ?? '')
-    setWalletId(row.wallet_account_id ?? '')
-    setFromId(row.from_account_id ?? '')
-    setToId(row.to_account_id ?? '')
     setMemo(row.memo ?? '')
     setNextDate(row.next_date)
     syncPickers(row.next_date)
@@ -272,9 +294,11 @@ export function RecurringPage({ entity, onBack }: Props) {
       const to = accountMap.get(row.to_account_id ?? '')?.name ?? '—'
       return `${from} → ${to}`
     }
-    const category = accountMap.get(row.category_account_id ?? '')?.name
-    const wallet = accountMap.get(row.wallet_account_id ?? '')?.name
-    return [category, wallet].filter(Boolean).join(' → ') || '—'
+    // Rust returns only the two accounts the template posts to; the others are null.
+    const named = [row.category_account_id, row.payable_account_id, row.wallet_account_id]
+      .map((id) => accountMap.get(id ?? '')?.name)
+      .filter(Boolean)
+    return named.join(' → ') || '—'
   }
 
   async function onSave(ev: FormEvent) {
@@ -301,22 +325,22 @@ export function RecurringPage({ entity, onBack }: Props) {
     setFormBusy(true)
     setError(null)
     try {
-      const roleIds = recurringAccountIds(kind, {
-        categoryId,
-        walletId,
-        fromId,
-        toId,
-      })
+      // Every account the form holds goes to Rust, which keeps the two the
+      // template's kind and status post to, as it does for New entry.
       const shared = {
         name: name.trim(),
         kind,
-        bill_status: billStatusForKind(kind),
+        bill_status: formBillStatus(kind, billStatus, incomeUnpaid),
         amount_minor: minor,
         cadence,
         day_of_month: day,
         memo: memo.trim() || null,
         next_date: nextDate,
-        ...roleIds,
+        category_account_id: categoryId || null,
+        wallet_account_id: walletId || null,
+        payable_account_id: payableId || null,
+        from_account_id: fromId || null,
+        to_account_id: toId || null,
       }
       if (editId) await api.recurringUpdate({ id: editId, ...shared })
       else await api.recurringCreate({ entity_id: entity.id, ...shared })
@@ -518,11 +542,12 @@ export function RecurringPage({ entity, onBack }: Props) {
                 </Select>
               </Field>
             </>
-          ) : (
+          ) : null}
+          {kind === 'expense' ? (
             <>
               <Field label={t('recurring.form.category')}>
                 <Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} required>
-                  {categoryAccounts.map((a) => (
+                  {expenseAccounts.map((a) => (
                     <option key={a.id} value={a.id}>
                       {a.code} · {a.name}
                     </option>
@@ -539,7 +564,116 @@ export function RecurringPage({ entity, onBack }: Props) {
                 </Select>
               </Field>
             </>
-          )}
+          ) : null}
+          {kind === 'income' ? (
+            <>
+              <Field label={t('tx.incomeStatus')} className="sm:col-span-2">
+                <Select
+                  value={incomeUnpaid ? 'unpaid' : 'received'}
+                  onChange={(e) => setIncomeUnpaid(e.target.value === 'unpaid')}
+                >
+                  <option value="received">{t('tx.incomeReceivedNow')}</option>
+                  <option value="unpaid">{t('tx.incomeUnpaid')}</option>
+                </Select>
+              </Field>
+              <Field label={t('recurring.form.category')}>
+                <Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} required>
+                  {incomeAccounts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.code} · {a.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              {incomeUnpaid ? (
+                <Field label={t('tx.receivableAccount')}>
+                  <Select value={payableId} onChange={(e) => setPayableId(e.target.value)} required>
+                    {assetAccounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.code} · {a.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              ) : (
+                <Field label={t('tx.receivedInto')}>
+                  <Select value={walletId} onChange={(e) => setWalletId(e.target.value)} required>
+                    {assetAccounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.code} · {a.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              )}
+            </>
+          ) : null}
+          {kind === 'bill' ? (
+            <>
+              <Field label={t('tx.billStatus')} className="sm:col-span-2">
+                <Select
+                  value={billStatus}
+                  onChange={(e) => {
+                    const next = BILL_STATUSES.find((status) => status === e.target.value)
+                    if (next) setBillStatus(next)
+                  }}
+                >
+                  <option value="paid">{t('tx.billPaidNow')}</option>
+                  <option value="unpaid">{t('tx.billUnpaid')}</option>
+                  <option value="pay_existing">{t('tx.billPayExisting')}</option>
+                </Select>
+              </Field>
+              {billStatus === 'pay_existing' ? (
+                <p className="text-xs text-[var(--color-muted)] sm:col-span-2">
+                  {t('recurring.form.payExistingHint')}
+                </p>
+              ) : (
+                <Field label={t('tx.billCategory')}>
+                  <Select
+                    value={categoryId}
+                    onChange={(e) => setCategoryId(e.target.value)}
+                    required
+                  >
+                    {expenseAccounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.code} · {a.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              )}
+              {billStatus === 'unpaid' ? null : (
+                <Field label={billStatus === 'paid' ? t('tx.paidFrom') : t('tx.payFrom')}>
+                  <Select value={walletId} onChange={(e) => setWalletId(e.target.value)} required>
+                    {walletAccounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.code} · {a.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              )}
+              {billStatus === 'paid' ? null : (
+                <Field label={t('tx.billsPayableAccount')}>
+                  <Select value={payableId} onChange={(e) => setPayableId(e.target.value)} required>
+                    {payableAccounts.length === 0 ? (
+                      <option value="">{t('tx.noLiability')}</option>
+                    ) : null}
+                    {payableAccounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.code} · {a.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              )}
+              {payableAccounts.length === 0 && billStatus !== 'paid' ? (
+                <p className="text-xs text-[var(--color-muted)] sm:col-span-2">
+                  {t('tx.billsPayableTip')}
+                </p>
+              ) : null}
+            </>
+          ) : null}
           <Field label={t('recurring.form.memo')} className="sm:col-span-2">
             <Input
               value={memo}
@@ -619,6 +753,11 @@ export function RecurringPage({ entity, onBack }: Props) {
               <dt className="text-[var(--color-muted)]">{t('recurring.form.kind')}</dt>
               <dd className="text-[var(--color-fg)]">{t(kindLabelKey(posting.kind))}</dd>
             </dl>
+            {posting.kind === 'bill' && posting.bill_status === 'pay_existing' ? (
+              <p className="mt-3 text-xs text-[var(--color-muted)]">
+                {t('recurring.form.payExistingHint')}
+              </p>
+            ) : null}
           </div>
         ) : null}
       </ConfirmDialog>

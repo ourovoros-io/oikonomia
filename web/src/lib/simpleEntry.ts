@@ -3,6 +3,8 @@ import type { MessageKey } from './i18n'
 
 export type EntryKind = 'expense' | 'income' | 'bill' | 'transfer'
 export type BillStatusTray = 'paid' | 'unpaid'
+/** The payment state of a bill as Rust names it; an unpaid income uses `unpaid` too. */
+export type BillStatus = NonNullable<SimpleEntryInput['bill_status']>
 
 export type AccountLike = {
   id: string
@@ -84,6 +86,20 @@ export function kindDefaultAccounts(
 function postedBillStatus(kind: EntryKind, status: BillStatusTray): BillStatusTray | null {
   if (kind === 'bill') return status
   return kind === 'income' && status === 'unpaid' ? 'unpaid' : null
+}
+
+/**
+ * What a form with a bill status field and an income "received or owed"
+ * field tells Rust: the bill's status, `unpaid` for an income owed to the
+ * book, and nothing for any other kind. Rust decides what each pair posts.
+ */
+export function formBillStatus(
+  kind: EntryKind,
+  billStatus: BillStatus,
+  incomeUnpaid: boolean,
+): BillStatus | null {
+  if (kind === 'bill') return billStatus
+  return kind === 'income' && incomeUnpaid ? 'unpaid' : null
 }
 
 export function buildSimpleEntryInput(args: {

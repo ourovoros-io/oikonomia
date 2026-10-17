@@ -50,7 +50,12 @@ import { HiddenBadge, HiddenIncludedNote, HideFromExportControl } from '../compo
 import { Modal } from '../components/Modal'
 import { TopBar } from '../components/TopBar'
 import { csvImportAccountDefaults, mappingsEqual } from '../lib/csvImport'
-import { kindDefaultAccounts, lastAccountsMapKey } from '../lib/simpleEntry'
+import {
+  formBillStatus,
+  kindDefaultAccounts,
+  lastAccountsMapKey,
+  type BillStatus,
+} from '../lib/simpleEntry'
 import {
   AmountPill,
   Button,
@@ -85,7 +90,6 @@ type Props = {
 /** High-level entry kinds so users don't think in debit/credit. */
 type EntryKind = 'expense' | 'income' | 'bill' | 'transfer'
 
-type BillStatus = 'paid' | 'unpaid' | 'pay_existing'
 
 const NO_BILL_CHOICE: BillChoice = { kind: 'unchosen' }
 
@@ -607,12 +611,6 @@ export function TransactionsPage({
     setPayableId(bill.payable_account_id)
   }
 
-  /** What the form tells Rust about payment state; only a bill or an unpaid income has one. */
-  function postedBillStatus(): BillStatus | null {
-    if (kind === 'bill') return billStatus
-    return kind === 'income' && incomeUnpaid ? 'unpaid' : null
-  }
-
   // What stops the form from posting, as a catalog key, and whether it is the
   // amount's fault. Native validation is off (its bubbles are English and
   // unstyled), so every required field is checked here.
@@ -654,7 +652,7 @@ export function TransactionsPage({
       const input = {
         entity_id: entity.id,
         kind,
-        bill_status: postedBillStatus(),
+        bill_status: formBillStatus(kind, billStatus, incomeUnpaid),
         entry_date: date,
         description: description.trim(),
         reference: reference.trim() || null,

@@ -2,7 +2,6 @@
 
 import { describe, expect, test } from 'vitest'
 import {
-  billStatusForKind,
   cadenceLabelKey,
   dayOfMonthForCadence,
   firstOnOrAfterMonthDay,
@@ -14,7 +13,6 @@ import {
   kindLabelKey,
   maxDayOfMonth,
   monthAndDayOfIso,
-  recurringAccountIds,
   weekdayOfIso,
 } from './recurring'
 
@@ -49,46 +47,6 @@ describe('dayOfMonthForCadence', () => {
     expect(dayOfMonthForCadence('monthly', 32)).toBeNull()
     expect(dayOfMonthForCadence('monthly', 1.5)).toBeNull()
     expect(dayOfMonthForCadence('monthly', null)).toBeNull()
-  })
-})
-
-describe('recurringAccountIds', () => {
-  const pick = { categoryId: 'exp1', walletId: 'w1', fromId: 'a1', toId: 'a2' }
-
-  test('expense and bill use category + wallet and drop transfer legs', () => {
-    expect(recurringAccountIds('expense', pick)).toEqual({
-      category_account_id: 'exp1',
-      wallet_account_id: 'w1',
-      payable_account_id: null,
-      from_account_id: null,
-      to_account_id: null,
-    })
-    expect(recurringAccountIds('bill', pick)).toEqual({
-      category_account_id: 'exp1',
-      wallet_account_id: 'w1',
-      payable_account_id: null,
-      from_account_id: null,
-      to_account_id: null,
-    })
-  })
-
-  test('transfer uses from/to and drops category/wallet', () => {
-    expect(recurringAccountIds('transfer', pick)).toEqual({
-      category_account_id: null,
-      wallet_account_id: null,
-      payable_account_id: null,
-      from_account_id: 'a1',
-      to_account_id: 'a2',
-    })
-  })
-})
-
-describe('billStatusForKind', () => {
-  test('bills default to paid; other kinds send null', () => {
-    expect(billStatusForKind('bill')).toBe('paid')
-    expect(billStatusForKind('expense')).toBeNull()
-    expect(billStatusForKind('income')).toBeNull()
-    expect(billStatusForKind('transfer')).toBeNull()
   })
 })
 

@@ -23,6 +23,8 @@ struct AccountsByCode {
     food: AccountId,
     salary: AccountId,
     savings: AccountId,
+    bills_payable: AccountId,
+    receivable: AccountId,
 }
 
 fn entity_with_accounts(conn: &Connection) -> (EntityId, AccountsByCode) {
@@ -36,6 +38,8 @@ fn entity_with_accounts(conn: &Connection) -> (EntityId, AccountsByCode) {
             food: by_code("5100"),
             salary: by_code("4000"),
             savings: by_code("1020"),
+            bills_payable: by_code("2050"),
+            receivable: by_code("1200"),
         },
     )
 }
@@ -390,6 +394,67 @@ fn income_template_and_bill_status() {
     bill.bill_status = Some(SimpleBillStatus::Paid);
     let created = create_template(conn, &bill).expect("bill");
     assert_eq!(created.fields.accounts.shape(), SimpleEntryShape::BillPaid);
+}
+
+/// The Recurring form sends every account it holds and the status it shows,
+/// whatever the kind, and opens a template on the kind, status and accounts
+/// the view returns. Core keeps only what the shape posts to, so saving the
+/// form unchanged gives the same template back.
+#[test]
+fn a_template_keeps_what_its_shape_posts_to_and_saves_back_unchanged() {
+    use SimpleBillStatus::{Paid, PayExisting, Unpaid};
+    use SimpleEntryKind::{Bill, Expense, Income, Transfer};
+
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, accounts) = entity_with_accounts(conn);
+
+    for (kind, status, shape) in [
+        (Bill, Paid, SimpleEntryShape::BillPaid),
+        (Bill, Unpaid, SimpleEntryShape::BillUnpaid),
+        (Bill, PayExisting, SimpleEntryShape::BillPayment),
+        (Income, Paid, SimpleEntryShape::Income),
+        (Income, Unpaid, SimpleEntryShape::IncomeReceivable),
+        (Expense, Unpaid, SimpleEntryShape::Expense),
+        (Transfer, PayExisting, SimpleEntryShape::Transfer),
+    ] {
+        let income = kind == Income;
+        let created = create_template(
+            conn,
+            &CreateRecurringTemplateRequest {
+                kind,
+                bill_status: Some(status),
+                category_account_id: Some(if income {
+                    accounts.salary
+                } else {
+                    accounts.food
+                }),
+                wallet_account_id: Some(accounts.checking),
+                payable_account_id: Some(if income {
+                    accounts.receivable
+                } else {
+                    accounts.bills_payable
+                }),
+                from_account_id: Some(accounts.savings),
+                to_account_id: Some(accounts.checking),
+                ..monthly_rent(entity_id, &accounts)
+            },
+        )
+        .expect("create");
+        assert_eq!(
+            created.fields.accounts.shape(),
+            shape,
+            "{kind:?} {status:?}"
+        );
+
+        // The form opens on what the view serializes and sends it back: the
+        // update request is a subset of the view's fields.
+        let view = serde_json::to_value(&created).expect("view serializes");
+        let unchanged: UpdateRecurringTemplateRequest =
+            serde_json::from_value(view).expect("the view reads as an update");
+        let updated = update_template(conn, &unchanged).expect("update");
+        assert_eq!(updated.fields, created.fields, "{kind:?} {status:?}");
+    }
 }
 
 #[test]

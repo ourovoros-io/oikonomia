@@ -1070,7 +1070,8 @@
       "cadenceYearly": "Annuel",
       "dayOfWeek": "Jour de la semaine",
       "month": "Mois",
-      "nextDate": "Prochaine date : {date}"
+      "nextDate": "Prochaine date : {date}",
+      "payExistingHint": "À chaque écriture, la plus ancienne facture en attente sur ce compte pour le montant passé est réglée. S’il n’y en a aucune, l’écriture est passée sans régler de facture."
     },
     "delete": {
       "title": "Supprimer le modèle ?",
