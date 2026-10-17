@@ -2,6 +2,7 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type FormEvent,
@@ -11,7 +12,7 @@ import { cn } from '../lib/cn'
 import { Logo } from './Logo'
 import { ConfirmDialog } from './ConfirmDialog'
 import { wholePixelShift } from '../lib/wholePixel'
-import type { VaultStatus } from '../lib/tauri'
+import type { CommandError, VaultStatus } from '../lib/tauri'
 import {
   vaultInit,
   vaultPickBackup,
@@ -21,6 +22,7 @@ import {
 } from '../lib/tauri'
 import { asCommandError, commandErrorMessage } from '../lib/commandError'
 import { restoreCommandError, restoreConfirm } from '../lib/vaultBackupUi'
+import { t as translate } from '../lib/i18n'
 import { useI18n } from '../lib/I18nProvider'
 import { LanguagePill } from './LanguagePill'
 import { UnlockUpdateDialog } from './UnlockUpdateDialog'
@@ -51,6 +53,37 @@ const fieldIcon = [
   'text-[var(--color-muted)]',
 ].join(' ')
 
+type PasswordField = 'password' | 'confirm'
+
+/**
+ * The banner's error kept as data, not as a sentence, so it is worded in the
+ * language on screen now: switching language while it shows re-words it.
+ * `fields` are the inputs it is about; editing one of them clears it.
+ */
+type UnlockError =
+  | { kind: 'copy'; key: string; fields: readonly PasswordField[] }
+  | { kind: 'submit'; error: CommandError; fields: readonly PasswordField[] }
+  | { kind: 'restore'; error: unknown; fields: readonly PasswordField[] }
+
+/** The banner's sentence for `error`, in the current language. */
+function unlockErrorText(error: UnlockError): string {
+  switch (error.kind) {
+    case 'copy':
+      return translate(error.key)
+    case 'submit':
+      return error.error.code === 'invalid_password'
+        ? translate('unlock.incorrectPassword')
+        : commandErrorMessage(error.error, 'unlock.unlockFailed')
+    case 'restore':
+      return restoreCommandError(error.error)
+  }
+}
+
+function restoreFailure(err: unknown): UnlockError {
+  // Not about the password fields, so typing in them leaves it up.
+  return { kind: 'restore', error: err, fields: [] }
+}
+
 export function UnlockScreen({
   status,
   onUnlocked,
@@ -61,7 +94,7 @@ export function UnlockScreen({
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<UnlockError | null>(null)
   const [restoreOpen, setRestoreOpen] = useState(false)
   const [restoreBusy, setRestoreBusy] = useState(false)
   const [restorePath, setRestorePath] = useState<string | undefined>(undefined)
@@ -120,14 +153,30 @@ export function UnlockScreen({
     dialogWasOpen.current = dialogOpen
   }, [dialogOpen])
 
+  // Worded on a language switch, not on every keystroke: a vague command error
+  // is logged each time it is worded.
+  const errorText = useMemo(
+    () => (error ? unlockErrorText(error) : null),
+    // The wording reads the current language from the catalog, not from a
+    // value this hook can see, so the language is listed by hand.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [error, locale],
+  )
+
   /** Marks the fields as wrong, shakes the card and puts the caret in `field`. */
-  function rejectInput(message: string, field: 'password' | 'confirm') {
-    setError(message)
+  function rejectInput(reason: UnlockError, field: PasswordField) {
+    setError(reason)
     setPasswordInvalid(true)
     setShaking(true)
     const target = field === 'confirm' ? confirmRef.current : passwordRef.current
     // After the render that clears the cleared field, or the caret lands in a stale one.
     window.setTimeout(() => target?.focus(), 0)
+  }
+
+  /** An edit to `field` may fix what the error was about, so the error goes. */
+  function editedField(field: PasswordField) {
+    setPasswordInvalid(false)
+    if (error?.fields.includes(field)) setError(null)
   }
 
   async function onSubmit(event: FormEvent) {
@@ -137,11 +186,17 @@ export function UnlockScreen({
     setPasswordInvalid(false)
 
     if (!password) {
-      rejectInput(t('form.passwordRequired'), 'password')
+      rejectInput({ kind: 'copy', key: 'form.passwordRequired', fields: ['password'] }, 'password')
       return
     }
     if (isSetup && password !== confirm) {
-      rejectInput(t('unlock.passwordsMismatch'), 'confirm')
+      // Either entry may be the mistyped one.
+      const mismatch: UnlockError = {
+        kind: 'copy',
+        key: 'unlock.passwordsMismatch',
+        fields: ['password', 'confirm'],
+      }
+      rejectInput(mismatch, 'confirm')
       return
     }
 
@@ -157,12 +212,7 @@ export function UnlockScreen({
     } catch (err) {
       // A rejection can be anything, including nothing.
       const cmd = asCommandError(err)
-      rejectInput(
-        cmd.code === 'invalid_password'
-          ? t('unlock.incorrectPassword')
-          : commandErrorMessage(cmd, 'unlock.unlockFailed'),
-        'password',
-      )
+      rejectInput({ kind: 'submit', error: cmd, fields: ['password'] }, 'password')
     } finally {
       setBusy(false)
       // A wrong unlock password is retyped; a refused new vault keeps both
@@ -183,7 +233,7 @@ export function UnlockScreen({
       setRestorePath(path)
       setRestoreOpen(true)
     } catch (err) {
-      setError(restoreCommandError(err))
+      setError(restoreFailure(err))
     } finally {
       setRestorePicking(false)
     }
@@ -206,7 +256,7 @@ export function UnlockScreen({
       setRestorePath(undefined)
       onUnlocked(next)
     } catch (err) {
-      setError(restoreCommandError(err))
+      setError(restoreFailure(err))
       setRestoreOpen(false)
       setRestorePath(undefined)
     } finally {
@@ -269,7 +319,7 @@ export function UnlockScreen({
                     value={password}
                     onChange={(e) => {
                       setPassword(e.target.value)
-                      setPasswordInvalid(false)
+                      editedField('password')
                     }}
                     className="pl-6"
                     data-adorned
@@ -292,7 +342,7 @@ export function UnlockScreen({
                       value={confirm}
                       onChange={(e) => {
                         setConfirm(e.target.value)
-                        setPasswordInvalid(false)
+                        editedField('confirm')
                       }}
                       className="pl-6"
                       data-adorned
@@ -319,7 +369,7 @@ export function UnlockScreen({
           <div className="absolute inset-x-0 top-full mt-3">
             <ErrorBanner
               id={errorId}
-              message={error}
+              message={errorText}
               className="text-center"
               onDismiss={() => setError(null)}
             />
