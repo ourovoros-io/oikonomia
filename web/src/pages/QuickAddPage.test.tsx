@@ -87,6 +87,7 @@ const posted: PostedEntryView = {
 const prefs: UiPrefs = {
   last_entity_id: 'e1',
   last_accounts_by_entity_kind: {},
+  unreadable: false,
 }
 
 const DEFAULTS: AccountDefaults = {

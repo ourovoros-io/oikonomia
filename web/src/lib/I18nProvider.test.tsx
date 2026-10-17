@@ -15,7 +15,7 @@ vi.mock('./api', () => ({
 
 import { api } from './api'
 import { I18nProvider, useI18n } from './I18nProvider'
-import { LOCALE_STORAGE_KEY, getLocale, resetI18nForTests, setLocale } from './i18n'
+import { LOCALE_STORAGE_KEY, getLocale, resetI18nForTests, setLocale, type Locale } from './i18n'
 
 function Probe() {
   const { locale, t } = useI18n()
@@ -76,6 +76,7 @@ describe('I18nProvider', () => {
       last_entity_id: null,
       last_accounts_by_entity_kind: {},
       locale: 'el',
+      unreadable: false,
     })
     render(
       <I18nProvider>
@@ -126,6 +127,7 @@ describe('I18nProvider', () => {
       last_entity_id: null,
       last_accounts_by_entity_kind: {},
       locale: 'de',
+      unreadable: false,
     })
     render(
       <I18nProvider>
@@ -173,8 +175,8 @@ describe('I18nProvider', () => {
   })
 
   test('a failed change whose re-read lands after a newer saved change does not undo it', async () => {
-    let finishReRead: (stored: string) => void = () => undefined
-    const reRead = new Promise<string>((resolve) => {
+    let finishReRead: (stored: Locale) => void = () => undefined
+    const reRead = new Promise<Locale>((resolve) => {
       finishReRead = resolve
     })
 
@@ -287,9 +289,9 @@ describe('I18nProvider', () => {
     )
 
     test('a change made before hydration resolves is not overwritten', async () => {
-      let finishResolve: (stored: string) => void = () => undefined
+      let finishResolve: (stored: Locale) => void = () => undefined
       vi.mocked(api.resolveLocale).mockReturnValue(
-        new Promise<string>((resolve) => {
+        new Promise<Locale>((resolve) => {
           finishResolve = resolve
         }),
       )
