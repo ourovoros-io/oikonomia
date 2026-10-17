@@ -394,7 +394,7 @@ describe('TransactionsPage CSV toolbar', () => {
       expect(api.csvExportJournal).toHaveBeenCalledWith('e1')
     })
     expect(api.csvExportJournal).toHaveBeenCalledTimes(1)
-    expect(api.csvExportJournal.mock.calls[0]).toEqual(['e1'])
+    expect(vi.mocked(api.csvExportJournal).mock.calls[0]).toEqual(['e1'])
   })
 
   test('export uses the journal path with no include-hidden toggle', async () => {
@@ -651,8 +651,8 @@ describe('TransactionsPage CSV mapping and preview', () => {
       expect(screen.getByRole('dialog', { name: 'Map CSV columns' })).toBeTruthy()
     })
     expect(api.csvImportPreview).toHaveBeenCalledTimes(1)
-    expect(api.csvImportPreview.mock.calls[0]?.[0]).not.toHaveProperty('path')
-    expect(api.csvImportPreview.mock.calls[0]?.[0]).not.toHaveProperty('mapping')
+    expect(vi.mocked(api.csvImportPreview).mock.calls[0]?.[0]).not.toHaveProperty('path')
+    expect(vi.mocked(api.csvImportPreview).mock.calls[0]?.[0]).not.toHaveProperty('mapping')
     expect(api.csvImportPost).not.toHaveBeenCalled()
 
     await userEvent.click(screen.getByRole('button', { name: 'Continue to preview' }))
@@ -733,7 +733,7 @@ describe('TransactionsPage CSV mapping and preview', () => {
       expect(screen.getByRole('dialog', { name: 'Preview import' })).toBeTruthy()
     })
     expect(api.csvImportPreview).toHaveBeenCalledTimes(1)
-    expect(api.csvImportPreview.mock.calls[0]?.[0]).not.toHaveProperty('mapping')
+    expect(vi.mocked(api.csvImportPreview).mock.calls[0]?.[0]).not.toHaveProperty('mapping')
     expect(api.csvImportPost).not.toHaveBeenCalled()
   })
 
@@ -879,7 +879,7 @@ describe('TransactionsPage CSV import of a file whose columns were not detected'
     await waitFor(() => {
       expect(api.csvImportPreview).toHaveBeenCalledTimes(2)
     })
-    expect(api.csvImportPreview.mock.calls[1]?.[0]).toMatchObject({
+    expect(vi.mocked(api.csvImportPreview).mock.calls[1]?.[0]).toMatchObject({
       mapping: { date: 'When', description: 'Column 2', amount: 'Paid (2)' },
     })
   })
