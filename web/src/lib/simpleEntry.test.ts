@@ -4,6 +4,7 @@ import { resetI18nForTests } from './i18n'
 import {
   buildSimpleEntryInput,
   formBillStatus,
+  isBillStatus,
   kindDefaultAccounts,
   lastAccountsMapKey,
   validateTrayAccounts,
@@ -245,5 +246,13 @@ describe('formBillStatus', () => {
   test('an expense and a transfer send no status', () => {
     expect(formBillStatus('expense', 'unpaid', true)).toBeNull()
     expect(formBillStatus('transfer', 'pay_existing', true)).toBeNull()
+  })
+})
+
+describe('isBillStatus', () => {
+  test('accepts the three statuses Rust names and nothing else', () => {
+    expect(['paid', 'unpaid', 'pay_existing'].every(isBillStatus)).toBe(true)
+    expect(isBillStatus('Paid')).toBe(false)
+    expect(isBillStatus('')).toBe(false)
   })
 })

@@ -6,6 +6,13 @@ export type BillStatusTray = 'paid' | 'unpaid'
 /** The payment state of a bill as Rust names it; an unpaid income uses `unpaid` too. */
 export type BillStatus = NonNullable<SimpleEntryInput['bill_status']>
 
+const BILL_STATUSES: readonly string[] = ['paid', 'unpaid', 'pay_existing'] satisfies BillStatus[]
+
+/** Narrows a select's value to a bill status. */
+export function isBillStatus(value: string): value is BillStatus {
+  return BILL_STATUSES.includes(value)
+}
+
 export type AccountLike = {
   id: string
   name: string
@@ -17,10 +24,11 @@ export function lastAccountsMapKey(entityId: string, kind: EntryKind | string): 
   return `${entityId}:${kind}`
 }
 
-export function accountsOf(
-  accounts: AccountLike[],
-  types: AccountLike['account_type'][],
-): AccountLike[] {
+/** The active accounts of `types`, in the order given. */
+export function accountsOf<A extends AccountLike>(
+  accounts: readonly A[],
+  types: readonly AccountLike['account_type'][],
+): A[] {
   return accounts.filter((a) => a.is_active && types.includes(a.account_type))
 }
 
@@ -80,15 +88,6 @@ export function kindDefaultAccounts(
 }
 
 /**
- * The status Rust reads: a bill always has one, an income only when it is
- * unpaid (owed on the receivable account), and nothing else has any.
- */
-function postedBillStatus(kind: EntryKind, status: BillStatusTray): BillStatusTray | null {
-  if (kind === 'bill') return status
-  return kind === 'income' && status === 'unpaid' ? 'unpaid' : null
-}
-
-/**
  * What a form with a bill status field and an income "received or owed"
  * field tells Rust: the bill's status, `unpaid` for an income owed to the
  * book, and nothing for any other kind. Rust decides what each pair posts.
@@ -118,7 +117,7 @@ export function buildSimpleEntryInput(args: {
   return {
     entity_id: args.entityId,
     kind: args.kind,
-    bill_status: postedBillStatus(args.kind, args.billStatus),
+    bill_status: formBillStatus(args.kind, args.billStatus, args.billStatus === 'unpaid'),
     entry_date: args.entryDate,
     description: args.description.trim(),
     reference: null,

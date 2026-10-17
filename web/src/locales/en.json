@@ -787,5 +787,6 @@
   "error.billNotOpen": "That bill is already paid or no longer open. Pick another bill.",
   "error.paymentDoesNotMatchBill": "A bill payment pays the whole bill from the account it is owed on. Pick the bill again to fill in its amount and account.",
   "error.billSettled": "This bill has a payment. Delete the payment first, then change or delete the bill.",
-  "recurring.form.payExistingHint": "Each time it posts, it settles the oldest open bill owed on this account for the amount posted. With no such bill, it posts without settling one."
+  "recurring.form.payExistingHint": "Each time it posts, it settles the oldest open bill on the bills payable account whose amount is exactly the amount posted. If there is none, it posts without settling a bill.",
+  "recurring.postConfirm.accounts": "Accounts"
 }
