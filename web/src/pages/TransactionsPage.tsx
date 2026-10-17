@@ -1289,6 +1289,8 @@ export function TransactionsPage({
                 .join('  ')
               const moneyOut = isMoneyOut(kindLabel)
               const signed = moneyOut ? -amountMinor : amountMinor
+              // Core refuses to void a bill a payment settles; say so up front.
+              const settled = view.settled_by_entry_id !== null
 
               return (
                 <li
@@ -1296,7 +1298,7 @@ export function TransactionsPage({
                   onClick={() => setDetailId(view.entry.id)}
                   className="group flex cursor-pointer items-center gap-4 px-5 py-3 transition hover:bg-white/[0.05] focus-within:bg-white/[0.05]"
                 >
-                  <EntryKindBadge kind={kindLabel} />
+                  <EntryKindBadge kind={kindLabel} paid={settled} />
                   {/* Keyboard path: activating this button bubbles its click
                       to the row handler above — no duplicate handler. */}
                   <button type="button" className="min-w-0 flex-1 text-left">
@@ -1309,7 +1311,7 @@ export function TransactionsPage({
                     <div className="truncate text-xs text-[var(--color-muted)] tabular-nums">
                       {formatDate(view.entry.entry_date)}
                       <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
-                      <span>{t(`kind.${kindLabel}`)}</span>
+                      <span>{settled ? t('tx.list.paidBill') : t(`kind.${kindLabel}`)}</span>
                       {view.entry.reference ? (
                         <span>{t('entry.ref', { reference: view.entry.reference })}</span>
                       ) : null}
@@ -1333,19 +1335,24 @@ export function TransactionsPage({
                         })}
                       </AmountPill>
                     </span>
-                    <Button
-                      variant="ghost"
-                      size="iconSm"
-                      className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setVoidId(view.entry.id)
-                      }}
-                      aria-label={t('tx.deleteEntry')}
-                      title={t('common.delete')}
-                    >
-                      <Trash2 className="size-4" />
-                    </Button>
+                    {/* A disabled button gets no hover in every webview, so the
+                        reason sits on a wrapper too. */}
+                    <span title={settled ? t('entry.settledBillLocked') : undefined}>
+                      <Button
+                        variant="ghost"
+                        size="iconSm"
+                        className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
+                        disabled={settled}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setVoidId(view.entry.id)
+                        }}
+                        aria-label={t('tx.deleteEntry')}
+                        title={settled ? t('entry.settledBillLocked') : t('common.delete')}
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </span>
                   </span>
                 </li>
               )

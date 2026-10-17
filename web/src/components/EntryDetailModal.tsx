@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import { Download, Eye, Paperclip, Pencil, Plus, Trash2 } from 'lucide-react'
 import {
   api,
@@ -57,6 +57,7 @@ export function EntryDetailModal({
   const [hideBusy, setHideBusy] = useState(false)
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const settledReasonId = useId()
 
   if (!view) return null
   const entry = view.entry
@@ -282,14 +283,50 @@ export function EntryDetailModal({
         <EntryHistory key={entry.id} entryId={entry.id} />
 
         {onEdit && (
-          <div className="flex justify-end border-t border-[var(--color-border)] pt-4">
-            <Button variant="secondary" disabled={anyBusy} onClick={onEdit}>
-              <Pencil className="size-3.5" />
-              {t('entry.edit')}
-            </Button>
-          </div>
+          <EditFooter
+            settled={view.settled_by_entry_id !== null}
+            reasonId={settledReasonId}
+            disabled={anyBusy}
+            onEdit={onEdit}
+          />
         )}
       </div>
     </Modal>
+  )
+}
+
+/**
+ * The Edit button. A bill a payment settles keeps it, disabled, with the reason
+ * beside it, so the user learns before editing that the payment goes first.
+ */
+function EditFooter({
+  settled,
+  reasonId,
+  disabled,
+  onEdit,
+}: {
+  settled: boolean
+  reasonId: string
+  disabled: boolean
+  onEdit: () => void
+}) {
+  const { t } = useI18n()
+  return (
+    <div className="flex items-center justify-end gap-3 border-t border-[var(--color-border)] pt-4">
+      {settled ? (
+        <p id={reasonId} className="text-xs text-[var(--color-muted)]">
+          {t('entry.settledBillLocked')}
+        </p>
+      ) : null}
+      <Button
+        variant="secondary"
+        disabled={disabled || settled}
+        aria-describedby={settled ? reasonId : undefined}
+        onClick={onEdit}
+      >
+        <Pencil className="size-3.5" />
+        {t('entry.edit')}
+      </Button>
+    </div>
   )
 }

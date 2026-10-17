@@ -57,6 +57,20 @@ const ACTIVE_PAYMENT_PREDICATE: &str = "
     pay.status = 'posted' AND pay.voided_by_entry_id IS NULL
 ";
 
+/// The scalar subquery that reads the active payment settling the entry
+/// `je`, or `NULL` when none does.
+///
+/// It is a lookup on `idx_entries_settles`, once per entry. A bill has at
+/// most one active payment: a payment may only name an open bill.
+pub(crate) fn settled_by_sql() -> String {
+    format!(
+        "
+        (SELECT pay.id FROM journal_entries pay
+         WHERE pay.settles_entry_id = je.id AND {ACTIVE_PAYMENT_PREDICATE})
+        "
+    )
+}
+
 /// Which open bills [`query_open_bills`] reads.
 #[derive(Debug, Clone, Copy)]
 enum OpenBills {

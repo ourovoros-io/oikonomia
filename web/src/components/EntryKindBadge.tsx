@@ -2,6 +2,7 @@ import {
   ArrowDownLeft,
   ArrowLeftRight,
   ArrowUpRight,
+  FileCheck,
   FileText,
   Flag,
   NotebookPen,
@@ -21,10 +22,13 @@ const KIND_ICONS: Record<ListedEntryKind, LucideIcon> = {
   other: NotebookPen,
 }
 
-/** The icon of a listed entry, the same in the entry list and on the dashboard. */
-export function EntryKindBadge({ kind }: { kind: ListedEntryKind }) {
+/**
+ * The icon of a listed entry, the same in the entry list and on the dashboard.
+ * `paid` marks a bill a payment settles.
+ */
+export function EntryKindBadge({ kind, paid = false }: { kind: ListedEntryKind; paid?: boolean }) {
   const tone = kind === 'income' ? 'money-in' : isMoneyOut(kind) ? 'money-out' : 'muted'
-  const Icon = KIND_ICONS[kind]
+  const Icon = paid ? FileCheck : KIND_ICONS[kind]
   return (
     <IconBadge tone={tone}>
       <Icon className="size-4" />

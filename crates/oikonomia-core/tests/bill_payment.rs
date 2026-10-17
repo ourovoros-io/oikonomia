@@ -127,6 +127,42 @@ fn an_unpaid_bill_is_open_until_a_payment_settles_it() {
     assert_eq!(open_ids(conn, &book), []);
 }
 
+/// The payment that settles `bill_id`, as the list and the single entry
+/// read it.
+fn settled_by(
+    conn: &Connection,
+    book: &Book,
+    bill_id: JournalEntryId,
+) -> [Option<JournalEntryId>; 2] {
+    let listed = list_entries(conn, book.entity_id, &EntryFilter::default())
+        .expect("entries")
+        .into_iter()
+        .find(|view| view.entry.id == bill_id)
+        .expect("the bill is listed")
+        .settled_by_entry_id;
+    let single = get_entry(conn, bill_id).expect("get").settled_by_entry_id;
+    [listed, single]
+}
+
+#[test]
+fn a_bill_names_the_active_payment_that_settles_it() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn, "Home");
+    let bill_id = bill(conn, &book, book.bills_payable, 4_000);
+    assert_eq!(settled_by(conn, &book, bill_id), [None, None]);
+
+    let paid = pay(conn, &book, bill_id).expect("pay");
+    let payment_id = Some(paid.entry.id);
+    assert_eq!(settled_by(conn, &book, bill_id), [payment_id, payment_id]);
+    // Only the bill names its payment, never the payment itself.
+    assert_eq!(settled_by(conn, &book, paid.entry.id), [None, None]);
+
+    // A voided payment settles nothing: the bill is open again.
+    void_entry(conn, paid.entry.id, Locale::En).expect("void the payment");
+    assert_eq!(settled_by(conn, &book, bill_id), [None, None]);
+}
+
 #[test]
 fn only_an_unpaid_bill_of_v11_is_open() {
     let (_dir, vault) = common::vault();

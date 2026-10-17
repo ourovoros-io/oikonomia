@@ -550,6 +550,7 @@
     }
   },
   "entry": {
+    "settledBillLocked": "Eine Zahlung begleicht diese Rechnung. Löschen Sie zuerst die Zahlung, um die Rechnung zu ändern oder zu löschen.",
     "kind": {
       "openingBalance": "Anfangssaldo",
       "other": "Journalbuchung"
@@ -915,6 +916,7 @@
     "list": {
       "title": "Alle Buchungen",
       "matchingTitle": "Passende Buchungen",
+      "paidBill": "Rechnung, bezahlt",
       "new": "Neue Buchung",
       "meta": {
         "counts": "{posted} gebucht · {hidden} ausgeblendet"
