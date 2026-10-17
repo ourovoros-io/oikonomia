@@ -78,7 +78,7 @@ use crate::ledger::accounts::{get_account, list_accounts, opening_balance_accoun
 use crate::ledger::balance::{
     ACTIVE_ENTRY_PREDICATE, account_balance_as_of, add_minor, normal_balance,
 };
-use crate::ledger::bills::{ensure_not_settled, open_bill, settled_by_sql};
+use crate::ledger::bills::{open_bill, settled_by_sql};
 use crate::ledger::entities::ensure_writable_entity;
 use crate::ledger::entry_kind::{LineFallback, ListedEntryKind, PostedAs};
 use crate::ledger::simple_entry::{
@@ -1411,7 +1411,10 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
     if view.is_voided {
         return Err(ValidationError::EntryAlreadyVoided.into());
     }
-    ensure_not_settled(conn, id)?;
+    // The same value the UI disables Edit and Delete by.
+    if view.settled_by_entry_id.is_some() {
+        return Err(ValidationError::BillSettled.into());
+    }
 
     let reverse_lines: Vec<PostJournalLine> = view
         .lines
@@ -1606,6 +1609,9 @@ mod tests {
     /// The index a lookup by `voided_by_entry_id` must go through.
     const VOID_LINK_INDEX: &str = "idx_entries_voided_by";
 
+    /// The index a lookup by `settles_entry_id` must go through.
+    const SETTLES_INDEX: &str = "idx_entries_settles";
+
     #[test]
     fn listing_entries_finds_the_void_link_through_its_index() {
         let conn = migrated_connection();
@@ -1623,7 +1629,7 @@ mod tests {
 
         let plan = query_plan(&conn, &listed_headers_sql(), &listed.bound());
 
-        assert!(plan.contains("idx_entries_settles"), "{plan}");
+        assert!(plan.contains(SETTLES_INDEX), "{plan}");
     }
 
     #[test]
