@@ -17,7 +17,9 @@ import de from '../locales/de.json' with { type: 'json' }
  */
 const DYNAMIC_KEY_FAMILIES: Record<string, readonly string[]> = {
   // TransactionsPage, DashboardPage and QuickAddApp: t(`kind.${kind}`)
-  'kind.*': ['expense', 'income', 'bill', 'transfer', 'other'].map((v) => `kind.${v}`),
+  'kind.*': ['expense', 'income', 'bill', 'transfer', 'opening_balance', 'other'].map(
+    (v) => `kind.${v}`,
+  ),
   // App and SettingsPage: t(`chart.${chart_template}`)
   'chart.*': ['personal', 'company', 'blank'].map((v) => `chart.${v}`),
   // DateInput: t(`date.month.${month}`), month 1 to 12

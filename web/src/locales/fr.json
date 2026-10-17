@@ -550,7 +550,8 @@
   },
   "entry": {
     "kind": {
-      "other": "Solde d’ouverture"
+      "openingBalance": "Solde d’ouverture",
+      "other": "Écriture de journal"
     }
   },
   "common": {

@@ -1656,7 +1656,7 @@ describe('TransactionsPage bills in the list', () => {
 })
 
 describe('TransactionsPage row meta', () => {
-  test('shows the reference, and names an equity-only entry an opening balance', async () => {
+  test('shows the reference, and names an entry core lists as an opening balance one', async () => {
     const equity = account({ id: 'eq1', name: 'Opening Balances', account_type: 'equity', code: '3000' })
     vi.mocked(api.accountList).mockResolvedValue([...accounts, equity])
     vi.mocked(api.entryList).mockResolvedValue([
@@ -1664,7 +1664,7 @@ describe('TransactionsPage row meta', () => {
       {
         ...incomeEntry,
         entry: { ...incomeEntry.entry, id: 'j9', description: 'Opening balance — Checking' },
-        listed_kind: 'other',
+        listed_kind: 'opening_balance',
         lines: incomeEntry.lines.map((line) =>
           line.account_id === 'inc1' ? { ...line, account_id: 'eq1' } : line,
         ),
@@ -1677,5 +1677,20 @@ describe('TransactionsPage row meta', () => {
     const opening = screen.getByText('Opening balance — Checking').closest('li')
     expect(opening).toHaveTextContent('Opening balance')
     expect(opening).not.toHaveTextContent(/\bother\b/)
+  })
+
+  test('names an entry core lists as other a journal entry, not an opening balance', async () => {
+    vi.mocked(api.entryList).mockResolvedValue([
+      {
+        ...incomeEntry,
+        entry: { ...incomeEntry.entry, id: 'j9', description: 'Owner pays in' },
+        listed_kind: 'other',
+      },
+    ])
+    await renderReady()
+
+    const row = (await screen.findByText('Owner pays in')).closest('li')
+    expect(row).toHaveTextContent('Journal entry')
+    expect(row).not.toHaveTextContent('Opening balance')
   })
 })

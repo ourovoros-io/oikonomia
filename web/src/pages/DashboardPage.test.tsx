@@ -172,6 +172,25 @@ describe('DashboardPage activity kinds', () => {
     expect(transfer).toHaveTextContent('Transfer')
     expect(transfer?.querySelector('[data-amount]')).toHaveAttribute('data-amount', 'neutral')
   })
+
+  test('only an entry core lists as an opening balance is labelled one', async () => {
+    const [, income] = entries as [PostedEntryView, PostedEntryView]
+    vi.mocked(api.entryList).mockResolvedValue([
+      { ...income, entry: { ...income.entry, id: 'o1', description: 'Checking start' }, listed_kind: 'opening_balance' },
+      { ...income, entry: { ...income.entry, id: 'j1', description: 'Owner pays in' }, listed_kind: 'other' },
+    ])
+    render(<DashboardPage entity={entity} />)
+
+    const opening = (await screen.findByText('Checking start')).closest('li')
+    expect(opening).toHaveTextContent('Opening balance')
+    expect(opening?.querySelector('svg.lucide-flag')).not.toBeNull()
+    expect(opening?.querySelector('[data-amount]')).toHaveAttribute('data-amount', 'neutral')
+    const journal = screen.getByText('Owner pays in').closest('li')
+    expect(journal).toHaveTextContent('Journal entry')
+    expect(journal).not.toHaveTextContent('Opening balance')
+    expect(journal?.querySelector('svg.lucide-notebook-pen')).not.toBeNull()
+    expect(journal?.querySelector('[data-amount]')).toHaveAttribute('data-amount', 'neutral')
+  })
 })
 
 describe('DashboardPage activity dates', () => {

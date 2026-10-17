@@ -157,7 +157,14 @@ fn posted_entry_view() {
 /// translation key.
 #[test]
 fn listed_entry_kind_of_each_code() {
-    for code in ["expense", "income", "bill", "transfer", "other"] {
+    for code in [
+        "expense",
+        "income",
+        "bill",
+        "transfer",
+        "opening_balance",
+        "other",
+    ] {
         assert_json_is_pinned::<ListedEntryKind>(&format!(r#""{code}""#));
     }
 }

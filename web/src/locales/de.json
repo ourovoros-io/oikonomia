@@ -550,7 +550,8 @@
   },
   "entry": {
     "kind": {
-      "other": "Anfangssaldo"
+      "openingBalance": "Anfangssaldo",
+      "other": "Journalbuchung"
     }
   },
   "common": {

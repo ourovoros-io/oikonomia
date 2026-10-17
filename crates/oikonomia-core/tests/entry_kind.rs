@@ -390,6 +390,72 @@ fn manual_entries_reversals_and_opening_balances_store_no_kind() {
         assert_eq!(stored_kind(conn, id), None);
     }
     assert_listed_as(conn, &manual, ListedEntryKind::Expense);
+    assert_listed_as(conn, &opening, ListedEntryKind::OpeningBalance);
+}
+
+#[test]
+fn an_opening_balance_and_its_reversal_list_as_opening_balances_even_on_the_payable() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn);
+    let opening = set_account_opening_balance(
+        conn,
+        book.bills_payable,
+        12_000,
+        common::date("2026-01-01"),
+        Locale::En,
+    )
+    .expect("opening balance");
+    let voided = void_entry(conn, opening.entry.id, Locale::En).expect("void");
+
+    assert_listed_as(conn, &opening, ListedEntryKind::OpeningBalance);
+    assert_eq!(
+        get_entry(conn, voided.reverse_id)
+            .expect("get the reversal")
+            .listed_kind,
+        ListedEntryKind::OpeningBalance
+    );
+}
+
+#[test]
+fn a_journal_entry_on_other_equity_is_other() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn);
+
+    // An owner's contribution: checking debited, Owner's Equity credited.
+    let contribution =
+        common::post_two_line(conn, book.entity_id, "2026-03-02", ("1010", "3100"), 50_000);
+
+    assert_listed_as(conn, &contribution, ListedEntryKind::Other);
+}
+
+#[test]
+fn a_blank_book_has_no_system_equity_so_its_opening_balances_are_other() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = common::book(conn, "Blank", ChartTemplate::Blank);
+    let mut created = Vec::new();
+    for (code, account_type) in [("1000", AccountType::Asset), ("3000", AccountType::Equity)] {
+        let input = CreateAccount {
+            entity_id,
+            code: code.into(),
+            name: code.into(),
+            account_type,
+            sort_order: None,
+        };
+        created.push(create_account(conn, &input).expect("account").id);
+    }
+
+    let opening = set_account_opening_balance(
+        conn,
+        created[0],
+        5_000,
+        common::date("2026-01-01"),
+        Locale::En,
+    )
+    .expect("opening balance");
+
     assert_listed_as(conn, &opening, ListedEntryKind::Other);
 }
 

@@ -77,6 +77,7 @@ export const KEY_ALIASES: Record<string, string> = {
   'kind.income': 'quickAdd.kind.income',
   'kind.bill': 'quickAdd.kind.bill',
   'kind.transfer': 'quickAdd.kind.transfer',
+  'kind.opening_balance': 'entry.kind.openingBalance',
   'kind.other': 'entry.kind.other',
   'kind.billShort': 'quickAdd.kind.billShort',
   'kind.transferShort': 'quickAdd.kind.transferShort',
