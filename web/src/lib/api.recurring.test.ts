@@ -43,6 +43,8 @@ const posted: RecurringPostResult = {
     is_voided: false,
     listed_kind: 'expense',
     simple_form: null,
+    settles_entry_id: null,
+    settled_by_entry_id: null,
   },
   template: { ...row, next_date: '2026-09-01', due: false },
 }

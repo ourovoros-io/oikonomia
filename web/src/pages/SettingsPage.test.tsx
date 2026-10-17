@@ -890,6 +890,28 @@ describe('SettingsPage createBookIntent', () => {
     expect(onCreateBookIntentHandled).toHaveBeenCalledTimes(1)
   })
 
+  test('the next intent after one was handled opens the form again', async () => {
+    const page = (intent: number) => (
+      <SettingsPage
+        entities={[]}
+        onEntitiesChange={noopAsync}
+        onEntityAdded={async () => {}}
+        onSelectEntity={() => {}}
+        createBookIntent={intent}
+      />
+    )
+    const { rerender } = render(page(1))
+    const first = await screen.findByRole('dialog', { name: /^new book$/i })
+    await userEvent.click(within(first).getByRole('button', { name: 'Cancel' }))
+    // App sets the intent back to zero once handled; the next CTA bumps it to 1.
+    rerender(page(0))
+    expect(screen.queryByRole('dialog', { name: /^new book$/i })).toBeNull()
+
+    rerender(page(1))
+
+    expect(screen.getByRole('dialog', { name: /^new book$/i })).toBeTruthy()
+  })
+
   test('missing scrollIntoView in the test DOM does not throw (jsdom guard)', async () => {
     const { rerender } = render(
       <SettingsPage

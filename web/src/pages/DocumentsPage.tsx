@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Download, Eye, FileImage, FileText, FolderOpen, Trash2 } from 'lucide-react'
 import { api, formatDate, type DocumentMeta, type Entity } from '../lib/api'
-import { commandErrorMessage } from '../lib/commandError'
+import { commandFailure, type UiError } from '../lib/uiError'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { DocumentViewerModal } from '../components/DocumentViewerModal'
 import { formatBytes } from '../lib/files'
@@ -31,7 +31,7 @@ function formatCreatedAt(createdAt: string, locale: Locale): string {
 export function DocumentsPage({ entity, onCreateBook }: Props) {
   const { t, locale } = useI18n()
   const [docs, setDocs] = useState<DocumentMeta[]>([])
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<UiError | null>(null)
   const [viewerDocId, setViewerDocId] = useState<string | null>(null)
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
@@ -46,7 +46,7 @@ export function DocumentsPage({ entity, onCreateBook }: Props) {
 
   useEffect(() => {
     if (!entity) return
-    void reload().catch((err) => setError(commandErrorMessage(err)))
+    void reload().catch((err) => setError(commandFailure(err)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity?.id])
 
@@ -59,7 +59,7 @@ export function DocumentsPage({ entity, onCreateBook }: Props) {
       setDeleteId(null)
       await reload()
     } catch (err) {
-      setError(commandErrorMessage(err, 'docs.deleteFailed'))
+      setError(commandFailure(err, 'docs.deleteFailed'))
     } finally {
       setDeleteBusy(false)
     }
@@ -71,7 +71,7 @@ export function DocumentsPage({ entity, onCreateBook }: Props) {
     try {
       await api.documentExport(id)
     } catch (err) {
-      setError(commandErrorMessage(err, 'docs.exportFailed'))
+      setError(commandFailure(err, 'docs.exportFailed'))
     } finally {
       setBusyId(null)
     }
@@ -97,7 +97,7 @@ export function DocumentsPage({ entity, onCreateBook }: Props) {
       <TopBar title={t('docs.title')} subtitle={`${entity.name} · ${entity.base_currency}`} />
 
       <ToastStack>
-        <ErrorBanner className="" message={error} onDismiss={() => setError(null)} />
+        <ErrorBanner className="" error={error} onDismiss={() => setError(null)} />
       </ToastStack>
 
       <ConfirmDialog
@@ -116,7 +116,7 @@ export function DocumentsPage({ entity, onCreateBook }: Props) {
       <DocumentViewerModal
         documentId={viewerDocId}
         onClose={() => setViewerDocId(null)}
-        onError={(msg) => setError(msg)}
+        onError={setError}
       />
 
       {docs.length === 0 ? (

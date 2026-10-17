@@ -3,7 +3,7 @@
 import '@testing-library/jest-dom/vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi, type Mock } from 'vitest'
 
 vi.mock('../lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/api')>()
@@ -21,10 +21,16 @@ vi.mock('../lib/api', async (importOriginal) => {
 
 import { api } from '../lib/api'
 import { resetI18nForTests } from '../lib/i18n'
+import { uiErrorText, type UiError } from '../lib/uiError'
 import { DocumentDropZone } from './DocumentDropZone'
 import { DocumentViewerModal } from './DocumentViewerModal'
 
 const RAW = 'sqlcipher: disk image is malformed'
+
+/** What each reported error reads as, in the language on screen. */
+function errorTexts(onError: Mock<(error: UiError) => void>): string[] {
+  return onError.mock.calls.map(([error]) => uiErrorText(error))
+}
 
 beforeEach(() => {
   vi.spyOn(console, 'warn').mockImplementation(() => undefined)
@@ -53,7 +59,7 @@ describe('DocumentDropZone errors', () => {
       message: 'file too large (max 8 MB)',
       params: { max_mb: '8' },
     })
-    const onError = vi.fn()
+    const onError = vi.fn<(error: UiError) => void>()
     const { container } = render(
       <DocumentDropZone entityId="e1" onSuggestion={vi.fn()} onError={onError} />,
     )
@@ -61,13 +67,13 @@ describe('DocumentDropZone errors', () => {
     await dropFile(container)
 
     await waitFor(() => {
-      expect(onError).toHaveBeenCalledWith('That file is too large. The limit is 8 MB.')
+      expect(errorTexts(onError)).toContain('That file is too large. The limit is 8 MB.')
     })
   })
 
   test('an unknown code shows the analyze fallback, never the raw message', async () => {
     vi.mocked(api.documentAnalyze).mockReset().mockRejectedValue({ code: 'brand_new', message: RAW })
-    const onError = vi.fn()
+    const onError = vi.fn<(error: UiError) => void>()
     const { container } = render(
       <DocumentDropZone entityId="e1" onSuggestion={vi.fn()} onError={onError} />,
     )
@@ -75,7 +81,7 @@ describe('DocumentDropZone errors', () => {
     await dropFile(container)
 
     await waitFor(() => {
-      expect(onError).toHaveBeenCalledWith('Could not analyze the document.')
+      expect(errorTexts(onError)).toContain('Could not analyze the document.')
     })
     expect(screen.getByText('Could not analyze the document.')).toBeInTheDocument()
     expect(screen.queryByText(RAW)).toBeNull()
@@ -94,7 +100,7 @@ describe('DocumentDropZone errors', () => {
     }
     vi.stubGlobal('FileReader', FailingReader)
     vi.mocked(api.documentAnalyze).mockReset()
-    const onError = vi.fn()
+    const onError = vi.fn<(error: UiError) => void>()
     const { container } = render(
       <DocumentDropZone entityId="e1" onSuggestion={vi.fn()} onError={onError} />,
     )
@@ -102,7 +108,7 @@ describe('DocumentDropZone errors', () => {
     await dropFile(container)
 
     await waitFor(() => {
-      expect(onError).toHaveBeenCalledWith('Could not read the file.')
+      expect(errorTexts(onError)).toContain('Could not read the file.')
     })
     expect(api.documentAnalyze).not.toHaveBeenCalled()
     vi.unstubAllGlobals()
@@ -123,14 +129,14 @@ const meta = {
 describe('DocumentViewerModal errors', () => {
   test('a failed open with an unknown code shows the open fallback, never the raw message', async () => {
     vi.mocked(api.documentGet).mockReset().mockRejectedValue({ code: 'brand_new', message: RAW })
-    const onError = vi.fn()
+    const onError = vi.fn<(error: UiError) => void>()
 
     render(<DocumentViewerModal documentId="d1" onClose={vi.fn()} onError={onError} />)
 
     await waitFor(() => {
-      expect(onError).toHaveBeenCalledWith('Could not open the document.')
+      expect(errorTexts(onError)).toContain('Could not open the document.')
     })
-    expect(onError).not.toHaveBeenCalledWith(RAW)
+    expect(errorTexts(onError).join(' ')).not.toContain(RAW)
   })
 
   test('a failed save of a copy shows the copy for its code', async () => {
@@ -141,13 +147,13 @@ describe('DocumentViewerModal errors', () => {
       code: 'save_failed',
       message: 'Permission denied (os error 13)',
     })
-    const onError = vi.fn()
+    const onError = vi.fn<(error: UiError) => void>()
 
     render(<DocumentViewerModal documentId="d1" onClose={vi.fn()} onError={onError} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Save a copy' }))
 
     await waitFor(() => {
-      expect(onError).toHaveBeenCalledWith(
+      expect(errorTexts(onError)).toContain(
         'Could not save the file. Check that the location is writable and try again.',
       )
     })
@@ -158,13 +164,13 @@ describe('DocumentViewerModal errors', () => {
       .mockReset()
       .mockResolvedValue({ meta, data_base64: 'aGVsbG8=' })
     vi.mocked(api.documentExport).mockReset().mockRejectedValue({ code: 'brand_new', message: RAW })
-    const onError = vi.fn()
+    const onError = vi.fn<(error: UiError) => void>()
 
     render(<DocumentViewerModal documentId="d1" onClose={vi.fn()} onError={onError} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Save a copy' }))
 
     await waitFor(() => {
-      expect(onError).toHaveBeenCalledWith('Could not save a copy.')
+      expect(errorTexts(onError)).toContain('Could not save a copy.')
     })
   })
 })

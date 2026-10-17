@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { api, type FrontendErrorLocation } from '../lib/api'
 import { t } from '../lib/i18n'
+import { copyError } from '../lib/uiError'
 import { Button, ErrorBanner } from './ui'
 
 type Props = {
@@ -38,7 +39,7 @@ export class PageErrorBoundary extends Component<Props, State> {
 
     return (
       <div className="space-y-4">
-        <ErrorBanner message={t('error.pageRender')} />
+        <ErrorBanner error={copyError('error.pageRender')} />
         <Button onClick={() => this.setState({ failed: false })}>{t('error.pageRenderRetry')}</Button>
       </div>
     )

@@ -68,7 +68,7 @@ vi.mock('../lib/api', async (importOriginal) => {
 })
 
 import { api } from '../lib/api'
-import { commandErrorMessage } from '../lib/commandError'
+import { commandErrorText } from '../lib/commandError'
 import { resetI18nForTests } from '../lib/i18n'
 import { formatMoney } from '../lib/money'
 import { TransactionsPage } from './TransactionsPage'
@@ -127,6 +127,7 @@ const grocery: SimpleEntryInput = {
   payable_account_id: null,
   from_account_id: null,
   to_account_id: null,
+  settles_entry_id: null,
 }
 
 const salary: SimpleEntryInput = {
@@ -204,6 +205,7 @@ const postedEntry: PostedEntryView = {
   ],
   is_voided: false,
   settles_entry_id: null,
+  settled_by_entry_id: null,
   listed_kind: 'expense',
   simple_form: {
     kind: 'expense',
@@ -246,6 +248,7 @@ const incomeEntry: PostedEntryView = {
   ],
   is_voided: false,
   settles_entry_id: null,
+  settled_by_entry_id: null,
   listed_kind: 'income',
   simple_form: {
     kind: 'income',
@@ -418,7 +421,7 @@ describe('TransactionsPage CSV toolbar', () => {
       expect(api.csvExportJournal).toHaveBeenCalledWith('e1')
     })
     expect(api.csvExportJournal).toHaveBeenCalledTimes(1)
-    expect(api.csvExportJournal.mock.calls[0]).toEqual(['e1'])
+    expect(vi.mocked(api.csvExportJournal).mock.calls[0]).toEqual(['e1'])
   })
 
   test('export uses the journal path with no include-hidden toggle', async () => {
@@ -675,8 +678,8 @@ describe('TransactionsPage CSV mapping and preview', () => {
       expect(screen.getByRole('dialog', { name: 'Map CSV columns' })).toBeTruthy()
     })
     expect(api.csvImportPreview).toHaveBeenCalledTimes(1)
-    expect(api.csvImportPreview.mock.calls[0]?.[0]).not.toHaveProperty('path')
-    expect(api.csvImportPreview.mock.calls[0]?.[0]).not.toHaveProperty('mapping')
+    expect(vi.mocked(api.csvImportPreview).mock.calls[0]?.[0]).not.toHaveProperty('path')
+    expect(vi.mocked(api.csvImportPreview).mock.calls[0]?.[0]).not.toHaveProperty('mapping')
     expect(api.csvImportPost).not.toHaveBeenCalled()
 
     await userEvent.click(screen.getByRole('button', { name: 'Continue to preview' }))
@@ -757,7 +760,7 @@ describe('TransactionsPage CSV mapping and preview', () => {
       expect(screen.getByRole('dialog', { name: 'Preview import' })).toBeTruthy()
     })
     expect(api.csvImportPreview).toHaveBeenCalledTimes(1)
-    expect(api.csvImportPreview.mock.calls[0]?.[0]).not.toHaveProperty('mapping')
+    expect(vi.mocked(api.csvImportPreview).mock.calls[0]?.[0]).not.toHaveProperty('mapping')
     expect(api.csvImportPost).not.toHaveBeenCalled()
   })
 
@@ -903,7 +906,7 @@ describe('TransactionsPage CSV import of a file whose columns were not detected'
     await waitFor(() => {
       expect(api.csvImportPreview).toHaveBeenCalledTimes(2)
     })
-    expect(api.csvImportPreview.mock.calls[1]?.[0]).toMatchObject({
+    expect(vi.mocked(api.csvImportPreview).mock.calls[1]?.[0]).toMatchObject({
       mapping: { date: 'When', description: 'Column 2', amount: 'Paid (2)' },
     })
   })
@@ -1448,7 +1451,7 @@ describe('TransactionsPage summary', () => {
 
     await act(async () => failStale({ code: 'io', message: 'disk' }))
 
-    expect(screen.queryByText(commandErrorMessage({ code: 'io', message: 'disk' }))).toBeNull()
+    expect(screen.queryByText(commandErrorText({ code: 'io', message: 'disk' }))).toBeNull()
     expect(screen.getByText('CLIENT INVOICE')).toBeInTheDocument()
   })
 
@@ -1506,7 +1509,7 @@ describe('TransactionsPage summary', () => {
     await waitFor(() => {
       expect(pane?.querySelector('[data-net]')).toHaveTextContent('—')
     })
-    expect(pane).toHaveTextContent(commandErrorMessage({ code: 'io', message: 'disk' }))
+    expect(pane).toHaveTextContent(commandErrorText({ code: 'io', message: 'disk' }))
   })
 
   test('a failing summary with an unknown code never shows the raw message', async () => {
@@ -1895,6 +1898,38 @@ describe('TransactionsPage edit form', () => {
 
     expect(await screen.findByRole('dialog')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Edit entry' })).toBeNull()
+  })
+
+  test('a bill a payment settles is listed as paid and offers neither Edit nor Delete', async () => {
+    const reason = 'This bill has a payment. Delete the payment first, then change or delete the bill.'
+    const settledBill: PostedEntryView = {
+      ...postedEntry,
+      listed_kind: 'bill',
+      settled_by_entry_id: 'p1',
+      simple_form: {
+        kind: 'bill',
+        bill_status: 'unpaid',
+        category_account_id: 'exp1',
+        wallet_account_id: null,
+        payable_account_id: 'cc1',
+        from_account_id: null,
+        to_account_id: null,
+      },
+    }
+    vi.mocked(api.entryList).mockResolvedValue([settledBill, incomeEntry])
+    await renderReady()
+
+    const billRow = (await screen.findByText('Bill, paid')).closest('li')
+    expect(billRow?.querySelector('svg.lucide-file-check')).not.toBeNull()
+    const [billDelete, incomeDelete] = screen.getAllByRole('button', { name: 'Delete entry' })
+    expect(billDelete).toBeDisabled()
+    expect(billDelete).toHaveAccessibleDescription(reason)
+    expect(incomeDelete).toBeEnabled()
+
+    await userEvent.click(screen.getByText('Alpha supermarket'))
+    const edit = await screen.findByRole('button', { name: 'Edit entry' })
+    expect(edit).toBeDisabled()
+    expect(edit).toHaveAccessibleDescription(reason)
   })
 })
 

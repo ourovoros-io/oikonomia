@@ -2,6 +2,7 @@ import { Check, Copy } from 'lucide-react'
 import { useState } from 'react'
 import type { DonationAddress } from '../lib/api'
 import { t } from '../lib/i18n'
+import { copyError } from '../lib/uiError'
 import { Button, ErrorBanner } from './ui'
 
 /** Donation addresses from Rust. Renders and copies; holds no rules. */
@@ -65,7 +66,7 @@ export function DonationAddresses({ addresses }: { addresses: DonationAddress[] 
         ))}
       </ul>
 
-      <ErrorBanner message={failed ? t('settings.donate.copyFailed') : null} />
+      <ErrorBanner error={failed ? copyError('settings.donate.copyFailed') : null} />
     </div>
   )
 }

@@ -35,7 +35,7 @@ import { useDialogError } from '../lib/useDialogError'
 import { renderUiTexts, type UiText } from '../lib/uiText'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import { beginExclusive } from '../lib/guards'
-import { amountTone, isMoneyOut } from '../lib/entryKind'
+import { amountTone, isMoneyOut, listedKindKey } from '../lib/entryKind'
 import { BillPicker } from '../components/BillPicker'
 import { CashFlowPulse } from '../components/CashFlowPulse'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -65,7 +65,9 @@ import {
   ToastStack,
 } from '../components/ui'
 import { cn } from '../lib/cn'
-import { asCommandError, commandErrorMessage } from '../lib/commandError'
+import { asCommandError, commandErrorText, logHiddenCause } from '../lib/commandError'
+import { commandFailure, copyError, notesError } from '../lib/uiError'
+import type { MessageKey } from '../lib/i18n'
 import type { CommandError } from '../lib/tauri'
 import type { DocumentSuggestion } from '../lib/api'
 import { formatMoney as fmtMoney } from '../lib/money'
@@ -161,6 +163,7 @@ export function TransactionsPage({
     income_account_id: string | null
   } | null>(null)
   const [series, setSeries] = useState<CashFlowSeries | null>(null)
+  // Kept as the command error, not a UiError: the summary branches on its code.
   const [seriesError, setSeriesError] = useState<CommandError | null>(null)
   const summaryHeadingId = useId()
   const busyRef = useRef(false)
@@ -257,6 +260,7 @@ export function TransactionsPage({
       (err) => {
         if (seriesRequestRef.current !== requestId) return
         setSeries(null)
+        logHiddenCause(err)
         setSeriesError(asCommandError(err))
       },
     )
@@ -355,7 +359,7 @@ export function TransactionsPage({
       setCsvPreview(preview)
       setCsvStep('mapping')
     } catch (err) {
-      setError(commandErrorMessage(err))
+      setError(commandFailure(err))
     } finally {
       csvBusyRef.current = false
       setCsvBusy(null)
@@ -391,7 +395,7 @@ export function TransactionsPage({
       setCsvPreview(preview)
       setCsvStep('preview')
     } catch (err) {
-      setError(commandErrorMessage(err))
+      setError(commandFailure(err))
     } finally {
       csvBusyRef.current = false
       setCsvBusy(null)
@@ -406,7 +410,7 @@ export function TransactionsPage({
     try {
       await api.csvExportJournal(entity.id)
     } catch (err) {
-      setError(commandErrorMessage(err))
+      setError(commandFailure(err))
     } finally {
       csvBusyRef.current = false
       setCsvBusy(null)
@@ -424,7 +428,7 @@ export function TransactionsPage({
       setCsvRoles(null)
       await reload()
     } catch (err) {
-      setError(commandErrorMessage(err))
+      setError(commandFailure(err))
     } finally {
       csvBusyRef.current = false
       setCsvBusy(null)
@@ -469,7 +473,7 @@ export function TransactionsPage({
   // with fresh state: nothing here resets for a book change.
   useEffect(() => {
     if (!entity) return
-    void loadList().catch((err) => setError(commandErrorMessage(err)))
+    void loadList().catch((err) => setError(commandFailure(err)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity?.id, debouncedSearch, accountFilter, fromDate, toDate])
 
@@ -562,7 +566,7 @@ export function TransactionsPage({
     try {
       await api.entrySetHidden(entryId, true)
     } catch (err) {
-      setError(commandErrorMessage(err))
+      setError(commandFailure(err))
     }
   }
 
@@ -584,7 +588,7 @@ export function TransactionsPage({
   // What stops the form from posting, as a catalog key, and whether it is the
   // amount's fault. Native validation is off (its bubbles are English and
   // unstyled), so every required field is checked here.
-  function entryFormProblem(minor: number | null): { key: string; amount: boolean } | null {
+  function entryFormProblem(minor: number | null): { key: MessageKey; amount: boolean } | null {
     const amountKey = amountProblemKey(minor, 'tx.invalidAmount')
     if (amountKey) return { key: amountKey, amount: true }
     if (!description.trim()) return { key: 'form.fieldRequired', amount: false }
@@ -598,7 +602,7 @@ export function TransactionsPage({
     if (!beginExclusive(busyRef)) return
     if (!date) {
       busyRef.current = false
-      setError(t('date.invalid'))
+      setError(copyError('date.invalid'))
       return
     }
     const minor = parseMajorToMinor(amount, bookCurrency(entity))
@@ -606,7 +610,7 @@ export function TransactionsPage({
     // minor is only null alongside a problem; the check narrows its type.
     if (problem || minor === null) {
       busyRef.current = false
-      setError(t(problem?.key ?? 'tx.invalidAmount'))
+      setError(copyError(problem?.key ?? 'tx.invalidAmount'))
       setAmountInvalid(problem?.amount ?? true)
       return
     }
@@ -643,7 +647,7 @@ export function TransactionsPage({
       setShowForm(false)
       await reload()
     } catch (err) {
-      setError(commandErrorMessage(err))
+      setError(commandFailure(err))
     } finally {
       busyRef.current = false
       setBusy(false)
@@ -662,7 +666,7 @@ export function TransactionsPage({
       setEntries((prev) => prev.filter((e) => e.entry.id !== id && !e.is_voided))
       await reload()
     } catch (err) {
-      setError(commandErrorMessage(err, 'tx.deleteFailed'))
+      setError(commandFailure(err, 'tx.deleteFailed'))
     } finally {
       setVoidBusy(false)
     }
@@ -693,7 +697,7 @@ export function TransactionsPage({
         onBack={() => {
           setSubview('journal')
           // A template posted over there is an entry here.
-          void reload().catch((err) => setError(commandErrorMessage(err)))
+          void reload().catch((err) => setError(commandFailure(err)))
         }}
       />
     )
@@ -781,7 +785,7 @@ export function TransactionsPage({
       <TopBar title={t('tx.title')} subtitle={`${entity.name} · ${ccy}`} actions={newEntryButton} />
 
       <ToastStack>
-        <ErrorBanner className="" message={openDialog ? null : error} onDismiss={dismissError} />
+        <ErrorBanner className="" error={openDialog ? null : error} onDismiss={dismissError} />
       </ToastStack>
 
       <CsvMappingModal
@@ -818,7 +822,7 @@ export function TransactionsPage({
         }}
         onConfirm={() => void confirmVoid()}
       >
-        <ErrorBanner message={openDialog === 'void' ? error : null} className="" onDismiss={dismissError} />
+        <ErrorBanner error={openDialog === 'void' ? error : null} className="" onDismiss={dismissError} />
       </ConfirmDialog>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.75fr)_minmax(0,1fr)]">
@@ -846,7 +850,7 @@ export function TransactionsPage({
               {seriesError?.code === 'date_range_inverted' ? (
                 <p className="mt-1.5 text-xs text-[var(--color-danger)]">{t('tx.summary.invalidRange')}</p>
               ) : seriesError ? (
-                <p className="mt-1.5 text-xs text-[var(--color-danger)]">{commandErrorMessage(seriesError)}</p>
+                <p className="mt-1.5 text-xs text-[var(--color-danger)]">{commandErrorText(seriesError)}</p>
               ) : listOnlyFilters ? (
                 <p className="mt-1.5 text-xs text-[var(--color-muted)]">{t('tx.summary.wholeBook')}</p>
               ) : null}
@@ -891,7 +895,7 @@ export function TransactionsPage({
               applySuggestion(s, source)
               if (s.source === 'none' && !s.amount_minor) {
                 // The form this suggestion opens is where the message belongs.
-                setError(renderUiTexts(s.notes, currency) || t('tx.couldNotReadDoc'), 'form')
+                setError(notesError(s.notes, currency, 'tx.couldNotReadDoc'), 'form')
               }
             }}
             onError={(msg) => setError(msg)}
@@ -1289,6 +1293,8 @@ export function TransactionsPage({
                 .join('  ')
               const moneyOut = isMoneyOut(kindLabel)
               const signed = moneyOut ? -amountMinor : amountMinor
+              // Core refuses to void a bill a payment settles; say so up front.
+              const settled = view.settled_by_entry_id !== null
 
               return (
                 <li
@@ -1296,7 +1302,7 @@ export function TransactionsPage({
                   onClick={() => setDetailId(view.entry.id)}
                   className="group flex cursor-pointer items-center gap-4 px-5 py-3 transition hover:bg-white/[0.05] focus-within:bg-white/[0.05]"
                 >
-                  <EntryKindBadge kind={kindLabel} />
+                  <EntryKindBadge kind={kindLabel} paid={settled} />
                   {/* Keyboard path: activating this button bubbles its click
                       to the row handler above — no duplicate handler. */}
                   <button type="button" className="min-w-0 flex-1 text-left">
@@ -1309,7 +1315,7 @@ export function TransactionsPage({
                     <div className="truncate text-xs text-[var(--color-muted)] tabular-nums">
                       {formatDate(view.entry.entry_date)}
                       <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
-                      <span>{t(`kind.${kindLabel}`)}</span>
+                      <span>{t(listedKindKey(kindLabel, settled))}</span>
                       {view.entry.reference ? (
                         <span>{t('entry.ref', { reference: view.entry.reference })}</span>
                       ) : null}
@@ -1333,19 +1339,28 @@ export function TransactionsPage({
                         })}
                       </AmountPill>
                     </span>
-                    <Button
-                      variant="ghost"
-                      size="iconSm"
-                      className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setVoidId(view.entry.id)
-                      }}
-                      aria-label={t('tx.deleteEntry')}
-                      title={t('common.delete')}
+                    {/* The wrapper hides the button until the row is hovered or
+                        focused, and dims nothing itself, so a disabled button
+                        stays hidden too. It carries the reason as well: an
+                        engine may show no tooltip for a disabled control. */}
+                    <span
+                      className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+                      title={settled ? t('error.billSettled') : undefined}
                     >
-                      <Trash2 className="size-4" />
-                    </Button>
+                      <Button
+                        variant="ghost"
+                        size="iconSm"
+                        disabled={settled}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setVoidId(view.entry.id)
+                        }}
+                        aria-label={t('tx.deleteEntry')}
+                        title={settled ? t('error.billSettled') : t('common.delete')}
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </span>
                   </span>
                 </li>
               )
