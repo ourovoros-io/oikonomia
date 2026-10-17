@@ -507,8 +507,13 @@ export function TransactionsPage({
   }, [newEntryIntent, entity?.id])
 
   function setKindAndDefaults(next: EntryKind) {
+    if (next === kind) return
     setKind(next)
     applyKindDefaults(next, defaults)
+    // A new type is a fresh start on the form, so the old error goes even when
+    // it is about the amount or description that carry over: saving checks again.
+    setError(null)
+    setAmountInvalid(false)
   }
 
   function applySuggestion(s: DocumentSuggestion, source: PendingDocSource) {

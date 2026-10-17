@@ -17,6 +17,7 @@ vi.mock('../lib/tauri', () => ({
   updateTakeNotice: vi.fn(async () => null),
 }))
 
+import { vaultPickBackup, vaultUnlock } from '../lib/tauri'
 import { UnlockScreen } from './UnlockScreen'
 import { resetI18nForTests, setLocale, setLocalePersist } from '../lib/i18n'
 
@@ -113,5 +114,36 @@ describe('UnlockScreen language switch focus', () => {
     await user.click(screen.getByRole('radio', { name: 'Ελληνικά' }))
 
     expect(screen.getByRole('radio', { name: 'Ελληνικά' })).toHaveFocus()
+  })
+})
+
+describe('UnlockScreen error language', () => {
+  test('a wrong-password error is re-worded when the language changes', async () => {
+    setLocalePersist(vi.fn())
+    vi.mocked(vaultUnlock).mockRejectedValue({ code: 'invalid_password', message: '' })
+    const user = userEvent.setup()
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    await user.type(screen.getByLabelText('Password'), 'wrong')
+    await user.click(screen.getByRole('button', { name: 'Unlock' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Incorrect password')
+
+    await user.click(screen.getByRole('radio', { name: 'Ελληνικά' }))
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Λάθος κωδικός — δοκιμάστε ξανά.')
+  })
+
+  test('a restore error is re-worded when the language changes', async () => {
+    setLocalePersist(vi.fn())
+    vi.mocked(vaultPickBackup).mockRejectedValue({ code: 'backup_invalid', message: '' })
+    const user = userEvent.setup()
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    await user.click(screen.getByRole('button', { name: 'Restore from backup' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('not a valid')
+
+    await user.click(screen.getByRole('radio', { name: 'Ελληνικά' }))
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Αυτό το αρχείο δεν είναι έγκυρο αντίγραφο ασφαλείας Oikonomia.',
+    )
   })
 })

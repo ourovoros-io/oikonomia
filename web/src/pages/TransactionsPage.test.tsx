@@ -466,6 +466,42 @@ describe('TransactionsPage CSV toolbar', () => {
     expect(amountField).not.toHaveAttribute('aria-invalid')
   })
 
+  test('switching the type clears the error but keeps what was typed', async () => {
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'New Entry' }))
+    const amountField = await screen.findByRole('textbox', { name: /amount/i })
+    await userEvent.type(screen.getByLabelText(/description/i), 'Coffee')
+    await userEvent.type(amountField, '0')
+    await userEvent.click(screen.getByRole('button', { name: 'Save entry' }))
+    await waitFor(() => {
+      expect(amountField).toHaveAttribute('aria-invalid', 'true')
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Transfer' }))
+
+    expect(screen.queryByText('The amount must be greater than zero.')).toBeNull()
+    expect(amountField).not.toHaveAttribute('aria-invalid')
+    expect(amountField).toHaveValue('0')
+    expect(screen.getByLabelText(/description/i)).toHaveValue('Coffee')
+  })
+
+  test('clicking the type already chosen keeps the error', async () => {
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'New Entry' }))
+    const amountField = await screen.findByRole('textbox', { name: /amount/i })
+    await userEvent.type(screen.getByLabelText(/description/i), 'Coffee')
+    await userEvent.type(amountField, '0')
+    await userEvent.click(screen.getByRole('button', { name: 'Save entry' }))
+    await waitFor(() => {
+      expect(amountField).toHaveAttribute('aria-invalid', 'true')
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Expense' }))
+
+    expect(amountField).toHaveAttribute('aria-invalid', 'true')
+    expect(amountField).toHaveAccessibleDescription('The amount must be greater than zero.')
+  })
+
   test('a failed save is explained inside the dialog and gone after Cancel', async () => {
     await renderReady()
     await userEvent.click(screen.getByRole('button', { name: 'New Entry' }))
