@@ -833,8 +833,8 @@
       "from": "Von",
       "to": "Bis",
       "account": "Konto",
-      "fromAria": "Übersicht ab Datum",
-      "toAria": "Übersicht bis Datum",
+      "fromAria": "Buchungen ab Datum",
+      "toAria": "Buchungen bis Datum",
       "allAccounts": "Alle Konten"
     },
     "summary": {
@@ -922,7 +922,7 @@
       "body": "Mit Ausgabe erfassen Sie Zahlungen, mit Einnahme das, was reinkommt, und mit Rechnung Strom, Nebenkosten oder offene Rechnungen.",
       "filtered": {
         "title": "Keine passenden Buchungen",
-        "body": "Keine Buchung passt zur Suche oder zu den Filtern."
+        "body": "Keine Buchung passt zur Suche, zum Zeitraum oder zum Konto."
       }
     },
     "row": {
