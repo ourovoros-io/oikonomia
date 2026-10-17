@@ -210,20 +210,40 @@ export function TransactionsPage({
     [visibleEntries, detailId, linkedView],
   )
 
+  // Bumped when the dialog closes, so a read that lands after it is dropped.
+  const linkRequestRef = useRef(0)
+
   /** Shows `id` in the detail dialog, read fresh from core. */
   async function openLinkedEntry(id: string) {
+    const request = ++linkRequestRef.current
+    setError(null)
     try {
-      setLinkedView(await api.entryGet(id))
+      const view = await api.entryGet(id)
+      if (request !== linkRequestRef.current) return
+      setLinkedView(view)
       setDetailId(id)
     } catch (err) {
-      setError(commandFailure(err))
+      if (request === linkRequestRef.current) setError(commandFailure(err, 'entry.openFailed'))
     }
   }
 
-  /** After a change in the detail dialog: the list, and the linked entry it may show. */
+  function closeDetail() {
+    linkRequestRef.current += 1
+    setLinkedView(null)
+    setDetailId(null)
+  }
+
+  /** After a change in the detail dialog: the list, and the linked entry if that is what it shows. */
   async function reloadDetail() {
     await reload()
-    if (linkedView) setLinkedView(await api.entryGet(linkedView.entry.id))
+    if (!linkedView || detailView !== linkedView) return
+    // The change itself was saved, so a failed re-read is its own error and
+    // must not reach the dialog as the change failing.
+    try {
+      setLinkedView(await api.entryGet(linkedView.entry.id))
+    } catch (err) {
+      setError(commandFailure(err, 'entry.openFailed'))
+    }
   }
 
   /** Search and account narrow the list and leave the summary whole; the dates narrow both. */
@@ -783,7 +803,7 @@ export function TransactionsPage({
     setPendingAnalysis(null)
     setScanNotes(null)
     setEditId(view.entry.id)
-    setDetailId(null)
+    closeDetail()
     setShowForm(true)
   }
 
@@ -1257,7 +1277,7 @@ export function TransactionsPage({
         // Escape to the top-most dialog only; this guard is defense in depth
         // so the detail modal can never close while the viewer sits above it.
         onClose={() => {
-          if (!viewerDocId) setDetailId(null)
+          if (!viewerDocId) closeDetail()
         }}
         onEdit={detailView?.simple_form ? () => startEdit(detailView) : null}
         onView={(id) => setViewerDocId(id)}

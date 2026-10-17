@@ -553,6 +553,7 @@
     "paidBill": "Facture, payée",
     "openPayment": "Ouvrir le paiement",
     "openBill": "Ouvrir la facture",
+    "openFailed": "Impossible d’ouvrir l’écriture liée. Fermez cette fenêtre et retrouvez-la dans la liste.",
     "kind": {
       "openingBalance": "Solde d’ouverture",
       "other": "Écriture de journal"

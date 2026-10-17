@@ -553,6 +553,7 @@
     "paidBill": "Rechnung, bezahlt",
     "openPayment": "Zahlung öffnen",
     "openBill": "Rechnung öffnen",
+    "openFailed": "Die verknüpfte Buchung konnte nicht geöffnet werden. Schließen Sie diesen Dialog und suchen Sie sie in der Liste.",
     "kind": {
       "openingBalance": "Anfangssaldo",
       "other": "Journalbuchung"

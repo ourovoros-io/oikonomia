@@ -139,6 +139,9 @@ export function EntryDetailModal({
 
   return (
     <Modal
+      // A linked entry replaces the one shown: a fresh dialog moves focus and
+      // scroll to its top, so the new title is what is read next.
+      key={entry.id}
       open
       title={entry.description}
       description={`${formatDate(entry.entry_date)}${entry.reference ? t('entry.ref', { reference: entry.reference }) : ''}`}
@@ -283,7 +286,7 @@ export function EntryDetailModal({
           )}
         </div>
 
-        <SettlementLink view={view} onOpenEntry={onOpenEntry} />
+        <SettlementLink view={view} disabled={anyBusy} onOpenEntry={onOpenEntry} />
 
         <EntryHistory key={entry.id} entryId={entry.id} />
 
@@ -307,9 +310,11 @@ export function EntryDetailModal({
  */
 function SettlementLink({
   view,
+  disabled,
   onOpenEntry,
 }: {
   view: PostedEntryView
+  disabled: boolean
   onOpenEntry: (entryId: string) => void
 }) {
   const { t } = useI18n()
@@ -322,7 +327,12 @@ function SettlementLink({
 
   return (
     <div>
-      <Button variant="secondary" size="sm" onClick={() => onOpenEntry(link.entryId)}>
+      <Button
+        variant="secondary"
+        size="sm"
+        disabled={disabled}
+        onClick={() => onOpenEntry(link.entryId)}
+      >
         <ArrowRight className="size-3.5" />
         {link.label}
       </Button>

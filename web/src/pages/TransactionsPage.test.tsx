@@ -1985,6 +1985,52 @@ describe('TransactionsPage between a bill and its payment', () => {
     expect(screen.getByRole('button', { name: 'Open payment' })).toBeTruthy()
   })
 
+  test('a link that cannot be read says so and keeps the entry shown', async () => {
+    vi.mocked(api.entryList).mockResolvedValue([settledBill])
+    vi.mocked(api.entryGet).mockRejectedValue(new Error('gone'))
+    await renderReady()
+
+    await userEvent.click(await screen.findByText('Alpha supermarket'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Open payment' }))
+
+    const dialog = await screen.findByRole('dialog')
+    expect(await within(dialog).findByText(/Could not open the linked entry/)).toBeTruthy()
+    expect(within(dialog).getByRole('heading', { name: 'Alpha supermarket' })).toBeTruthy()
+  })
+
+  test('closing the dialog before the link is read keeps it closed', async () => {
+    let resolve: (view: PostedEntryView) => void = () => {}
+    vi.mocked(api.entryList).mockResolvedValue([settledBill])
+    vi.mocked(api.entryGet).mockReturnValue(new Promise((r) => (resolve = r)))
+    await renderReady()
+
+    await userEvent.click(await screen.findByText('Alpha supermarket'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Open payment' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }))
+    resolve(payment)
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull()
+    })
+    expect(screen.queryByText('Power payment')).toBeNull()
+  })
+
+  test('a change saved on a linked entry is not reported failed when its re-read fails', async () => {
+    vi.mocked(api.entryList).mockResolvedValue([settledBill])
+    vi.mocked(api.entryGet).mockResolvedValueOnce(payment).mockRejectedValueOnce(new Error('gone'))
+    await renderReady()
+    await userEvent.click(await screen.findByText('Alpha supermarket'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Open payment' }))
+    const dialog = await screen.findByRole('dialog')
+    await within(dialog).findByRole('heading', { name: 'Power payment' })
+
+    await userEvent.click(within(dialog).getByRole('checkbox', { name: /hide/i }))
+
+    expect(await within(dialog).findByText(/Could not open the linked entry/)).toBeTruthy()
+    expect(api.entrySetHidden).toHaveBeenCalledWith('p1', true)
+    expect(within(dialog).queryByText('Could not update the entry.')).toBeNull()
+  })
+
   test('an entry linked to no other has no link', async () => {
     await renderReady()
 

@@ -617,6 +617,7 @@
   "entry.paidBill": "Bill, paid",
   "entry.openPayment": "Open payment",
   "entry.openBill": "Open bill",
+  "entry.openFailed": "Could not open the linked entry. Close this dialog and find it in the list.",
   "entry.fileTooLarge": "File too large (max 8 MB)",
   "entry.history.title": "History",
   "entry.history.note": "Kept for the audit trail when this entry was edited.",
