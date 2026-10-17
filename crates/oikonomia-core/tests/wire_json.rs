@@ -27,7 +27,7 @@ use oikonomia_core::ledger::{
     BalanceSheet, CashFlowSeries, CreateAccount, CreateEntity, CreateRecurringTemplateRequest,
     DashboardSummary, EntryHistoryItem, JournalLineRequest, ListedEntryKind, PnL,
     PostJournalRequest, PostSimpleEntryRequest, PostedEntryView, RecurringPostResult,
-    RecurringTemplateView, RegisterLine, TrialBalance, UpdateAccount,
+    RecurringTemplateView, RegisterLine, SimpleEntryAccounts, TrialBalance, UpdateAccount,
     UpdateRecurringTemplateRequest, VoidResult,
 };
 use oikonomia_core::prefs::{UiPrefs, load_ui_prefs_view, ui_prefs_path};
@@ -149,7 +149,27 @@ fn posted_entry_view() {
         r#""amount_minor":0},"memo":null},{"id":"55555555-5555-4555-8555-555555555555","#,
         r#""entry_id":"33333333-3333-4333-8333-333333333333","account_id":"#,
         r#""66666666-6666-4666-8666-666666666666","debit":{"amount_minor":0},"credit":{"#,
-        r#""amount_minor":4500},"memo":null}],"is_voided":false,"listed_kind":"expense"}"#,
+        r#""amount_minor":4500},"memo":null}],"is_voided":false,"listed_kind":"expense","#,
+        r#""simple_form":{"kind":"expense","bill_status":null,"category_account_id":"#,
+        r#""22222222-2222-4222-8222-222222222222","wallet_account_id":"#,
+        r#""66666666-6666-4666-8666-666666666666","payable_account_id":null,"#,
+        r#""from_account_id":null,"to_account_id":null}}"#,
+    ));
+}
+
+/// The form an edit opens on has the field names of the request it sends.
+#[test]
+fn simple_entry_accounts_of_a_bill() {
+    let unpaid_bill = concat!(
+        r#"{"kind":"bill","bill_status":"unpaid","category_account_id":"#,
+        r#""22222222-2222-4222-8222-222222222222","wallet_account_id":null,"#,
+        r#""payable_account_id":"66666666-6666-4666-8666-666666666666","#,
+        r#""from_account_id":null,"to_account_id":null}"#,
+    );
+    assert_json_is_pinned::<SimpleEntryAccounts>(unpaid_bill);
+
+    assert!(is_refused::<SimpleEntryAccounts>(
+        &unpaid_bill.replace(r#""unpaid""#, "null")
     ));
 }
 
@@ -310,7 +330,8 @@ fn recurring_post_result() {
         r#"{"entry":{"entry":{"id":"33333333-3333-4333-8333-333333333333","entity_id":"#,
         r#""11111111-1111-4111-8111-111111111111","entry_date":"2026-08-10","description":"#,
         r#""Power","reference":null,"status":"posted","hidden":false},"lines":[],"is_voided":"#,
-        r#"false,"listed_kind":"bill"},"template":{"id":"88888888-8888-4888-8888-888888888888","#,
+        r#"false,"listed_kind":"bill","simple_form":null},"template":{"id":"#,
+        r#""88888888-8888-4888-8888-888888888888","#,
         r#""entity_id":"#,
         r#""11111111-1111-4111-8111-111111111111","name":"Power","kind":"bill","bill_status":"#,
         r#""unpaid","amount_minor":9900,"cadence":"monthly","day_of_month":10,"#,

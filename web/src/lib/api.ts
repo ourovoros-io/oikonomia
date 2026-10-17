@@ -79,6 +79,12 @@ export type PostedEntryView = {
   lines: JournalLine[]
   is_voided: boolean
   listed_kind: ListedEntryKind
+  /**
+   * The simple entry form core posts this entry from (`SimpleEntryAccounts`), which an
+   * edit opens on. Null for a voided entry, a reversal, and an entry the form cannot
+   * describe; such an entry is not edited.
+   */
+  simple_form: SimpleEntryForm | null
 }
 
 /** How an entry of a history relates to the edit that replaced it. */
@@ -271,6 +277,18 @@ export type SimpleEntryInput = {
   from_account_id: string | null
   to_account_id: string | null
 }
+
+/** The kind, bill status and role accounts of a posted simple entry, as the form holds them. */
+export type SimpleEntryForm = Pick<
+  SimpleEntryInput,
+  | 'kind'
+  | 'bill_status'
+  | 'category_account_id'
+  | 'wallet_account_id'
+  | 'payable_account_id'
+  | 'from_account_id'
+  | 'to_account_id'
+>
 
 /** Same kinds as journal entries — a template is a recipe, not a new type. */
 export type RecurringKind = SimpleEntryKind

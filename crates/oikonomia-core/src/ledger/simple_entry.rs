@@ -110,6 +110,18 @@ impl SimpleBillStatus {
             Self::PayExisting => "pay_existing",
         }
     }
+
+    /// Returns the status whose [`identifier`](Self::identifier) is `text`,
+    /// or `None` for any other text.
+    #[must_use]
+    pub fn from_identifier(text: &str) -> Option<Self> {
+        match text {
+            "paid" => Some(Self::Paid),
+            "unpaid" => Some(Self::Unpaid),
+            "pay_existing" => Some(Self::PayExisting),
+            _ => None,
+        }
+    }
 }
 
 /// The two accounts of a simple entry, named for the part each plays.
@@ -160,7 +172,14 @@ impl SimpleBillStatus {
 /// assert_eq!(SimpleEntryAccounts::from_roles(SimpleEntryKind::Bill, status, roles), Ok(unpaid));
 /// assert_eq!(unpaid.roles(), roles);
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// It serializes in the flat shape of the simple entry form: the kind, the
+/// bill status and the five role accounts side by side.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    into = "crate::ledger::wire::SimpleEntryAccountsWire",
+    try_from = "crate::ledger::wire::SimpleEntryAccountsWire"
+)]
 pub enum SimpleEntryAccounts {
     /// Money spent now: the category is debited and the wallet credited.
     Expense {
@@ -302,6 +321,57 @@ impl SimpleEntryAccounts {
                 Ok(Self::Transfer { from, to })
             }
         }
+    }
+
+    /// Builds the accounts of a posted entry of `kind` and `bill_status` from
+    /// the account it debits and the one it credits: the reverse of
+    /// [`debit_account`](Self::debit_account) and
+    /// [`credit_account`](Self::credit_account).
+    ///
+    /// `bill_status` is read as [`from_roles`](Self::from_roles) reads it.
+    /// Returns `None` for a bill without a status. The account types are not
+    /// checked; the caller knows whether they were.
+    pub(crate) fn from_sides(
+        kind: SimpleEntryKind,
+        bill_status: Option<SimpleBillStatus>,
+        debit: AccountId,
+        credit: AccountId,
+    ) -> Option<Self> {
+        let accounts = match (kind, bill_status) {
+            (SimpleEntryKind::Expense, _) => Self::Expense {
+                category: debit,
+                wallet: credit,
+            },
+            (SimpleEntryKind::Income, Some(SimpleBillStatus::Unpaid)) => Self::IncomeReceivable {
+                category: credit,
+                receivable: debit,
+            },
+            (
+                SimpleEntryKind::Income,
+                None | Some(SimpleBillStatus::Paid | SimpleBillStatus::PayExisting),
+            ) => Self::Income {
+                category: credit,
+                wallet: debit,
+            },
+            (SimpleEntryKind::Bill, None) => return None,
+            (SimpleEntryKind::Bill, Some(SimpleBillStatus::Paid)) => Self::BillPaid {
+                category: debit,
+                wallet: credit,
+            },
+            (SimpleEntryKind::Bill, Some(SimpleBillStatus::Unpaid)) => Self::BillUnpaid {
+                category: debit,
+                payable: credit,
+            },
+            (SimpleEntryKind::Bill, Some(SimpleBillStatus::PayExisting)) => Self::BillPayment {
+                payable: debit,
+                wallet: credit,
+            },
+            (SimpleEntryKind::Transfer, _) => Self::Transfer {
+                from: credit,
+                to: debit,
+            },
+        };
+        Some(accounts)
     }
 
     /// Returns the kind of entry these accounts belong to.
@@ -835,6 +905,25 @@ mod properties {
             let again =
                 SimpleEntryAccounts::from_roles(accounts.kind(), accounts.bill_status(), flat);
             prop_assert_eq!(again, Ok(accounts));
+        }
+
+        #[test]
+        fn the_sides_of_posted_accounts_give_the_same_accounts_back(
+            kind in kinds(),
+            status in statuses(),
+            roles in role_sets(),
+        ) {
+            let Ok(accounts) = SimpleEntryAccounts::from_roles(kind, status, roles) else {
+                return Ok(());
+            };
+
+            let again = SimpleEntryAccounts::from_sides(
+                accounts.kind(),
+                accounts.bill_status(),
+                accounts.debit_account(),
+                accounts.credit_account(),
+            );
+            prop_assert_eq!(again, Some(accounts));
         }
     }
 }

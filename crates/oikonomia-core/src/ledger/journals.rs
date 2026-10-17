@@ -18,9 +18,11 @@
 //! the UI holds no accounting rule. What needs the database is checked here:
 //! that each account exists, has a type its part accepts, belongs to the
 //! entry's entity, is not archived, and is not the account on the other
-//! side. A simple entry also stores its kind, because a bill paid at once has
-//! the lines of an expense; the views report what an entry is listed as in
-//! [`PostedEntryView::listed_kind`].
+//! side. A simple entry also stores its kind and bill status, because a bill
+//! paid at once has the lines of an expense and a bill paid by card those of
+//! an unpaid bill; the views report what an entry is listed as in
+//! [`PostedEntryView::listed_kind`] and the form an edit opens on in
+//! [`PostedEntryView::simple_form`].
 //!
 //! # Entries are not edited
 //!
@@ -77,8 +79,10 @@ use crate::ledger::balance::{
     ACTIVE_ENTRY_PREDICATE, account_balance_as_of, add_minor, normal_balance,
 };
 use crate::ledger::entities::ensure_writable_entity;
-use crate::ledger::entry_kind::{KindFallback, ListedEntryKind};
-use crate::ledger::simple_entry::{RoleAccount, SimpleEntryAccounts, SimpleEntryKind};
+use crate::ledger::entry_kind::{KindFallback, ListedEntryKind, PostedAs, needs_fallback};
+use crate::ledger::simple_entry::{
+    RoleAccount, SimpleBillStatus, SimpleEntryAccounts, SimpleEntryKind,
+};
 use crate::money::Money;
 use crate::prefs::Locale;
 use crate::text::{opening_balance_description, void_description, void_memo};
@@ -166,6 +170,42 @@ pub struct PostedEntryView {
     /// entry that stores none, the kind its lines suggest. The rules are on
     /// [`ListedEntryKind`].
     pub listed_kind: ListedEntryKind,
+    /// The simple entry form that posts this entry, which an edit opens on:
+    /// the kind, the bill status and the accounts by the part they play.
+    /// `None` for a voided entry and a reversal, which are not edited, and
+    /// for an entry the simple form cannot describe, such as one of more
+    /// than two lines. The rules are on `KindFallback::simple_form`.
+    pub simple_form: Option<SimpleEntryAccounts>,
+}
+
+impl PostedEntryView {
+    /// Builds the view of an entry read with its lines, and what it was
+    /// posted as.
+    ///
+    /// `fallback` must be loaded for the entry's book when
+    /// [`needs_fallback`] says so; otherwise it is not read.
+    fn new(
+        entry: JournalEntry,
+        lines: Vec<JournalLine>,
+        is_voided: bool,
+        posted_as: Option<PostedAs>,
+        fallback: &KindFallback,
+    ) -> Self {
+        let listed_kind = fallback.listed_kind(posted_as, &lines);
+        let simple_form = if is_voided {
+            None
+        } else {
+            fallback.simple_form(posted_as, &lines)
+        };
+
+        Self {
+            entry,
+            lines,
+            is_voided,
+            listed_kind,
+            simple_form,
+        }
+    }
 }
 
 /// One line of [`account_register`]: a posting to the account, with the
@@ -267,7 +307,10 @@ pub fn list_entries(
     let mut lines_by_entry = load_listed_lines(conn, &listed)?;
 
     // Loaded once for the whole list, and only when an entry needs it.
-    let fallback = if headers.iter().any(|header| header.kind.is_none()) {
+    let fallback = if headers
+        .iter()
+        .any(|header| needs_fallback(header.posted_as))
+    {
         KindFallback::load(conn, entity_id)?
     } else {
         KindFallback::default()
@@ -277,15 +320,13 @@ pub fn list_entries(
         .into_iter()
         .map(|header| {
             let lines = lines_by_entry.remove(&header.entry.id).unwrap_or_default();
-            let listed_kind = header
-                .kind
-                .map_or_else(|| fallback.classify(&lines), ListedEntryKind::from);
-            PostedEntryView {
-                entry: header.entry,
+            PostedEntryView::new(
+                header.entry,
                 lines,
-                is_voided: header.is_voided,
-                listed_kind,
-            }
+                header.is_voided,
+                header.posted_as,
+                &fallback,
+            )
         })
         .collect())
 }
@@ -295,10 +336,11 @@ pub fn list_entries(
 /// # Errors
 ///
 /// - [`Error::NotFound`] for an unknown entry.
-/// - [`Error::VaultCorrupt`] for a stored id, date, status, kind or amount
-///   that does not parse. For an entry that stores no kind, also for an
-///   account of its book, or the payable account of one of its recurring
-///   bills, that does not parse: the fallback reads them.
+/// - [`Error::VaultCorrupt`] for a stored id, date, status, kind, bill
+///   status or amount that does not parse. For an entry that stores no kind,
+///   or a bill that stores no status, also for an account of its book, or
+///   the payable account of one of its recurring bills, that does not parse:
+///   the fallback reads them.
 /// - [`Error::Database`] on database errors.
 pub fn get_entry(conn: &Connection, id: JournalEntryId) -> Result<PostedEntryView> {
     load_entry(conn, id)?.into_view(conn)
@@ -312,28 +354,30 @@ pub(crate) struct StoredEntry {
     pub(crate) lines: Vec<JournalLine>,
     /// Whether it is out of the active books.
     is_voided: bool,
-    /// The simple-entry kind it was posted as, if it stores one.
-    kind: Option<SimpleEntryKind>,
+    /// What it was posted as, if it stores that.
+    posted_as: Option<PostedAs>,
 }
 
 impl StoredEntry {
-    /// Builds the view [`get_entry`] returns, classifying an entry that
-    /// stores no kind from its lines.
+    /// Builds the view [`get_entry`] returns, loading the line fallback only
+    /// for an entry that needs it.
     ///
     /// # Errors
     ///
-    /// Those of [`KindFallback::load`], only for an entry without a kind.
+    /// Those of [`KindFallback::load`], only for an entry that needs it.
     fn into_view(self, conn: &Connection) -> Result<PostedEntryView> {
-        let listed_kind = match self.kind {
-            Some(kind) => ListedEntryKind::from(kind),
-            None => KindFallback::load(conn, self.entry.entity_id)?.classify(&self.lines),
+        let fallback = if needs_fallback(self.posted_as) {
+            KindFallback::load(conn, self.entry.entity_id)?
+        } else {
+            KindFallback::default()
         };
-        Ok(PostedEntryView {
-            entry: self.entry,
-            lines: self.lines,
-            is_voided: self.is_voided,
-            listed_kind,
-        })
+        Ok(PostedEntryView::new(
+            self.entry,
+            self.lines,
+            self.is_voided,
+            self.posted_as,
+            &fallback,
+        ))
     }
 }
 
@@ -346,17 +390,17 @@ impl StoredEntry {
 /// # Errors
 ///
 /// - [`Error::NotFound`] for an unknown entry.
-/// - [`Error::VaultCorrupt`] for a stored id, date, status, kind or amount
-///   that does not parse.
+/// - [`Error::VaultCorrupt`] for a stored id, date, status, kind, bill status
+///   or amount that does not parse.
 /// - [`Error::Database`] on database errors.
 pub(crate) fn load_entry(conn: &Connection, id: JournalEntryId) -> Result<StoredEntry> {
     const OPERATION: &str = "read journal entry";
 
-    let (entry, has_void_link, kind) = conn
+    let (entry, has_void_link, posted_as) = conn
         .query_row(
             "
             SELECT id, entity_id, entry_date, description, reference, status, hidden,
-                   voided_by_entry_id, kind
+                   voided_by_entry_id, kind, bill_status
             FROM journal_entries WHERE id = ?1
             ",
             [id.to_string()],
@@ -365,7 +409,7 @@ pub(crate) fn load_entry(conn: &Connection, id: JournalEntryId) -> Result<Stored
                 Ok((
                     map_entry_row(OPERATION, row),
                     voided_by.is_some(),
-                    stored_kind(OPERATION, row, 8),
+                    stored_posted_as(OPERATION, row, 8),
                 ))
             },
         )
@@ -374,7 +418,7 @@ pub(crate) fn load_entry(conn: &Connection, id: JournalEntryId) -> Result<Stored
             other => Error::database(OPERATION, other),
         })?;
     let entry = entry?;
-    let kind = kind?;
+    let posted_as = posted_as?;
 
     let is_voided = has_void_link || entry_is_void_reverse(conn, entry.id)?;
     let lines = load_lines(conn, entry.id)?;
@@ -383,7 +427,7 @@ pub(crate) fn load_entry(conn: &Connection, id: JournalEntryId) -> Result<Stored
         entry,
         lines,
         is_voided,
-        kind,
+        posted_as,
     })
 }
 
@@ -770,7 +814,7 @@ fn post_simple_entry_in_tx(
         },
         hidden,
         ArchivedAccounts::Refuse,
-        Some(input.accounts.kind()),
+        Some(PostedAs::from(input.accounts)),
     )?
     .into_view(conn)
 }
@@ -883,16 +927,16 @@ struct ListedHeader {
     entry: JournalEntry,
     /// Whether the entry is out of the active books.
     is_voided: bool,
-    /// The simple-entry kind the entry was posted as, if it stores one.
-    kind: Option<SimpleEntryKind>,
+    /// What the entry was posted as, if it stores that.
+    posted_as: Option<PostedAs>,
 }
 
 /// Loads the entries [`list_entries`] returns, newest first.
 ///
 /// # Errors
 ///
-/// - [`Error::VaultCorrupt`] for a stored id, date or kind that does not
-///   parse.
+/// - [`Error::VaultCorrupt`] for a stored id, date, kind or bill status that
+///   does not parse.
 /// - [`Error::Database`] on database errors.
 fn load_listed_headers(conn: &Connection, listed: &ListedEntries) -> Result<Vec<ListedHeader>> {
     const OPERATION: &str = "list journal entries";
@@ -906,7 +950,7 @@ fn load_listed_headers(conn: &Connection, listed: &ListedEntries) -> Result<Vec<
                 Ok(ListedHeader {
                     entry,
                     is_voided: is_voided != 0,
-                    kind: stored_kind(OPERATION, row, 9)?,
+                    posted_as: stored_posted_as(OPERATION, row, 9)?,
                 })
             }))
         })
@@ -915,29 +959,44 @@ fn load_listed_headers(conn: &Connection, listed: &ListedEntries) -> Result<Vec<
     collect_rows(OPERATION, rows)
 }
 
-/// Reads the `journal_entries.kind` column at `index`.
+/// Reads what an entry was posted as from the `journal_entries.kind` column
+/// at `index` and the `bill_status` column after it.
+///
+/// The status is not read for an entry that stores no kind.
 ///
 /// # Errors
 ///
-/// [`Error::VaultCorrupt`] naming the column when it holds text that is not a
-/// kind's identifier, or a value that is not text.
-fn stored_kind(
+/// [`Error::VaultCorrupt`] naming the column when either holds text that is
+/// not one of its identifiers, or a value that is not text.
+fn stored_posted_as(
     operation: &'static str,
     row: &rusqlite::Row<'_>,
     index: usize,
-) -> Result<Option<SimpleEntryKind>> {
-    // The schema's `CHECK` allows only the four identifiers, so other text
-    // was not written by the application.
-    read_column::<Option<String>>(operation, row, index)?
+) -> Result<Option<PostedAs>> {
+    // The schema's `CHECK`s allow only the identifiers, so other text was not
+    // written by the application.
+    let Some(kind) = read_column::<Option<String>>(operation, row, index)? else {
+        return Ok(None);
+    };
+    let kind = SimpleEntryKind::from_identifier(&kind).ok_or_else(|| {
+        corrupt_column(
+            "journal_entries.kind",
+            format_args!("unknown entry kind: {kind}"),
+        )
+    })?;
+
+    let bill_status = read_column::<Option<String>>(operation, row, index + 1)?
         .map(|text| {
-            SimpleEntryKind::from_identifier(&text).ok_or_else(|| {
+            SimpleBillStatus::from_identifier(&text).ok_or_else(|| {
                 corrupt_column(
-                    "journal_entries.kind",
-                    format_args!("unknown entry kind: {text}"),
+                    "journal_entries.bill_status",
+                    format_args!("unknown bill status: {text}"),
                 )
             })
         })
-        .transpose()
+        .transpose()?;
+
+    Ok(Some(PostedAs { kind, bill_status }))
 }
 
 /// The query of [`load_listed_headers`]: the entries
@@ -957,7 +1016,7 @@ fn listed_headers_sql() -> String {
                        SELECT 1 FROM journal_entries voider
                        WHERE voider.voided_by_entry_id = je.id
                    ) AS is_voided,
-               je.kind
+               je.kind, je.bill_status
         FROM journal_entries je
         WHERE {LISTED_ENTRIES_PREDICATE}
         ORDER BY je.entry_date DESC, je.created_at DESC, je.rowid DESC
@@ -1090,8 +1149,8 @@ enum ArchivedAccounts {
 /// Callers own the transaction: [`post_entry`] and [`void_entry`] wrap this so
 /// a failure mid-insert can never leave a partial posted entry behind.
 /// `hidden` is for [`void_entry`]: a reverse of a hidden original stays hidden.
-/// `kind` is the simple-entry kind to store, `None` for every entry that was
-/// not posted as one.
+/// `posted_as` is what a simple entry was posted as, to store; `None` for
+/// every entry that was not posted as one.
 ///
 /// # Errors
 ///
@@ -1102,7 +1161,7 @@ fn post_entry_in_tx(
     input: &PostJournal,
     hidden: bool,
     archived: ArchivedAccounts,
-    kind: Option<SimpleEntryKind>,
+    posted_as: Option<PostedAs>,
 ) -> Result<StoredEntry> {
     // First, so that an archived entity is refused whatever else is wrong
     // with the entry, and by every operation that posts one.
@@ -1146,8 +1205,8 @@ fn post_entry_in_tx(
         "
         INSERT INTO journal_entries (
             id, entity_id, entry_date, description, reference,
-            status, created_at, posted_at, voided_by_entry_id, hidden, kind
-        ) VALUES (?1, ?2, ?3, ?4, ?5, 'posted', ?6, ?6, NULL, ?7, ?8)
+            status, created_at, posted_at, voided_by_entry_id, hidden, kind, bill_status
+        ) VALUES (?1, ?2, ?3, ?4, ?5, 'posted', ?6, ?6, NULL, ?7, ?8, ?9)
         ",
         rusqlite::params![
             entry_id.to_string(),
@@ -1157,7 +1216,10 @@ fn post_entry_in_tx(
             reference,
             now,
             i64::from(hidden),
-            kind.map(SimpleEntryKind::identifier),
+            posted_as.map(|posted| posted.kind.identifier()),
+            posted_as
+                .and_then(|posted| posted.bill_status)
+                .map(SimpleBillStatus::identifier),
         ],
     )
     .database("insert journal entry")?;
@@ -1307,7 +1369,7 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
         reference: view.entry.reference.clone(),
         lines: reverse_lines,
     };
-    // The reversal takes the original's kind, so the two halves of a voided
+    // The reversal takes the original's kind and status, so the two halves of a voided
     // pair are listed alike; the lines of a reversed paid bill would say
     // expense.
     let reverse = post_entry_in_tx(
@@ -1315,7 +1377,7 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
         &reverse_input,
         view.entry.hidden,
         ArchivedAccounts::Accept,
-        view.kind,
+        view.posted_as,
     )?;
 
     conn.execute(
