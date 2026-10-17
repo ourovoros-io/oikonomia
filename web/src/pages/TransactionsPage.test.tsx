@@ -1324,15 +1324,43 @@ describe('TransactionsPage summary', () => {
     await waitFor(() => {
       expect(api.entryList).toHaveBeenLastCalledWith('e1', expect.objectContaining({ from: undefined }))
     })
+    // Let the newer list land first, so the stale one truly arrives last.
+    await act(async () => {})
 
     await act(async () => finishStale([postedEntry]))
 
     expect(screen.getByText('CLIENT INVOICE')).toBeInTheDocument()
   })
 
+  test('a failure of an overtaken list request shows no error', async () => {
+    datedEntryList()
+    await renderReady()
+    await screen.findByText('CLIENT INVOICE')
+    let failStale: (reason: unknown) => void = () => undefined
+    vi.mocked(api.entryList).mockImplementationOnce(
+      () => new Promise((_resolve, reject) => (failStale = reject)),
+    )
+    const from = screen.getByLabelText('Entries from date')
+    await userEvent.type(from, '12/08/2026')
+    await userEvent.tab()
+    await userEvent.clear(from)
+    await userEvent.tab()
+    await waitFor(() => {
+      expect(api.entryList).toHaveBeenLastCalledWith('e1', expect.objectContaining({ from: undefined }))
+    })
+    await act(async () => {})
+
+    await act(async () => failStale({ code: 'io', message: 'disk' }))
+
+    expect(screen.queryByText(commandErrorMessage({ code: 'io', message: 'disk' }))).toBeNull()
+    expect(screen.getByText('CLIENT INVOICE')).toBeInTheDocument()
+  })
+
   test('the account filter leaves the summary whole, and says so', async () => {
     await renderReady()
     const select = screen.getByRole('combobox', { name: 'Account' }) as HTMLSelectElement
+    // The empty state shows Import CSV before the accounts have loaded.
+    await screen.findByRole('option', { name: '1000 · Checking' })
 
     await userEvent.selectOptions(select, select.options[1]?.value ?? '')
 

@@ -220,7 +220,9 @@ export function TransactionsPage({
   /** Search and account narrow the list and leave the summary whole; the dates narrow both. */
   const listOnlyFilters = Boolean(debouncedSearch.trim() || accountFilter)
   const filtersNarrowList = listOnlyFilters || Boolean(fromDate || toDate)
-  // ISO dates order as strings. Rust words the inverted window for the summary.
+  // The summary already reports an inverted window through its error from
+  // Rust; the list only needs to know it holds nothing. ISO dates order as
+  // strings.
   const datesInverted = Boolean(fromDate && toDate && fromDate > toDate)
 
   const expenseAccounts = useMemo(() => accountsOf(accounts, ['expense']), [accounts])
@@ -276,13 +278,15 @@ export function TransactionsPage({
   /**
    * The entry list and what its rows are drawn from. An inverted date window
    * matches no entry, so it is not asked for; a response that a newer filter
-   * choice has overtaken is dropped.
+   * choice has overtaken is dropped, and so is its failure: it says nothing
+   * about the list on screen.
    */
   async function loadList() {
     if (!entity) return
     const requestId = listRequestRef.current + 1
     listRequestRef.current = requestId
-    const [e, a, d, roles] = await Promise.all([
+    const isStale = () => listRequestRef.current !== requestId
+    const loaded = await Promise.all([
       datesInverted
         ? []
         : api.entryList(entity.id, {
@@ -294,8 +298,12 @@ export function TransactionsPage({
       api.accountList(entity.id),
       api.documentList(entity.id),
       api.accountDefaults(entity.id),
-    ])
-    if (listRequestRef.current !== requestId) return
+    ]).catch((err: unknown) => {
+      if (isStale()) return null
+      throw err
+    })
+    if (!loaded || isStale()) return
+    const [e, a, d, roles] = loaded
     setEntries(e)
     setAccounts(a)
     setDefaults(roles)
