@@ -110,6 +110,29 @@ pub fn list_open_bills(
     query_open_bills(conn, entity_id, OpenBills::Every { correcting_payment })
 }
 
+/// Returns the oldest open bill of the book of `entity_id` owed on `payable`
+/// for exactly `amount_minor`, for a recurring payment to settle; `None`
+/// when there is none.
+///
+/// Oldest is the order of [`list_open_bills`], so the bill is the first one
+/// the bill picker would offer for that payment. The bill's date is not
+/// compared with the payment's, as it is not when the user picks the bill.
+///
+/// # Errors
+///
+/// Those of [`list_open_bills`].
+pub(crate) fn oldest_matching_open_bill(
+    conn: &Connection,
+    entity_id: EntityId,
+    payable: AccountId,
+    amount_minor: i64,
+) -> Result<Option<JournalEntryId>> {
+    Ok(list_open_bills(conn, entity_id, None)?
+        .into_iter()
+        .find(|bill| bill.payable_account_id == payable && bill.amount_minor == amount_minor)
+        .map(|bill| bill.entry_id))
+}
+
 /// Returns the open bill `bill_id` of the book of `entity_id`, for a
 /// payment to settle.
 ///
