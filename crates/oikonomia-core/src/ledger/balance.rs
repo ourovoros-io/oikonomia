@@ -306,17 +306,18 @@ pub(crate) fn count_hidden_pnl_entries(
 
 /// Counts the hidden active entries of `entity_id` dated through `as_of`.
 ///
-/// Every line of an entry shows on the balance sheet as of its date or later:
-/// asset, liability and equity lines in their sections, income and expense
-/// lines in the equity rows `RE` and `NI`. So this, not
+/// Every line of an entry is in a balance-sheet figure as of its date or
+/// later: asset, liability and equity lines in their sections, income and
+/// expense lines in the equity rows `RE` and `NI`. So this, not
 /// [`count_hidden_pnl_entries`], is the balance sheet's count; it includes a
-/// hidden transfer between two asset accounts, which moves no profit. The
-/// journal export leaves every hidden entry out.
+/// hidden transfer between two asset accounts, which moves no profit.
+/// [`export_journal_csv`](crate::csv::export_journal_csv) leaves every hidden
+/// entry out.
 ///
 /// # Errors
 ///
 /// [`Error::Database`] when the query fails.
-pub(crate) fn count_hidden_entries_through(
+pub(crate) fn count_hidden_entries_as_of(
     conn: &Connection,
     entity_id: EntityId,
     as_of: Date,
@@ -338,7 +339,7 @@ pub(crate) fn count_hidden_entries_through(
             rusqlite::params![entity_id.to_string(), format_date(as_of)],
             |row| row.get(0),
         )
-        .database("count hidden entries")?;
+        .database("count hidden entries as of")?;
 
     Ok(usize::try_from(count).unwrap_or(0))
 }

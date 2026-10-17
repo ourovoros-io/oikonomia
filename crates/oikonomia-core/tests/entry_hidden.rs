@@ -49,6 +49,24 @@ fn expense(book: &Book, date: &str, description: &str, amount_minor: i64) -> Pos
     }
 }
 
+/// Posts a hidden transfer of 500 from the wallet to `to`, dated `date`.
+fn hidden_transfer(conn: &Connection, book: &Book, to: AccountId, date: &str) -> JournalEntryId {
+    let transfer = post_simple_entry(
+        conn,
+        &PostSimpleEntry {
+            accounts: SimpleEntryAccounts::Transfer {
+                from: book.wallet,
+                to,
+            },
+            ..expense(book, date, "Move", 500)
+        },
+    )
+    .expect("transfer");
+    set_entry_hidden(conn, transfer.entry.id, true).expect("hide");
+
+    transfer.entry.id
+}
+
 fn export_mentions(conn: &Connection, entity_id: EntityId, description: &str) -> bool {
     let csv = export_journal_csv(conn, entity_id).expect("export");
     parse_journal_export(&csv)
@@ -240,56 +258,24 @@ fn every_on_screen_figure_says_how_many_hidden_entries_it_includes() {
     assert_eq!(sheet.hidden_entry_count, 2, "dated through the as-of day");
 }
 
-/// Posts a hidden transfer of 500 from the wallet to `to`, dated `date`.
-fn hidden_transfer(conn: &Connection, book: &Book, to: AccountId, date: &str) -> JournalEntryId {
-    let transfer = post_simple_entry(
-        conn,
-        &PostSimpleEntry {
-            accounts: SimpleEntryAccounts::Transfer {
-                from: book.wallet,
-                to,
-            },
-            ..expense(book, date, "Move", 500)
-        },
-    )
-    .expect("transfer");
-    set_entry_hidden(conn, transfer.entry.id, true).expect("hide");
-
-    transfer.entry.id
-}
-
+/// A hidden transfer moves two asset balances and no profit, so the balance
+/// sheet counts it and the P&L does not, while the export leaves it out.
 #[test]
-fn a_hidden_transfer_moves_no_profit_and_is_not_counted() {
+fn the_balance_sheet_counts_a_hidden_transfer_and_the_pnl_does_not() {
     let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let book = create_book(conn, "Personal", ChartTemplate::Personal);
-    let savings = common::account(conn, book.entity_id, "1020");
-    hidden_transfer(conn, &book, savings, "2026-03-15");
-
-    let pnl = profit_and_loss(
-        conn,
-        book.entity_id,
-        common::date("2026-03-01"),
-        common::date("2026-03-31"),
-    )
-    .expect("pnl");
-
-    assert_eq!(pnl.hidden_entry_count, 0);
-}
-
-/// A hidden transfer moves two asset balances, so the balance sheet that
-/// shows them counts it, while the export leaves it out.
-#[test]
-fn the_balance_sheet_counts_a_hidden_transfer() {
-    let (_dir, vault) = common::vault();
-    let conn = vault.connection().expect("conn");
-    let book = create_book(conn, "Personal", ChartTemplate::Personal);
+    let other = create_book(conn, "Acme Ltd", ChartTemplate::Company);
     let savings = common::account(conn, book.entity_id, "1020");
 
     hidden_transfer(conn, &book, savings, "2026-03-15");
+    hidden_transfer(conn, &book, savings, "2026-03-31");
     hidden_transfer(conn, &book, savings, "2026-04-02");
     let voided = hidden_transfer(conn, &book, savings, "2026-03-20");
     void_entry(conn, voided, Locale::En).expect("void");
+    let elsewhere =
+        post_simple_entry(conn, &expense(&other, "2026-03-10", "Elsewhere", 700)).expect("post");
+    set_entry_hidden(conn, elsewhere.entry.id, true).expect("hide");
 
     let march_31 = common::date("2026-03-31");
     let sheet = balance_sheet(conn, book.entity_id, march_31).expect("sheet");
@@ -298,10 +284,10 @@ fn the_balance_sheet_counts_a_hidden_transfer() {
         profit_and_loss(conn, book.entity_id, common::date("2026-03-01"), march_31).expect("pnl");
 
     assert_eq!(
-        sheet.hidden_entry_count, 1,
-        "the April transfer is after the as-of day and the voided one is in no figure"
+        sheet.hidden_entry_count, 2,
+        "counts the as-of day itself; not April, the voided one or the other book's"
     );
-    assert_eq!(later.hidden_entry_count, 2, "dated through the as-of day");
+    assert_eq!(later.hidden_entry_count, 3, "dated through the as-of day");
     assert_eq!(pnl.hidden_entry_count, 0, "a transfer moves no profit");
     assert!(
         !export_mentions(conn, book.entity_id, "Move"),
