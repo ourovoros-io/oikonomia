@@ -36,7 +36,7 @@ import { renderUiTexts, type UiText } from '../lib/uiText'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import { beginExclusive } from '../lib/guards'
 import { amountTone, isMoneyOut, listedKindKey } from '../lib/entryKind'
-import { BillPicker } from '../components/BillPicker'
+import { BillPicker, type BillChoice } from '../components/BillPicker'
 import { CashFlowPulse } from '../components/CashFlowPulse'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { CsvMappingModal } from '../components/CsvMappingModal'
@@ -87,6 +87,18 @@ type EntryKind = 'expense' | 'income' | 'bill' | 'transfer'
 
 type BillStatus = 'paid' | 'unpaid' | 'pay_existing'
 
+const NO_BILL_CHOICE: BillChoice = { kind: 'unchosen' }
+
+/**
+ * The bill choice an edit reopens on: a payment of an existing bill as
+ * stored, linked or not; any other entry has made no choice yet.
+ */
+function storedBillChoice(view: PostedEntryView): BillChoice {
+  const form = view.simple_form
+  if (form?.kind !== 'bill' || form.bill_status !== 'pay_existing') return NO_BILL_CHOICE
+  return view.settles_entry_id ? { kind: 'bill', billId: view.settles_entry_id } : { kind: 'unlinked' }
+}
+
 function accountsOf(accounts: Account[], types: Account['account_type'][]): Account[] {
   return accounts.filter((a) => a.is_active && types.includes(a.account_type))
 }
@@ -103,6 +115,7 @@ export function TransactionsPage({
   // Which account plays which role by default; Rust decides, this only holds it.
   const [defaults, setDefaults] = useState<AccountDefaults | null>(null)
   const errorBannerId = useId()
+  const billChoiceReasonId = useId()
   const [showForm, setShowForm] = useState(false)
 
   const [kind, setKind] = useState<EntryKind>('expense')
@@ -117,9 +130,13 @@ export function TransactionsPage({
   const [categoryId, setCategoryId] = useState('') // expense or income account
   const [walletId, setWalletId] = useState('') // bank / cash / card
   const [payableId, setPayableId] = useState('') // bills payable / AP, or the receivable of an unpaid income
-  const [settlesId, setSettlesId] = useState('') // the open bill a payment of an existing bill settles
+  const [billChoice, setBillChoice] = useState<BillChoice>(NO_BILL_CHOICE)
+  const payingBill = kind === 'bill' && billStatus === 'pay_existing'
+  const settlesBillId = payingBill && billChoice.kind === 'bill' ? billChoice.billId : null
+  // The owner's call (#240): a payment is linked or not on purpose, never by default.
+  const billChoiceMissing = payingBill && billChoice.kind === 'unchosen'
   // A payment settles its bill in full, so a picked bill fixes the amount and payable account.
-  const billPicked = kind === 'bill' && billStatus === 'pay_existing' && settlesId !== ''
+  const billPicked = settlesBillId !== null
   const [fromId, setFromId] = useState('') // transfer
   const [toId, setToId] = useState('')
   const [amount, setAmount] = useState('')
@@ -495,7 +512,7 @@ export function TransactionsPage({
     setPendingAnalysis(null)
     setScanNotes(null)
     setEditId(null)
-    setSettlesId('')
+    setBillChoice(NO_BILL_CHOICE)
     applyKindDefaults('expense', defaults)
   }
 
@@ -535,10 +552,21 @@ export function TransactionsPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newEntryIntent, entity?.id])
 
+  /**
+   * The bill choice lives only while paying a bill: another status frees the
+   * amount a picked bill fixed, so coming back asks for the choice again.
+   */
+  function chooseBillStatus(next: BillStatus) {
+    setBillStatus(next)
+    if (next !== 'pay_existing') setBillChoice(NO_BILL_CHOICE)
+  }
+
   function setKindAndDefaults(next: EntryKind) {
     if (next === kind) return
     setKind(next)
     applyKindDefaults(next, defaults)
+    // A picked bill fixed the amount; another kind frees it, so the pick goes too.
+    setBillChoice(NO_BILL_CHOICE)
     // A new type is a fresh start on the form, so the old error goes even when
     // it is about the amount or description that carry over: saving checks again.
     setError(null)
@@ -613,7 +641,7 @@ export function TransactionsPage({
 
   /** A picked bill fills in what its payment must match: its whole amount and its payable account. */
   function pickBill(bill: OpenBill | null) {
-    setSettlesId(bill?.entry_id ?? '')
+    setBillChoice(bill ? { kind: 'bill', billId: bill.entry_id } : { kind: 'unlinked' })
     if (!bill) return
     setAmount(minorToInputText(bill.amount_minor, currency))
     setAmountInvalid(false)
@@ -633,6 +661,8 @@ export function TransactionsPage({
     const amountKey = amountProblemKey(minor, 'tx.invalidAmount')
     if (amountKey) return { key: amountKey, amount: true }
     if (!description.trim()) return { key: 'form.fieldRequired', amount: false }
+    // Save is disabled meanwhile; this keeps any other submit path honest.
+    if (billChoiceMissing) return { key: 'tx.billToPayRequired', amount: false }
 
     return null
   }
@@ -675,7 +705,7 @@ export function TransactionsPage({
         payable_account_id: payableId || null,
         from_account_id: fromId || null,
         to_account_id: toId || null,
-        settles_entry_id: billPicked ? settlesId : null,
+        settles_entry_id: settlesBillId,
       }
 
       if (editId) {
@@ -792,7 +822,7 @@ export function TransactionsPage({
 
     resetDraft()
     fillForm(view.simple_form)
-    setSettlesId(view.settles_entry_id ?? '')
+    setBillChoice(storedBillChoice(view))
 
     const amountMinor = view.lines.reduce((s, l) => s + l.debit.amount_minor, 0)
     setAmount(minorToInputText(amountMinor, currency))
@@ -1153,7 +1183,7 @@ export function TransactionsPage({
               <Field label={t('tx.billStatus')} className="sm:col-span-2 lg:col-span-3">
                 <Select
                   value={billStatus}
-                  onChange={(e) => setBillStatus(e.target.value as BillStatus)}
+                  onChange={(e) => chooseBillStatus(e.target.value as BillStatus)}
                 >
                   <option value="paid">{t('tx.billPaidNow')}</option>
                   <option value="unpaid">{t('tx.billUnpaid')}</option>
@@ -1164,7 +1194,8 @@ export function TransactionsPage({
                 <BillPicker
                   entityId={entity.id}
                   correctingPaymentId={editId}
-                  value={settlesId}
+                  value={billChoice}
+                  describedBy={billChoiceMissing ? billChoiceReasonId : undefined}
                   currency={currency}
                   onPick={pickBill}
                   onError={setError}
@@ -1253,6 +1284,11 @@ export function TransactionsPage({
           )}
 
           <div className="flex justify-end gap-2 border-t border-[var(--color-border)] pt-4 sm:col-span-2 lg:col-span-3">
+            {billChoiceMissing ? (
+              <p id={billChoiceReasonId} className="mr-auto text-sm text-[var(--color-danger)]">
+                {t('tx.billToPayRequired')}
+              </p>
+            ) : null}
             <Button
               type="button"
               variant="secondary"
@@ -1261,7 +1297,12 @@ export function TransactionsPage({
             >
               {t('common.cancel')}
             </Button>
-            <Button type="submit" busy={busy}>
+            <Button
+              type="submit"
+              busy={busy}
+              disabled={billChoiceMissing}
+              aria-describedby={billChoiceMissing ? billChoiceReasonId : undefined}
+            >
               {busy ? t('common.saving') : editId ? t('tx.saveChanges') : t('tx.saveEntry')}
             </Button>
           </div>

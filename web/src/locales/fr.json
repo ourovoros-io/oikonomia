@@ -1021,7 +1021,9 @@
     "incomeUnpaid": "Impayé — on me le doit (créance)",
     "receivableAccount": "Compte de créances",
     "billToPay": "Facture à payer",
-    "billToPayNone": "Liée à aucune facture"
+    "billToPayNone": "Liée à aucune facture",
+    "billToPayChoose": "Choisir une facture…",
+    "billToPayRequired": "Choisissez la facture que ce paiement règle, ou « Liée à aucune facture »."
   },
   "recurring": {
     "title": "Récurrents",

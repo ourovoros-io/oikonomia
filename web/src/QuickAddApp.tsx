@@ -47,8 +47,8 @@ function Shell({
 export default function QuickAddApp() {
   const { t } = useI18n()
   const [status, setStatus] = useState<VaultStatus | null>(null)
-  const [phase, setPhase] = useState<'form' | 'success'>('form')
-  const [successLabel, setSuccessLabel] = useState('')
+  // The entry just posted, worded when drawn; null while the form shows.
+  const [posted, setPosted] = useState<QuickAddPosted | null>(null)
   const [formEpoch, setFormEpoch] = useState(0)
   const busyRef = useRef(false)
   const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -77,7 +77,7 @@ export default function QuickAddApp() {
       }
       void setQuickAddHeight(QUICK_ADD_COMPACT_HEIGHT)
       setStatus('locked')
-      setPhase('form')
+      setPosted(null)
       setFormEpoch((n) => n + 1)
     }).then((fn) => {
       if (cancelled) fn()
@@ -121,7 +121,7 @@ export default function QuickAddApp() {
     }
     void setQuickAddHeight(QUICK_ADD_STEPPER_HEIGHT)
     void api.quickAddHide()
-    setPhase('form')
+    setPosted(null)
     setFormEpoch((n) => n + 1)
   }, [])
 
@@ -180,14 +180,15 @@ export default function QuickAddApp() {
     }
   }, [])
 
+  const succeeded = posted !== null
   useEffect(() => {
     if (status === null) return
-    if (status !== 'unlocked' || phase === 'success') {
+    if (status !== 'unlocked' || succeeded) {
       void setQuickAddHeight(QUICK_ADD_COMPACT_HEIGHT)
       return
     }
     void setQuickAddHeight(QUICK_ADD_STEPPER_HEIGHT)
-  }, [status, phase])
+  }, [status, succeeded])
 
   const onBusyChange = useCallback((busy: boolean) => {
     busyRef.current = busy
@@ -196,9 +197,7 @@ export default function QuickAddApp() {
   const onPosted = useCallback(
     (info: QuickAddPosted) => {
       busyRef.current = false
-      const money = formatMoney(info.amountMinor, info.currency)
-      setSuccessLabel(t('quickAdd.saved', { kind: t(`kind.${info.kind}`), money }))
-      setPhase('success')
+      setPosted(info)
       void setQuickAddHeight(QUICK_ADD_COMPACT_HEIGHT)
       if (successTimerRef.current) clearTimeout(successTimerRef.current)
       successTimerRef.current = setTimeout(() => {
@@ -206,7 +205,7 @@ export default function QuickAddApp() {
         hidePanel()
       }, 1000)
     },
-    [hidePanel, t],
+    [hidePanel],
   )
 
   if (status === null) {
@@ -238,12 +237,15 @@ export default function QuickAddApp() {
     )
   }
 
-  if (phase === 'success') {
+  if (posted) {
     return (
       <Shell appear={false}>
         <div className="qa-crossfade flex h-full items-center justify-center px-2">
           <p className="truncate text-[11px] font-medium text-[var(--color-success)]">
-            {successLabel}
+            {t('quickAdd.saved', {
+              kind: t(`kind.${posted.kind}`),
+              money: formatMoney(posted.amountMinor, posted.currency),
+            })}
           </p>
         </div>
       </Shell>

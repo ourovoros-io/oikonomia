@@ -26,7 +26,8 @@ import {
   type RegisterLine,
 } from '../lib/api'
 import { parseMajorToMinor } from '../lib/amountParse'
-import { bookCurrency } from '../lib/money'
+import { bookCurrency, type Currency } from '../lib/money'
+import { t as translate } from '../lib/i18n'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { DateInput } from '../components/DateInput'
 import { HiddenBadge } from '../components/hiddenUi'
@@ -115,11 +116,40 @@ function canSetBalance(account: Account): boolean {
  */
 const SET_BALANCE_CLASS = 'min-w-32 shrink-0'
 
+/**
+ * What a confirmation says, kept as data and worded when drawn
+ * (`accountNoticeText`), so a language switch re-words it. The saved balance
+ * is kept in minor units with its currency, because the number is formatted
+ * per language too.
+ */
+type AccountNotice =
+  | { kind: 'created'; code: string; name: string }
+  | { kind: 'deactivated'; name: string }
+  | { kind: 'reactivated'; name: string }
+  | { kind: 'balanceSaved'; name: string; amountMinor: number; currency: Currency }
+
+/** The sentence for `notice` in the current language. */
+function accountNoticeText(notice: AccountNotice): string {
+  switch (notice.kind) {
+    case 'created':
+      return translate('accounts.form.created', { code: notice.code, name: notice.name })
+    case 'deactivated':
+      return translate('accounts.deactivate.done', { name: notice.name })
+    case 'reactivated':
+      return translate('accounts.reactivate.done', { name: notice.name })
+    case 'balanceSaved':
+      return translate('accounts.balance.saved', {
+        name: notice.name,
+        amount: formatMoney(notice.amountMinor, notice.currency),
+      })
+  }
+}
+
 export function AccountsPage({ entity, onCreateBook }: Props) {
   const { t } = useI18n()
   const [accounts, setAccounts] = useState<Account[]>([])
   const [error, setError] = useState<UiError | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
+  const [notice, setNotice] = useState<AccountNotice | null>(null)
   const [balances, setBalances] = useState<Map<string, number>>(new Map())
   const [renameTarget, setRenameTarget] = useState<Account | null>(null)
   const [deactivateTarget, setDeactivateTarget] = useState<Account | null>(null)
@@ -194,7 +224,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
       })
       // The form stays open for the next account; the type is kept because
       // accounts are usually added in runs of one type.
-      setNotice(t('accounts.form.created', { code: code.trim(), name: name.trim() }))
+      setNotice({ kind: 'created', code: code.trim(), name: name.trim() })
       setCode('')
       setName('')
       codeInputRef.current?.focus()
@@ -213,7 +243,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
     setNotice(null)
     try {
       await api.accountArchive(deactivateTarget.id)
-      setNotice(t('accounts.deactivate.done', { name: deactivateTarget.name }))
+      setNotice({ kind: 'deactivated', name: deactivateTarget.name })
       await reload()
     } catch (err) {
       setError(commandFailure(err))
@@ -235,7 +265,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
         is_active: true,
         sort_order: account.sort_order,
       })
-      setNotice(t('accounts.reactivate.done', { name: account.name }))
+      setNotice({ kind: 'reactivated', name: account.name })
       await reload()
     } catch (err) {
       setError(commandFailure(err))
@@ -322,12 +352,12 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
     setNotice(null)
     try {
       await api.accountSetOpeningBalance(balanceAccount.id, minor, balanceAsOf)
-      setNotice(
-        t('accounts.balance.saved', {
-          name: balanceAccount.name,
-          amount: formatMoney(minor, bookCurrency(entity)),
-        }),
-      )
+      setNotice({
+        kind: 'balanceSaved',
+        name: balanceAccount.name,
+        amountMinor: minor,
+        currency: bookCurrency(entity),
+      })
       setBalanceAccount(null)
       await reload()
     } catch (err) {
@@ -445,7 +475,10 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
 
       <ToastStack>
         <ErrorBanner className="" error={error} onDismiss={() => setError(null)} />
-        <Notice message={notice} onDismiss={() => setNotice(null)} />
+        <Notice
+          message={notice ? accountNoticeText(notice) : null}
+          onDismiss={() => setNotice(null)}
+        />
       </ToastStack>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

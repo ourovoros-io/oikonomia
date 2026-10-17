@@ -496,6 +496,8 @@ export function Notice({
 
   useEffect(() => {
     if (!message) return
+    // Keyed on the text: a notice re-worded by a language switch gets a fresh
+    // timer to be read in, and is already in view, so the scroll is a no-op.
     ref.current?.scrollIntoView?.({ block: 'nearest' })
     const timer = window.setTimeout(() => dismissRef.current(), autoDismissMs)
 
