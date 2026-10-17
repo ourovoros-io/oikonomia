@@ -103,6 +103,12 @@ function byCode(a: Account, b: Account): number {
   return a.code.localeCompare(b.code, undefined, { numeric: true })
 }
 
+/**
+ * The row's Set balance button keeps its label on one line: the button is a
+ * fixed height, so a wrapped Greek label would spill out of it.
+ */
+const SET_BALANCE_CLASS = 'min-w-32 shrink-0 whitespace-nowrap'
+
 export function AccountsPage({ entity, onCreateBook }: Props) {
   const { t } = useI18n()
   const [accounts, setAccounts] = useState<Account[]>([])
@@ -680,7 +686,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="w-32 shrink-0"
+                      className={SET_BALANCE_CLASS}
                       onClick={(e) => {
                         e.stopPropagation()
                         openBalance(a)
@@ -691,8 +697,19 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
                       {t('acct.setBalance')}
                     </Button>
                   ) : (
-                    // Keeps the actions in columns when a row has fewer of them.
-                    <span aria-hidden className="hidden w-32 shrink-0 sm:block" />
+                    // An invisible copy, not a fixed width: the label grows
+                    // with the language, and the actions must stay in columns.
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={cn(SET_BALANCE_CLASS, 'invisible')}
+                      aria-hidden
+                      tabIndex={-1}
+                      disabled
+                    >
+                      <Coins className="size-4" />
+                      {t('acct.setBalance')}
+                    </Button>
                   )}
                   <Button
                     variant="ghost"

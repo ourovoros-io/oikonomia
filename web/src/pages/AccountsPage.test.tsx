@@ -446,4 +446,24 @@ describe('AccountsPage Set balance', () => {
     expect(within(dialog).getByLabelText('Actual balance (EUR)')).toBeTruthy()
     expect(within(dialog).queryByText(/Enter what you owe/)).toBeNull()
   })
+
+  test('the button keeps one line, and a row without it holds the column with a hidden copy', async () => {
+    const sales: Account = { ...base, id: 'i1', code: '4000', name: 'Sales', account_type: 'income' }
+    vi.mocked(api.accountList).mockResolvedValue([checking, sales])
+    render(<AccountsPage entity={entity} />)
+    await waitFor(() => {
+      expect(screen.getByText('Sales')).toBeTruthy()
+    })
+
+    const shown = screen.getByRole('button', { name: 'Set balance for Checking' })
+    expect(shown.className).toMatch(/whitespace-nowrap/)
+    expect(shown.className).toMatch(/min-w-32/)
+
+    // jsdom does no layout, so matching classes are what keep the columns level.
+    const salesRow = screen.getByText('Sales').closest('li')
+    const placeholder = salesRow?.querySelector('button[aria-hidden="true"]')
+    expect(placeholder?.className).toBe(`${shown.className} invisible`)
+    expect(placeholder).toHaveAttribute('tabindex', '-1')
+    expect(within(salesRow as HTMLElement).queryByRole('button', { name: /Set balance/ })).toBeNull()
+  })
 })
