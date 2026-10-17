@@ -202,9 +202,15 @@ each lives in one place:
 - **One process.** Closing the window hides it. macOS routes a second launch
   to the running app; on Windows and Linux `tauri-plugin-single-instance`
   does, so a relaunch shows the hidden window instead of opening the vault
-  twice. This is also the way back in on a Linux desktop that shows no tray.
+  twice. Where no tray is usable, closing the main window quits instead
+  (`CloseAction` in `lib.rs`), except on macOS, where the Dock brings it back.
 - **Tray.** Linux trays report no clicks, so "Quick add" is a menu item there
   (`tray.rs`). The quick-add window is placed inside the monitor's work area.
+  A tray that cannot be created is logged and the app starts without one. On
+  Linux the tray counts as usable only while a StatusNotifier host is
+  registered on the session bus, asked at close time
+  (`tray/status_notifier.rs`); the icon file goes to the app's cache
+  directory, never the shared `/tmp/tray-icon`.
 - **Installers.** `.dmg`, `.AppImage`, `.deb`, and a per-user NSIS installer
   that embeds the WebView2 bootstrapper. Windows 11 includes the runtime and
   Windows 10 receives it through Windows Update; the bootstrapper downloads

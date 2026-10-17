@@ -37,7 +37,7 @@ Design: [`docs/DESIGN.md`](docs/DESIGN.md)
 - Dashboard: month, quarter, or year income, expenses, and assets, with savings and spending arcs and a cash-flow chart; every empty page offers a first-run "create a book" CTA
 - Cash-flow chart on the Transactions page
 - Documents page: every stored file in the book, with an in-app viewer and export
-- Closing the window hides the app to the tray (on Linux, where a desktop may show no tray, it minimizes the window); launching it again brings the window back; window size and position are remembered
+- Closing the window hides the app to the tray; launching it again brings the window back; window size and position are remembered. Where no tray is shown (on Linux, a desktop without a StatusNotifier host), closing the window quits
 - Settings: optional donation addresses with copy buttons
 - Master password must be at least 12 characters
 - Tray quick-add window: left-click the tray (on Linux, choose "Quick add" in the tray menu) to post a simple entry or drop a document without opening the full app
@@ -69,8 +69,8 @@ the runtime and Windows 10 receives it through Windows Update, so the
 bootstrapper downloads it only when the machine does not already have it.
 
 On Linux the tray icon needs a desktop that shows one (KDE, or GNOME with the
-AppIndicator extension). Without it the app works the same; reach quick-add by
-launching the app, which brings the window back.
+AppIndicator extension). Without it the app works the same, except that there
+is no quick add and closing the window quits the app.
 
 ## Support
 

@@ -6,9 +6,10 @@
 //! always-on-top companion for posting one entry without opening the main
 //! window. The tray menu, which the platform shows on a right click, offers
 //! "Open Oikonomia" and "Quit Oikonomia". Closing the main window hides
-//! it (on Linux, minimizes it; `on_window_event` in `lib.rs`), so the menu is
-//! how it comes back and, with the system's own quit shortcut, how the app
-//! exits.
+//! it while the tray is usable ([`is_usable`]; `CloseAction` in `lib.rs`),
+//! so the menu is how it comes back and, with the system's own quit
+//! shortcut, how the app exits. Without a usable tray, closing the main
+//! window quits, except on macOS, where the Dock icon brings it back.
 //!
 //! # Linux
 //!
@@ -31,6 +32,9 @@
 //! one function per string: the menu entries, the quick-add window's title
 //! and the backup dialog's file filter. They follow the stored language, and
 //! [`apply_locale`] rewords the live tray after a change.
+
+#[cfg(target_os = "linux")]
+mod status_notifier;
 
 use oikonomia_core::prefs::{Locale, load_ui_prefs};
 use tauri::image::Image;
@@ -525,6 +529,34 @@ impl TrayStatus {
 /// it.
 pub(crate) fn install(app: &tauri::App, locale: Locale) {
     app.manage(TrayStatus::after(init(app, locale)));
+}
+
+/// Returns whether the tray can bring a hidden main window back: the icon
+/// was created and the desktop shows it.
+///
+/// Before [`install`] has run, or after a failed start, there is no tray. On
+/// Linux this asks the session bus each time it is called
+/// (`status_notifier`); call it only when the answer is needed.
+pub(crate) fn is_usable(app: &AppHandle) -> bool {
+    let created = app
+        .try_state::<TrayStatus>()
+        .is_some_and(|status| *status == TrayStatus::Created);
+
+    created && desktop_shows_tray()
+}
+
+/// Returns whether the desktop shows the tray icon: on Linux, whether a
+/// `StatusNotifier` host is registered.
+#[cfg(target_os = "linux")]
+fn desktop_shows_tray() -> bool {
+    status_notifier::host_registered()
+}
+
+/// Returns whether the desktop shows the tray icon: always, on Windows and
+/// macOS.
+#[cfg(not(target_os = "linux"))]
+fn desktop_shows_tray() -> bool {
+    true
 }
 
 /// Creates the tray icon, with its menu and its click handler.
