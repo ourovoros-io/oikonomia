@@ -1,28 +1,18 @@
 {
+  // Extends the app config so tests can never be checked more loosely than the code they test.
+  "extends": "./tsconfig.app.json",
   "compilerOptions": {
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.test.tsbuildinfo",
-    "target": "es2023",
-    "lib": ["ES2023", "DOM"],
-    "module": "esnext",
     // Tests run under Node, so they reach for its modules as well as the app's Vite types.
-    "types": ["vite/client", "node"],
-    "allowArbitraryExtensions": true,
-    "skipLibCheck": true,
-
-    /* Bundler mode */
-    "moduleResolution": "bundler",
-    "resolveJsonModule": true,
-    "allowImportingTsExtensions": true,
-    "verbatimModuleSyntax": true,
-    "moduleDetection": "force",
-    "noEmit": true,
-    "jsx": "react-jsx",
-
-    /* Linting */
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "erasableSyntaxOnly": true,
-    "noFallthroughCasesInSwitch": true
+    "types": ["vite/client", "node"]
   },
-  "include": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test", "marketing/**/*.test.ts"]
+  // Exactly the files tsconfig.app.json excludes; change the two lists together.
+  "include": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/**/*.testutil.ts",
+    "src/test",
+    "marketing/**/*.test.ts"
+  ],
+  "exclude": []
 }

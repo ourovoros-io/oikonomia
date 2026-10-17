@@ -24,5 +24,12 @@
     "noFallthroughCasesInSwitch": true
   },
   "include": ["src", "marketing"],
-  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test", "marketing/**/*.test.ts"]
+  // Test files are checked by tsconfig.test.json, whose include is this list; change both together.
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/**/*.testutil.ts",
+    "src/test",
+    "marketing/**/*.test.ts"
+  ]
 }
