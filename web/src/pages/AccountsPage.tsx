@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useEffectEvent, useMemo, useRef, useState, type FormEvent } from 'react'
 import {
   Banknote,
   CircleOff,
@@ -170,8 +170,9 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
   const [balanceBusy, setBalanceBusy] = useState(false)
   const [registerAccount, setRegisterAccount] = useState<Account | null>(null)
   const [registerLines, setRegisterLines] = useState<RegisterLine[]>([])
+  // The account whose register last answered, read or failed.
+  const [registerLoadedId, setRegisterLoadedId] = useState<string | null>(null)
   const [registerError, setRegisterError] = useState<UiError | null>(null)
-  const [registerBusy, setRegisterBusy] = useState(false)
 
   async function reload() {
     if (!entity) return
@@ -185,10 +186,16 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
     setBalances(new Map(pairs))
   }
 
-  useEffect(() => {
-    if (!entity) return
+  // An effect event: it reads the current book, but only a change of book reloads.
+  const loadBook = useEffectEvent(() => {
     void reload().catch((err) => setError(commandFailure(err)))
-  }, [entity?.id])
+  })
+  const entityId = entity?.id
+  useEffect(() => {
+    // Reads the accounts from the backend; state is set once it answers.
+    // eslint-disable-next-line react/set-state-in-effect
+    if (entityId) loadBook()
+  }, [entityId])
 
   const sortedAccounts = useMemo(() => [...accounts].sort(byCode), [accounts])
 
@@ -294,13 +301,15 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
     setRegisterError(null)
   }
 
+  const registerId = registerAccount?.id
+  // Busy until the register of the open account has answered: derived, so no
+  // path can leave it set.
+  const registerBusy = registerId !== undefined && registerLoadedId !== registerId
   useEffect(() => {
-    if (!registerAccount) return
+    if (!registerId) return
     let cancelled = false
-    setRegisterBusy(true)
-    setRegisterError(null)
     void api
-      .accountRegister(registerAccount.id)
+      .accountRegister(registerId)
       .then((lines) => {
         if (!cancelled) setRegisterLines(lines)
       })
@@ -308,12 +317,14 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
         if (!cancelled) setRegisterError(commandFailure(err))
       })
       .finally(() => {
-        if (!cancelled) setRegisterBusy(false)
+        if (!cancelled) setRegisterLoadedId(registerId)
       })
     return () => {
       cancelled = true
+      // Opening the same account again reads its register afresh, busy meanwhile.
+      setRegisterLoadedId(null)
     }
-  }, [registerAccount?.id])
+  }, [registerId])
 
   async function onSetBalance(ev: FormEvent) {
     ev.preventDefault()
