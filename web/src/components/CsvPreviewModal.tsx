@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
 import { Modal } from './Modal'
 import { Button, Field, Select } from './ui'
 import { cn } from '../lib/cn'
@@ -134,22 +134,29 @@ export function CsvPreviewModal({
   const [bulkWallet, setBulkWallet] = useState('')
   const [bulkCategory, setBulkCategory] = useState('')
 
-  useEffect(() => {
-    if (!open || !preview) return
-    setDrafts(
-      preview.rows.map((row) => ({
-        ...row,
-        suggested: row.suggested ? { ...row.suggested } : null,
-        checked: defaultChecked(row),
-      })),
-    )
-    const bulk = initialBulkAccounts(preview.rows, {
-      wallets: walletAccounts,
-      categories: [...expenseAccounts, ...incomeAccounts],
-    })
-    setBulkWallet(bulk.walletId)
-    setBulkCategory(bulk.categoryId)
-  }, [open, preview, walletAccounts, expenseAccounts, incomeAccounts])
+  // The rows are seeded afresh when the dialog opens on a preview, or the
+  // preview or the accounts it suggests from change. Adjusted while
+  // rendering, so no frame shows the previous preview's rows.
+  const seed = [open, preview, walletAccounts, expenseAccounts, incomeAccounts] as const
+  const [seeded, setSeeded] = useState<typeof seed | null>(null)
+  if (seeded === null || seed.some((part, index) => part !== seeded[index])) {
+    setSeeded(seed)
+    if (open && preview) {
+      setDrafts(
+        preview.rows.map((row) => ({
+          ...row,
+          suggested: row.suggested ? { ...row.suggested } : null,
+          checked: defaultChecked(row),
+        })),
+      )
+      const bulk = initialBulkAccounts(preview.rows, {
+        wallets: walletAccounts,
+        categories: [...expenseAccounts, ...incomeAccounts],
+      })
+      setBulkWallet(bulk.walletId)
+      setBulkCategory(bulk.categoryId)
+    }
+  }
 
   const categoryAccounts = useMemo(() => {
     const catType = [...expenseAccounts, ...incomeAccounts].find((a) => a.id === bulkCategory)

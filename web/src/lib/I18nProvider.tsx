@@ -185,6 +185,10 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>
 }
 
+// This rule only keeps fast refresh in development: with the hook beside the
+// provider, editing this file reloads the page instead. Splitting the file
+// for that is not worth moving the provider every page imports from.
+// eslint-disable-next-line react/only-export-components
 export function useI18n(): I18nContextValue {
   const ctx = useContext(I18nContext)
   const [, bump] = useState(0)

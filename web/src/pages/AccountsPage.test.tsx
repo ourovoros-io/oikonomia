@@ -186,6 +186,27 @@ describe('AccountsPage register drill-in', () => {
     expect(within(expenseRow).getByText(money(120750))).toBeTruthy()
   })
 
+  test('the register says it is loading until it answers, each time it opens', async () => {
+    let answer: (lines: RegisterLine[]) => void = () => {}
+    vi.mocked(api.accountRegister).mockImplementation(
+      () => new Promise<RegisterLine[]>((resolve) => (answer = resolve)),
+    )
+    await renderReady()
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('button', { name: /checking register/i }))
+    expect(screen.getByText('Loading…')).toBeInTheDocument()
+    answer([])
+    expect(await screen.findByText('No posted entries for this account yet.')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'All accounts' }))
+    await user.click(screen.getByRole('button', { name: /checking register/i }))
+
+    expect(screen.getByText('Loading…')).toBeInTheDocument()
+    answer([])
+    expect(await screen.findByText('No posted entries for this account yet.')).toBeInTheDocument()
+  })
+
   test('hidden line is visually muted', async () => {
     vi.mocked(api.accountRegister).mockResolvedValue(lines)
     await renderReady()

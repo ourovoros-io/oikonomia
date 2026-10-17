@@ -1,4 +1,4 @@
-import { useEffect, useRef, type RefObject } from 'react'
+import { useEffect, useEffectEvent, type RefObject } from 'react'
 
 const FOCUSABLE = [
   'a[href]',
@@ -73,10 +73,9 @@ export function useDialogFocus(
   active: boolean,
   onEscape: () => void,
 ) {
-  // Ref so a new onEscape closure per render does not re-run the effect
+  // An effect event, so a new onEscape closure per render does not re-run the effect
   // (which would steal focus back to the panel on every render).
-  const onEscapeRef = useRef(onEscape)
-  onEscapeRef.current = onEscape
+  const escape = useEffectEvent(onEscape)
 
   useEffect(() => {
     if (!active) return
@@ -93,7 +92,7 @@ export function useDialogFocus(
       if (!panel) return
 
       if (e.key === 'Escape') {
-        onEscapeRef.current()
+        escape()
         return
       }
       if (e.key === 'Tab') trapTab(e, panel)

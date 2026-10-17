@@ -20,7 +20,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "oxlint",
+    "lint": "oxlint --deny-warnings",
     "test": "vitest run",
     "preview": "vite preview",
     "capture:marketing": "node marketing/capture.mjs",
