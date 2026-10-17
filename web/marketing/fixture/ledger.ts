@@ -255,6 +255,7 @@ function entry(
     listed_kind: listedKind,
     // The demo never opens the edit form.
     simple_form: null,
+    settles_entry_id: null,
   }
 }
 

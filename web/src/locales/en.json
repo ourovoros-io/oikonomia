@@ -778,5 +778,10 @@
   "error.role.transfer_destination": "Transfer to",
   "form.dismiss": "Dismiss",
   "form.fieldRequired": "A required field is empty. Fill it in and try again.",
-  "form.passwordRequired": "Enter your password."
+  "form.passwordRequired": "Enter your password.",
+  "tx.billToPay": "Bill to pay",
+  "tx.billToPayNone": "Not linked to a bill",
+  "error.billNotOpen": "That bill is already paid or no longer open. Pick another bill.",
+  "error.paymentDoesNotMatchBill": "A bill payment pays the whole bill from the account it is owed on. Pick the bill again to fill in its amount and account.",
+  "error.billSettled": "This bill has a payment. Delete the payment first, then change or delete the bill."
 }

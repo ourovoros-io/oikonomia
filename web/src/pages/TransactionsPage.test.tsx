@@ -11,6 +11,7 @@ import type {
   CsvImportPreview,
   DocumentSuggestion,
   Entity,
+  OpenBill,
   PendingDocSource,
   PostedEntryView,
   SimpleEntryInput,
@@ -56,6 +57,7 @@ vi.mock('../lib/api', async (importOriginal) => {
       entryHistory: vi.fn(),
       entryPostSimple: vi.fn(),
       entryReplaceSimple: vi.fn(),
+      billListOpen: vi.fn(),
       entryPostSimpleWithDocumentPath: vi.fn(),
       recurringList: vi.fn(),
       recurringCreate: vi.fn(),
@@ -201,6 +203,7 @@ const postedEntry: PostedEntryView = {
     },
   ],
   is_voided: false,
+  settles_entry_id: null,
   listed_kind: 'expense',
   simple_form: {
     kind: 'expense',
@@ -242,6 +245,7 @@ const incomeEntry: PostedEntryView = {
     },
   ],
   is_voided: false,
+  settles_entry_id: null,
   listed_kind: 'income',
   simple_form: {
     kind: 'income',
@@ -294,6 +298,7 @@ afterEach(() => {
 
 beforeEach(() => {
   vi.mocked(api.entryList).mockReset().mockResolvedValue([postedEntry])
+  vi.mocked(api.billListOpen).mockReset().mockResolvedValue([])
   vi.mocked(api.accountList).mockReset().mockResolvedValue(accounts)
   vi.mocked(api.accountDefaults).mockReset().mockResolvedValue(DEFAULTS)
   vi.mocked(api.documentList).mockReset().mockResolvedValue([])
@@ -1693,6 +1698,100 @@ describe('TransactionsPage list header', () => {
     await waitFor(() => {
       expect(vi.mocked(api.entryList).mock.calls.length).toBeGreaterThan(before)
     })
+  })
+})
+
+describe('TransactionsPage paying an existing bill', () => {
+  const payable = account({ id: 'bp1', name: 'Bills Payable', account_type: 'liability', code: '2050' })
+  const card = account({ id: 'cc1', name: 'Card', account_type: 'liability', code: '2000' })
+  const power: OpenBill = {
+    entry_id: 'b1',
+    entry_date: '2026-08-01',
+    description: 'POWER AUGUST',
+    amount_minor: 9900,
+    payable_account_id: 'cc1',
+  }
+
+  beforeEach(() => {
+    vi.mocked(api.accountList).mockResolvedValue([...accounts, payable, card])
+    vi.mocked(api.accountDefaults).mockResolvedValue({ ...DEFAULTS, bills_payable: 'bp1' })
+    vi.mocked(api.billListOpen).mockResolvedValue([power])
+  })
+
+  test('picking a bill fills in its amount and payable account and settles it', async () => {
+    vi.mocked(api.entryPostSimple).mockResolvedValue(postedEntry)
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'New Entry' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Bill' }))
+    await userEvent.selectOptions(screen.getByLabelText('Bill status'), 'pay_existing')
+
+    await userEvent.selectOptions(await screen.findByLabelText('Bill to pay'), 'b1')
+
+    expect(api.billListOpen).toHaveBeenCalledWith('e1', null)
+    expect(screen.getByLabelText('Amount (EUR)')).toHaveValue('99.00')
+    expect(screen.getByLabelText('Bills payable account')).toHaveValue('cc1')
+    // A payment settles its bill in full: what the bill fixed is not edited.
+    expect(screen.getByLabelText('Amount (EUR)')).toBeDisabled()
+    expect(screen.getByLabelText('Bills payable account')).toBeDisabled()
+    await userEvent.type(screen.getByLabelText('Description'), 'Power')
+    await userEvent.click(screen.getByRole('button', { name: 'Save entry' }))
+    await waitFor(() => {
+      expect(api.entryPostSimple).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'bill',
+          bill_status: 'pay_existing',
+          amount_minor: 9900,
+          payable_account_id: 'cc1',
+          settles_entry_id: 'b1',
+        }),
+      )
+    })
+  })
+
+  test('a payment of no bill in particular settles none', async () => {
+    vi.mocked(api.entryPostSimple).mockResolvedValue(postedEntry)
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'New Entry' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Bill' }))
+    await userEvent.selectOptions(screen.getByLabelText('Bill status'), 'pay_existing')
+    await userEvent.selectOptions(await screen.findByLabelText('Bill to pay'), 'b1')
+    await userEvent.selectOptions(screen.getByLabelText('Bill to pay'), '')
+
+    await userEvent.type(screen.getByLabelText('Description'), 'Power')
+    await userEvent.click(screen.getByRole('button', { name: 'Save entry' }))
+
+    await waitFor(() => {
+      expect(api.entryPostSimple).toHaveBeenCalledWith(
+        expect.objectContaining({ bill_status: 'pay_existing', settles_entry_id: null }),
+      )
+    })
+  })
+
+  test('correcting a payment reopens on the bill it settles', async () => {
+    const paid: PostedEntryView = {
+      ...postedEntry,
+      listed_kind: 'bill',
+      settles_entry_id: 'b1',
+      simple_form: {
+        kind: 'bill',
+        bill_status: 'pay_existing',
+        category_account_id: null,
+        wallet_account_id: 'w1',
+        payable_account_id: 'cc1',
+        from_account_id: null,
+        to_account_id: null,
+      },
+    }
+    vi.mocked(api.entryList).mockResolvedValue([paid])
+    await renderReady()
+
+    await userEvent.click(await screen.findByText('Alpha supermarket'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit entry' }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Bill to pay')).toHaveValue('b1')
+    })
+    expect(api.billListOpen).toHaveBeenCalledWith('e1', 'j1')
   })
 })
 

@@ -46,7 +46,7 @@ use rusqlite::{Connection, Transaction};
 use std::collections::HashSet;
 
 /// The schema version [`migrate`] brings a vault to.
-pub const CURRENT_SCHEMA_VERSION: i64 = 11;
+pub const CURRENT_SCHEMA_VERSION: i64 = 12;
 
 /// One schema change, made through the transaction the runner opened for it.
 type Migration = fn(&Transaction<'_>) -> Result<()>;
@@ -66,6 +66,7 @@ const MIGRATIONS: &[(i64, Migration)] = &[
     (9, migrate_v9),
     (10, migrate_v10),
     (11, migrate_v11),
+    (12, migrate_v12),
 ];
 
 /// Applies the migrations a vault has not run yet.
@@ -494,6 +495,45 @@ fn migrate_v11(tx: &Transaction<'_>) -> Result<()> {
         ",
     )
     .database("add the bill status column to journal entries")
+}
+
+/// v12: `settles_entry_id`, the bill a payment settles.
+///
+/// Paying an existing bill debited the payable account with no record of
+/// which bill it paid, so no list of open bills could be built. A payment
+/// posted from the form's bill picker now names the unpaid bill it settles,
+/// in full: one payment settles one bill. An open bill is an unpaid bill
+/// that no active payment names ([`crate::ledger::list_open_bills`]). The
+/// column is NULL for every other entry, for a payment posted without a
+/// bill, and for every payment posted before this step.
+///
+/// Only a bill that stores the status unpaid (v11) can be open, so a bill
+/// posted before v11 never is. A v11 unpaid bill that an earlier payment
+/// already paid is listed as open, since that payment named no bill; v11
+/// was in no release, so only a vault that ran an unreleased build holds
+/// one.
+///
+/// The partial index serves the lookup of a bill's payment, which listing
+/// open bills makes once per bill.
+fn migrate_v12(tx: &Transaction<'_>) -> Result<()> {
+    if !journal_entries_has_column(tx, "settles_entry_id")? {
+        tx.execute_batch(
+            "
+            ALTER TABLE journal_entries
+                ADD COLUMN settles_entry_id TEXT REFERENCES journal_entries(id);
+            ",
+        )
+        .database("add the settles_entry_id column")?;
+    }
+
+    tx.execute_batch(
+        "
+        CREATE INDEX IF NOT EXISTS idx_entries_settles
+            ON journal_entries(settles_entry_id)
+            WHERE settles_entry_id IS NOT NULL;
+        ",
+    )
+    .database("index the bills payments settle")
 }
 
 /// Returns whether `journal_entries` has a column named `column`.

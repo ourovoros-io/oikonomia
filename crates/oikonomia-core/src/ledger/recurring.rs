@@ -541,6 +541,7 @@ pub fn post_recurring_template(
         description: template.name.clone(),
         reference: None,
         amount_minor: post_amount,
+        settles_entry_id: None,
     };
 
     let entry = post_simple_entry_unchecked(&tx, &input)?;

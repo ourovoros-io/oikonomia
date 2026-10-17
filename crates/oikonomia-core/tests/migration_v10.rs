@@ -50,6 +50,7 @@ fn a_v9_vault_lists_its_entries_from_their_lines_and_stores_kinds_after() {
                 description: "bill".into(),
                 reference: None,
                 amount_minor: 4_000,
+                settles_entry_id: None,
             },
         )
         .expect("post")

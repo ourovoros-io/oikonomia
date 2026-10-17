@@ -23,6 +23,7 @@ import {
   type DocumentMeta,
   type Entity,
   type LastRoleAccounts,
+  type OpenBill,
   type PendingDocSource,
   type PostedEntryView,
   type SimpleEntryAccounts,
@@ -35,6 +36,7 @@ import { renderUiTexts, type UiText } from '../lib/uiText'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import { beginExclusive } from '../lib/guards'
 import { amountTone, isMoneyOut } from '../lib/entryKind'
+import { BillPicker } from '../components/BillPicker'
 import { CashFlowPulse } from '../components/CashFlowPulse'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { CsvMappingModal } from '../components/CsvMappingModal'
@@ -113,6 +115,9 @@ export function TransactionsPage({
   const [categoryId, setCategoryId] = useState('') // expense or income account
   const [walletId, setWalletId] = useState('') // bank / cash / card
   const [payableId, setPayableId] = useState('') // bills payable / AP, or the receivable of an unpaid income
+  const [settlesId, setSettlesId] = useState('') // the open bill a payment of an existing bill settles
+  // A payment settles its bill in full, so a picked bill fixes the amount and payable account.
+  const billPicked = kind === 'bill' && billStatus === 'pay_existing' && settlesId !== ''
   const [fromId, setFromId] = useState('') // transfer
   const [toId, setToId] = useState('')
   const [amount, setAmount] = useState('')
@@ -445,6 +450,7 @@ export function TransactionsPage({
     setPendingAnalysis(null)
     setScanNotes(null)
     setEditId(null)
+    setSettlesId('')
     applyKindDefaults('expense', defaults)
   }
 
@@ -560,6 +566,15 @@ export function TransactionsPage({
     }
   }
 
+  /** A picked bill fills in what its payment must match: its whole amount and its payable account. */
+  function pickBill(bill: OpenBill | null) {
+    setSettlesId(bill?.entry_id ?? '')
+    if (!bill) return
+    setAmount(minorToInputText(bill.amount_minor, currency))
+    setAmountInvalid(false)
+    setPayableId(bill.payable_account_id)
+  }
+
   /** What the form tells Rust about payment state; only a bill or an unpaid income has one. */
   function postedBillStatus(): BillStatus | null {
     if (kind === 'bill') return billStatus
@@ -615,6 +630,7 @@ export function TransactionsPage({
         payable_account_id: payableId || null,
         from_account_id: fromId || null,
         to_account_id: toId || null,
+        settles_entry_id: billPicked ? settlesId : null,
       }
 
       if (editId) {
@@ -731,6 +747,7 @@ export function TransactionsPage({
 
     resetDraft()
     fillForm(view.simple_form)
+    setSettlesId(view.settles_entry_id ?? '')
 
     const amountMinor = view.lines.reduce((s, l) => s + l.debit.amount_minor, 0)
     setAmount(minorToInputText(amountMinor, currency))
@@ -988,6 +1005,7 @@ export function TransactionsPage({
                 setAmountInvalid(false)
               }}
               className="tabular-nums"
+              disabled={billPicked}
               required
               aria-invalid={amountInvalid || undefined}
               aria-describedby={amountInvalid ? errorBannerId : undefined}
@@ -1097,6 +1115,16 @@ export function TransactionsPage({
                   <option value="pay_existing">{t('tx.billPayExisting')}</option>
                 </Select>
               </Field>
+              {billStatus === 'pay_existing' ? (
+                <BillPicker
+                  entityId={entity.id}
+                  correctingPaymentId={editId}
+                  value={settlesId}
+                  currency={currency}
+                  onPick={pickBill}
+                  onError={setError}
+                />
+              ) : null}
               {billStatus !== 'pay_existing' ? (
                 <Field label={t('tx.billCategory')}>
                   <Select
@@ -1125,7 +1153,12 @@ export function TransactionsPage({
               ) : null}
               {billStatus === 'unpaid' || billStatus === 'pay_existing' ? (
                 <Field label={t('tx.billsPayableAccount')}>
-                  <Select value={payableId} onChange={(e) => setPayableId(e.target.value)} required>
+                  <Select
+                    value={payableId}
+                    onChange={(e) => setPayableId(e.target.value)}
+                    disabled={billPicked}
+                    required
+                  >
                     {payableAccounts.length === 0 ? (
                       <option value="">{t('tx.noLiability')}</option>
                     ) : null}

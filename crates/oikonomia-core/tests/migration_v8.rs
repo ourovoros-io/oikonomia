@@ -73,6 +73,7 @@ fn a_v7_vault_gains_the_indexes_and_keeps_its_entries() {
         [
             "idx_entries_entity_date",
             "idx_entries_replaces",
+            "idx_entries_settles",
             "idx_entries_voided_by"
         ]
     );

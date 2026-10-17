@@ -59,7 +59,7 @@
 //! the amount, the day of the month, the date, then the accounts. A journal
 //! entry: the date, then its lines.
 
-use crate::domain::{AccountId, EntityId, RecurringTemplateId, Side};
+use crate::domain::{AccountId, EntityId, JournalEntryId, RecurringTemplateId, Side};
 use crate::error::{Error, Result, ValidationError};
 use crate::ledger::journals::{PostJournal, PostJournalLine, PostSimpleEntry};
 use crate::ledger::recurring::{
@@ -222,6 +222,9 @@ pub struct PostSimpleEntryRequest {
     pub from_account_id: Option<AccountId>,
     /// Account a transfer pays into.
     pub to_account_id: Option<AccountId>,
+    /// The open bill a payment of an existing bill settles, picked in the
+    /// form; `None` for a payment of no bill in particular.
+    pub settles_entry_id: Option<JournalEntryId>,
 }
 
 impl TryFrom<PostSimpleEntryRequest> for PostSimpleEntry {
@@ -230,7 +233,8 @@ impl TryFrom<PostSimpleEntryRequest> for PostSimpleEntry {
     /// Checks that `request` holds what its kind needs and types it.
     ///
     /// An account in a part the kind does not have is dropped, and so is a
-    /// bill status on an entry that is not a bill.
+    /// bill status on an entry that is not a bill. A bill to settle is passed
+    /// on, and posting reads it only for a payment of an existing bill.
     ///
     /// # Errors
     ///
@@ -252,6 +256,7 @@ impl TryFrom<PostSimpleEntryRequest> for PostSimpleEntry {
             description: request.description,
             reference: request.reference,
             amount_minor: request.amount_minor,
+            settles_entry_id: request.settles_entry_id,
         })
     }
 }
@@ -273,13 +278,16 @@ impl PostSimpleEntryRequest {
     /// - [`ValidationError::AccountRequired`], naming the part, when an
     ///   account the kind needs is missing.
     pub(crate) fn dated(&self, entry_date: Date) -> Result<PostSimpleEntry> {
+        let accounts = self.checked_accounts()?;
+
         Ok(PostSimpleEntry {
             entity_id: self.entity_id,
-            accounts: self.checked_accounts()?,
+            accounts,
             entry_date,
             description: self.description.clone(),
             reference: self.reference.clone(),
             amount_minor: self.amount_minor,
+            settles_entry_id: self.settles_entry_id,
         })
     }
 
@@ -659,6 +667,7 @@ mod tests {
             payable_account_id: None,
             from_account_id: None,
             to_account_id: None,
+            settles_entry_id: None,
         }
     }
 
