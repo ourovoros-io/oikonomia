@@ -674,12 +674,13 @@ pub(crate) mod ipc_test_support {
     use crate::state::{AppState, GrantPurpose};
     use oikonomia_core::vault::Connection;
     use std::path::PathBuf;
-    use tauri::Manager;
+    use std::sync::{Arc, Mutex};
     use tauri::ipc::{CallbackFn, Invoke, InvokeBody};
     use tauri::test::{
         INVOKE_KEY, MockRuntime, get_ipc_response, mock_builder, mock_context, noop_assets,
     };
     use tauri::webview::InvokeRequest;
+    use tauri::{Listener, Manager};
 
     /// The master password of the vault a [`MockApp`] runs over.
     pub(crate) const PASSWORD: &str = "correct horse battery staple";
@@ -763,6 +764,17 @@ pub(crate) mod ipc_test_support {
             let path = self.data_dir.join(name);
             std::fs::write(&path, bytes).unwrap();
             path.to_str().unwrap().to_owned()
+        }
+
+        /// Records the JSON payload of every `event` the app emits from now
+        /// on, as a webview listening for it would receive it.
+        pub(crate) fn record_events(&self, event: &str) -> Arc<Mutex<Vec<String>>> {
+            let payloads = Arc::new(Mutex::new(Vec::new()));
+            let sink = Arc::clone(&payloads);
+            self.app.listen(event, move |emitted| {
+                sink.lock().unwrap().push(emitted.payload().to_owned());
+            });
+            payloads
         }
 
         /// Hands `value` to the app as managed state, as `start` hands it

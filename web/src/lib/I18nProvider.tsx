@@ -123,6 +123,9 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   // interface must never stay in a language that failed to save.
   const storedLocale = useRef<Locale>(locale)
   const latestChange = useRef(0)
+  // The last change of this window whose save has answered; a change is in
+  // flight while this is behind latestChange.
+  const settledChange = useRef(0)
 
   useEffect(() => {
     setLocalePersist(async (next) => {
@@ -145,11 +148,29 @@ export function I18nProvider({ children }: { children: ReactNode }) {
         storedLocale.current = stored
         applyLocale(stored)
         setLanguageChangeFailed(true)
+      } finally {
+        if (change === latestChange.current) settledChange.current = change
       }
     })
 
     return () => setLocalePersist(null)
   }, [])
+
+  // Rust sends every window the language it stores, so a window that stays
+  // open while another changes it (the hidden quick-add window, while
+  // Settings changes it) follows. A change of this window's own still in
+  // flight owns the outcome, so an older language arriving meanwhile does
+  // not flash up.
+  useEffect(
+    () =>
+      api.onLocaleChanged((sent) => {
+        const stored = parseLocale(sent)
+        storedLocale.current = stored
+
+        if (settledChange.current === latestChange.current) applyLocale(stored)
+      }),
+    [],
+  )
 
   useEffect(() => {
     let cancelled = false
