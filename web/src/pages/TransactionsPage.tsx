@@ -36,7 +36,7 @@ import { renderUiTexts, type UiText } from '../lib/uiText'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import { beginExclusive } from '../lib/guards'
 import { amountTone, isMoneyOut } from '../lib/entryKind'
-import { BillPicker } from '../components/BillPicker'
+import { BillPicker, type BillChoice } from '../components/BillPicker'
 import { CashFlowPulse } from '../components/CashFlowPulse'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { CsvMappingModal } from '../components/CsvMappingModal'
@@ -87,6 +87,18 @@ type EntryKind = 'expense' | 'income' | 'bill' | 'transfer'
 
 type BillStatus = 'paid' | 'unpaid' | 'pay_existing'
 
+const NO_BILL_CHOICE: BillChoice = { kind: 'unchosen' }
+
+/**
+ * The bill choice an edit reopens on: a payment of an existing bill as
+ * stored, linked or not; any other entry has made no choice yet.
+ */
+function storedBillChoice(view: PostedEntryView): BillChoice {
+  const form = view.simple_form
+  if (form?.kind !== 'bill' || form.bill_status !== 'pay_existing') return NO_BILL_CHOICE
+  return view.settles_entry_id ? { kind: 'bill', billId: view.settles_entry_id } : { kind: 'unlinked' }
+}
+
 function accountsOf(accounts: Account[], types: Account['account_type'][]): Account[] {
   return accounts.filter((a) => a.is_active && types.includes(a.account_type))
 }
@@ -103,6 +115,7 @@ export function TransactionsPage({
   // Which account plays which role by default; Rust decides, this only holds it.
   const [defaults, setDefaults] = useState<AccountDefaults | null>(null)
   const errorBannerId = useId()
+  const billChoiceReasonId = useId()
   const [showForm, setShowForm] = useState(false)
 
   const [kind, setKind] = useState<EntryKind>('expense')
@@ -117,9 +130,13 @@ export function TransactionsPage({
   const [categoryId, setCategoryId] = useState('') // expense or income account
   const [walletId, setWalletId] = useState('') // bank / cash / card
   const [payableId, setPayableId] = useState('') // bills payable / AP, or the receivable of an unpaid income
-  const [settlesId, setSettlesId] = useState('') // the open bill a payment of an existing bill settles
+  const [billChoice, setBillChoice] = useState<BillChoice>(NO_BILL_CHOICE)
+  const payingBill = kind === 'bill' && billStatus === 'pay_existing'
+  const settlesBillId = payingBill && billChoice.kind === 'bill' ? billChoice.billId : null
+  // The owner's call (#240): a payment is linked or not on purpose, never by default.
+  const billChoiceMissing = payingBill && billChoice.kind === 'unchosen'
   // A payment settles its bill in full, so a picked bill fixes the amount and payable account.
-  const billPicked = kind === 'bill' && billStatus === 'pay_existing' && settlesId !== ''
+  const billPicked = settlesBillId !== null
   const [fromId, setFromId] = useState('') // transfer
   const [toId, setToId] = useState('')
   const [amount, setAmount] = useState('')
@@ -454,7 +471,7 @@ export function TransactionsPage({
     setPendingAnalysis(null)
     setScanNotes(null)
     setEditId(null)
-    setSettlesId('')
+    setBillChoice(NO_BILL_CHOICE)
     applyKindDefaults('expense', defaults)
   }
 
@@ -572,7 +589,7 @@ export function TransactionsPage({
 
   /** A picked bill fills in what its payment must match: its whole amount and its payable account. */
   function pickBill(bill: OpenBill | null) {
-    setSettlesId(bill?.entry_id ?? '')
+    setBillChoice(bill ? { kind: 'bill', billId: bill.entry_id } : { kind: 'unlinked' })
     if (!bill) return
     setAmount(minorToInputText(bill.amount_minor, currency))
     setAmountInvalid(false)
@@ -634,7 +651,7 @@ export function TransactionsPage({
         payable_account_id: payableId || null,
         from_account_id: fromId || null,
         to_account_id: toId || null,
-        settles_entry_id: billPicked ? settlesId : null,
+        settles_entry_id: settlesBillId,
       }
 
       if (editId) {
@@ -751,7 +768,7 @@ export function TransactionsPage({
 
     resetDraft()
     fillForm(view.simple_form)
-    setSettlesId(view.settles_entry_id ?? '')
+    setBillChoice(storedBillChoice(view))
 
     const amountMinor = view.lines.reduce((s, l) => s + l.debit.amount_minor, 0)
     setAmount(minorToInputText(amountMinor, currency))
@@ -1123,7 +1140,7 @@ export function TransactionsPage({
                 <BillPicker
                   entityId={entity.id}
                   correctingPaymentId={editId}
-                  value={settlesId}
+                  value={billChoice}
                   currency={currency}
                   onPick={pickBill}
                   onError={setError}
@@ -1220,7 +1237,17 @@ export function TransactionsPage({
             >
               {t('common.cancel')}
             </Button>
-            <Button type="submit" busy={busy}>
+            {billChoiceMissing ? (
+              <p id={billChoiceReasonId} className="mr-auto text-sm text-[var(--color-danger)]">
+                {t('tx.billToPayRequired')}
+              </p>
+            ) : null}
+            <Button
+              type="submit"
+              busy={busy}
+              disabled={billChoiceMissing}
+              aria-describedby={billChoiceMissing ? billChoiceReasonId : undefined}
+            >
               {busy ? t('common.saving') : editId ? t('tx.saveChanges') : t('tx.saveEntry')}
             </Button>
           </div>

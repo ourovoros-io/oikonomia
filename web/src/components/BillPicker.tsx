@@ -5,14 +5,30 @@ import { useI18n } from '../lib/I18nProvider'
 import type { Currency } from '../lib/money'
 import { Field, Select } from './ui'
 
+/**
+ * The "Bill to pay" choice: none made yet, no bill on purpose, or one bill. A
+ * payment is saved only once the user has chosen, so an unlinked payment is
+ * never posted by leaving the picker alone.
+ */
+export type BillChoice = { kind: 'unchosen' } | { kind: 'unlinked' } | { kind: 'bill'; billId: string }
+
+/** The option value of "Not linked to a bill"; bill ids are UUIDs, so it cannot clash. */
+const UNLINKED_VALUE = 'unlinked'
+
+/** The select value that shows `choice`; the empty placeholder for no choice yet. */
+function optionValue(choice: BillChoice): string {
+  if (choice.kind === 'unchosen') return ''
+  return choice.kind === 'unlinked' ? UNLINKED_VALUE : choice.billId
+}
+
 type Props = {
   entityId: string
   /** The payment being corrected, whose bill is offered again; null for a new payment. */
   correctingPaymentId: string | null
-  /** The picked bill's id, or '' for a payment of no bill in particular. */
-  value: string
+  /** What the user has chosen so far. */
+  value: BillChoice
   currency: Currency
-  /** The picked bill, or null when the user picks no bill. */
+  /** The picked bill, or null when the user picks "Not linked to a bill". */
   onPick: (bill: OpenBill | null) => void
   onError: (error: UiError) => void
 }
@@ -45,10 +61,13 @@ export function BillPicker({ entityId, correctingPaymentId, value, currency, onP
   return (
     <Field label={t('tx.billToPay')} className="sm:col-span-2 lg:col-span-3">
       <Select
-        value={value}
+        value={optionValue(value)}
         onChange={(e) => onPick(bills.find((bill) => bill.entry_id === e.target.value) ?? null)}
       >
-        <option value="">{t('tx.billToPayNone')}</option>
+        <option value="" disabled>
+          {t('tx.billToPayChoose')}
+        </option>
+        <option value={UNLINKED_VALUE}>{t('tx.billToPayNone')}</option>
         {bills.map((bill) => (
           <option key={bill.entry_id} value={bill.entry_id}>
             {formatDate(bill.entry_date)} · {bill.description} ·{' '}

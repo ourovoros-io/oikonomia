@@ -1017,7 +1017,9 @@
     "incomeUnpaid": "Offen — mir geschuldet (Forderung)",
     "receivableAccount": "Forderungskonto",
     "billToPay": "Zu zahlende Rechnung",
-    "billToPayNone": "Mit keiner Rechnung verknüpft"
+    "billToPayNone": "Mit keiner Rechnung verknüpft",
+    "billToPayChoose": "Rechnung wählen…",
+    "billToPayRequired": "Wählen Sie die Rechnung, die diese Zahlung begleicht, oder „Mit keiner Rechnung verknüpft“."
   },
   "recurring": {
     "title": "Wiederkehrend",
