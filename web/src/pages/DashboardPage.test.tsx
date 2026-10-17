@@ -14,7 +14,6 @@ vi.mock('../lib/api', async (importOriginal) => {
       dashboardSummary: vi.fn(),
       cashFlowSeries: vi.fn(),
       entryList: vi.fn(),
-      accountList: vi.fn(),
     },
   }
 })
@@ -24,7 +23,7 @@ vi.mock('../components/CashFlowPulse', () => ({
   CashFlowPulse: ({ label }: { label: string }) => <div role="img" aria-label={label} />,
 }))
 
-import type { Account, CashFlowSeries, DashboardSummary, Entity, PostedEntryView } from '../lib/api'
+import type { CashFlowSeries, DashboardSummary, Entity, PostedEntryView } from '../lib/api'
 import { api } from '../lib/api'
 import { resetI18nForTests } from '../lib/i18n'
 import { formatMoney } from '../lib/money'
@@ -45,23 +44,6 @@ const entity: Entity = {
   fiscal_year_start_month: 1,
   chart_template: 'personal',
 }
-
-function account(over: Partial<Account> & Pick<Account, 'id' | 'name' | 'account_type'>): Account {
-  return {
-    entity_id: 'e1',
-    code: '1000',
-    is_active: true,
-    is_system: false,
-    sort_order: 0,
-    ...over,
-  }
-}
-
-const accounts: Account[] = [
-  account({ id: 'w1', name: 'Checking', account_type: 'asset' }),
-  account({ id: 'exp1', name: 'Groceries', account_type: 'expense' }),
-  account({ id: 'inc1', name: 'Salary', account_type: 'income' }),
-]
 
 const summary: DashboardSummary = {
   entity_id: 'e1',
@@ -105,11 +87,13 @@ const entries: PostedEntryView[] = [
     entry: { id: 'j1', entity_id: 'e1', entry_date: '2026-08-12', description: 'Alpha supermarket', reference: null, status: 'posted', hidden: false },
     lines: [line('l1', 'j1', 'exp1', 4250, 0), line('l2', 'j1', 'w1', 0, 4250)],
     is_voided: false,
+    listed_kind: 'expense',
   },
   {
     entry: { id: 'j2', entity_id: 'e1', entry_date: '2026-08-11', description: 'Client invoice', reference: null, status: 'posted', hidden: false },
     lines: [line('l3', 'j2', 'w1', 120000, 0), line('l4', 'j2', 'inc1', 0, 120000)],
     is_voided: false,
+    listed_kind: 'income',
   },
 ]
 
@@ -119,7 +103,6 @@ beforeEach(() => {
   vi.mocked(api.dashboardSummary).mockReset().mockResolvedValue(summary)
   vi.mocked(api.cashFlowSeries).mockReset().mockResolvedValue(series)
   vi.mocked(api.entryList).mockReset().mockResolvedValue(entries)
-  vi.mocked(api.accountList).mockReset().mockResolvedValue(accounts)
 })
 
 afterEach(() => {
@@ -156,6 +139,38 @@ describe('DashboardPage activity row colours', () => {
 
     expect(screen.getByText('Alpha supermarket').closest('li')?.querySelector('[data-amount]')).toHaveAttribute('data-amount', 'out')
     expect(screen.getByText('Client invoice').closest('li')?.querySelector('[data-amount]')).toHaveAttribute('data-amount', 'in')
+  })
+})
+
+describe('DashboardPage activity kinds', () => {
+  test('bills are labelled Bill as in the entry list, whatever their lines look like', async () => {
+    const [expense, income] = entries as [PostedEntryView, PostedEntryView]
+    const bill = (id: string, description: string, lines: PostedEntryView['lines']): PostedEntryView => ({
+      ...expense,
+      entry: { ...expense.entry, id, description },
+      lines,
+      listed_kind: 'bill',
+    })
+    vi.mocked(api.entryList).mockResolvedValue([
+      // Lines of an expense, and of a transfer from the wallet to a liability.
+      bill('b1', 'Power paid now', expense.lines),
+      bill('b2', 'Water paid off', [line('l5', 'b2', 'p1', 900, 0), line('l6', 'b2', 'w1', 0, 900)]),
+      { ...income, entry: { ...income.entry, id: 't1', description: 'To savings' }, listed_kind: 'transfer' },
+    ])
+    render(<DashboardPage entity={entity} />)
+
+    const row = async (description: string) => (await screen.findByText(description)).closest('li')
+    for (const [description, minor] of [['Power paid now', 4250], ['Water paid off', 900]] as const) {
+      const billRow = await row(description)
+      expect(billRow).toHaveTextContent('Bill')
+      expect(billRow).not.toHaveTextContent(/Expense|Transfer/)
+      expect(billRow?.firstElementChild?.className).toContain('bg-[var(--color-money-out-soft)]')
+      expect(billRow?.querySelector('[data-amount]')).toHaveAttribute('data-amount', 'out')
+      expect(plain(billRow?.textContent ?? '')).toContain(plain(money(-minor, true)))
+    }
+    const transfer = await row('To savings')
+    expect(transfer).toHaveTextContent('Transfer')
+    expect(transfer?.querySelector('[data-amount]')).toHaveAttribute('data-amount', 'neutral')
   })
 })
 

@@ -200,6 +200,7 @@ const postedEntry: PostedEntryView = {
     },
   ],
   is_voided: false,
+  listed_kind: 'expense',
 }
 
 const incomeEntry: PostedEntryView = {
@@ -231,6 +232,7 @@ const incomeEntry: PostedEntryView = {
     },
   ],
   is_voided: false,
+  listed_kind: 'income',
 }
 
 function documentSuggestion(over: Partial<DocumentSuggestion> = {}): DocumentSuggestion {
@@ -1458,23 +1460,16 @@ describe('TransactionsPage list header', () => {
 })
 
 describe('TransactionsPage bills in the list', () => {
-  test('an entry on the bills payable account is listed as a bill', async () => {
-    const payable = account({ id: 'p1', name: 'Bills payable', account_type: 'liability', code: '2050' })
-    vi.mocked(api.accountList).mockResolvedValue([...accounts, payable])
-    vi.mocked(api.accountDefaults).mockResolvedValue({ ...DEFAULTS, bills_payable: 'p1' })
-    vi.mocked(api.entryList).mockResolvedValue([
-      {
-        ...postedEntry,
-        lines: postedEntry.lines.map((line) =>
-          line.account_id === 'w1' ? { ...line, account_id: 'p1' } : line,
-        ),
-      },
-    ])
+  test('a bill paid at once is listed as the bill core says it is, not by its lines', async () => {
+    // The lines are an expense's: category debited, wallet credited.
+    vi.mocked(api.entryList).mockResolvedValue([{ ...postedEntry, listed_kind: 'bill' }])
     await renderReady()
 
     const row = (await screen.findByText('Alpha supermarket')).closest('li')
     expect(row).toHaveTextContent('Bill')
     expect(row).not.toHaveTextContent('Expense')
+    const out = formatMoney(-4250, { code: 'EUR', decimals: 2 }, undefined, { signed: true })
+    expect(row).toHaveTextContent(plain(out))
   })
 })
 
@@ -1487,6 +1482,7 @@ describe('TransactionsPage row meta', () => {
       {
         ...incomeEntry,
         entry: { ...incomeEntry.entry, id: 'j9', description: 'Opening balance — Checking' },
+        listed_kind: 'other',
         lines: incomeEntry.lines.map((line) =>
           line.account_id === 'inc1' ? { ...line, account_id: 'eq1' } : line,
         ),

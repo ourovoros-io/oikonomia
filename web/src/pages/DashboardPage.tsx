@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowDownLeft, ArrowUpRight, Landmark, Receipt } from 'lucide-react'
+import { Landmark, Receipt } from 'lucide-react'
 import {
   api,
   formatDate,
@@ -12,15 +12,17 @@ import {
   todayISO,
   yearEndISO,
   yearStartISO,
-  type Account,
   type CashFlowSeries,
   type DashboardSummary,
   type Entity,
+  type ListedEntryKind,
   type PostedEntryView,
 } from '../lib/api'
 import { formatPercentFromBps } from '../lib/arc'
+import { amountTone, isMoneyOut } from '../lib/entryKind'
 import { ArcTile } from '../components/Arc'
 import { CashFlowPulse } from '../components/CashFlowPulse'
+import { EntryKindBadge } from '../components/EntryKindBadge'
 import { HiddenIncludedNote } from '../components/hiddenUi'
 import { TopBar } from '../components/TopBar'
 import {
@@ -29,7 +31,6 @@ import {
   EmptyState,
   ErrorBanner,
   Hero,
-  IconBadge,
   ListRow,
   MoneyPill,
   Panel,
@@ -50,29 +51,18 @@ type ActivityRow = {
   date: string
   description: string
   signedMinor: number
-  kind: 'income' | 'expense' | 'transfer' | 'other'
+  kind: ListedEntryKind
 }
 
-function inferActivity(view: PostedEntryView, accounts: Account[]): ActivityRow {
-  const map = new Map(accounts.map((a) => [a.id, a]))
-  const types = view.lines.map((l) => map.get(l.account_id)?.account_type)
+/** One row of Recent activity, labelled with the kind core lists the entry as. */
+function activityRow(view: PostedEntryView): ActivityRow {
   const amount = view.lines.reduce((s, l) => s + l.debit.amount_minor, 0)
-  let kind: ActivityRow['kind'] = 'other'
-  let signed = amount
-  if (types.includes('expense')) {
-    kind = 'expense'
-    signed = -amount
-  } else if (types.includes('income')) {
-    kind = 'income'
-    signed = amount
-  } else if (types.every((t) => t === 'asset' || t === 'liability')) {
-    kind = 'transfer'
-  }
+  const kind = view.listed_kind
   return {
     id: view.entry.id,
     date: formatDate(view.entry.entry_date),
     description: view.entry.description,
-    signedMinor: signed,
+    signedMinor: isMoneyOut(kind) ? -amount : amount,
     kind,
   }
 }
@@ -92,7 +82,6 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
   const [data, setData] = useState<DashboardSummary | null>(null)
   const [series, setSeries] = useState<CashFlowSeries | null>(null)
   const [entries, setEntries] = useState<PostedEntryView[]>([])
-  const [accounts, setAccounts] = useState<Account[]>([])
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [period, setPeriod] = useState<Period>('month')
@@ -120,24 +109,21 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
       setData(null)
       setSeries(null)
       setEntries([])
-      setAccounts([])
       return
     }
     let cancelled = false
     setLoading(true)
     void (async () => {
       try {
-        const [summary, flow, list, accts] = await Promise.all([
+        const [summary, flow, list] = await Promise.all([
           api.dashboardSummary(entity.id, from, to, assetsAsOf),
           api.cashFlowSeries(entity.id, from, to),
           api.entryList(entity.id, { from, to }),
-          api.accountList(entity.id),
         ])
         if (!cancelled) {
           setData(summary)
           setSeries(flow)
           setEntries(list)
-          setAccounts(accts)
           setError(null)
         }
       } catch (err) {
@@ -157,8 +143,8 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
     return entries
       .filter((e) => !e.is_voided)
       .slice(0, 8)
-      .map((e) => inferActivity(e, accounts))
-  }, [entries, accounts])
+      .map(activityRow)
+  }, [entries])
 
   if (!entity) {
     return (
@@ -310,19 +296,7 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
           <ul className="divide-y divide-[var(--color-border)]">
             {activity.map((row) => (
               <ListRow key={row.id}>
-                <IconBadge
-                  tone={
-                    row.kind === 'income' ? 'money-in' : row.kind === 'expense' ? 'money-out' : 'muted'
-                  }
-                >
-                  {row.kind === 'income' ? (
-                    <ArrowDownLeft className="size-4" />
-                  ) : row.kind === 'expense' ? (
-                    <ArrowUpRight className="size-4" />
-                  ) : (
-                    <Landmark className="size-4" />
-                  )}
-                </IconBadge>
+                <EntryKindBadge kind={row.kind} />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium text-[var(--color-fg)]">
                     {row.description}
@@ -333,10 +307,8 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
                     <span>{t(`kind.${row.kind}`)}</span>
                   </div>
                 </div>
-                <AmountPill
-                  tone={row.kind === 'income' ? 'in' : row.kind === 'expense' ? 'out' : 'neutral'}
-                >
-                  {money(row.signedMinor, row.kind === 'income' || row.kind === 'expense')}
+                <AmountPill tone={amountTone(row.kind)}>
+                  {money(row.signedMinor, amountTone(row.kind) !== 'neutral')}
                 </AmountPill>
               </ListRow>
             ))}
