@@ -1,16 +1,21 @@
 //! Paying an existing bill: the open bills of a book, the payment that
-//! settles one in full, and what voiding or correcting either does.
+//! settles one in full, what voiding or correcting either does, and the
+//! bill an occurrence of a recurring payment settles.
 
 #![expect(clippy::expect_used, reason = "tests fail loudly by design")]
 
 mod common;
 
-use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, JournalEntryId};
+use oikonomia_core::domain::{
+    AccountId, ChartTemplate, EntityId, JournalEntryId, RecurringTemplateId,
+};
 use oikonomia_core::error::{Error, ValidationError};
 use oikonomia_core::ledger::{
-    EntryFilter, OpenBill, PostSimpleEntry, PostSimpleEntryRequest, PostedEntryView,
-    SimpleBillStatus, SimpleEntryAccounts, SimpleEntryKind, archive_account, get_entry,
-    list_entries, list_open_bills, post_simple_entry, replace_simple_entry, void_entry,
+    CreateRecurringTemplate, EntryFilter, OpenBill, PostSimpleEntry, PostSimpleEntryRequest,
+    PostedEntryView, RecurringSchedule, RecurringTemplateFields, SimpleBillStatus,
+    SimpleEntryAccounts, SimpleEntryKind, archive_account, create_recurring_template, get_entry,
+    list_entries, list_open_bills, post_recurring_template, post_simple_entry,
+    replace_simple_entry, void_entry,
 };
 use oikonomia_core::prefs::Locale;
 use rusqlite::Connection;
@@ -60,11 +65,30 @@ fn post(
 
 /// Posts an unpaid bill of `amount_minor` owed on `payable`.
 fn bill(conn: &Connection, book: &Book, payable: AccountId, amount_minor: i64) -> JournalEntryId {
-    let unpaid = SimpleEntryAccounts::BillUnpaid {
-        category: book.power,
-        payable,
+    bill_on(conn, book, "2026-04-10", payable, amount_minor)
+}
+
+/// Posts an unpaid bill of `amount_minor` owed on `payable`, dated `date`.
+fn bill_on(
+    conn: &Connection,
+    book: &Book,
+    date: &str,
+    payable: AccountId,
+    amount_minor: i64,
+) -> JournalEntryId {
+    let unpaid = PostSimpleEntry {
+        entity_id: book.entity_id,
+        accounts: SimpleEntryAccounts::BillUnpaid {
+            category: book.power,
+            payable,
+        },
+        entry_date: common::date(date),
+        description: "power".into(),
+        reference: None,
+        amount_minor,
+        settles_entry_id: None,
     };
-    post(conn, book, unpaid, amount_minor, None)
+    post_simple_entry(conn, &unpaid)
         .expect("post the bill")
         .entry
         .id
@@ -401,5 +425,141 @@ fn only_a_payment_of_an_existing_bill_keeps_the_bill_it_names() {
     let paid_now = common::post_simple_request(conn, &request).expect("post");
 
     assert_eq!(paid_now.settles_entry_id, None);
+    assert_eq!(open_ids(conn, &book), [bill_id]);
+}
+
+/// Creates a weekly template that pays 4 000 of a bill owed on bills
+/// payable from checking.
+fn recurring_payment(conn: &Connection, book: &Book) -> RecurringTemplateId {
+    let input = CreateRecurringTemplate {
+        entity_id: book.entity_id,
+        fields: RecurringTemplateFields {
+            name: "power".into(),
+            amount_minor: 4_000,
+            schedule: RecurringSchedule::Weekly,
+            accounts: payment(book, book.bills_payable),
+            memo: None,
+            next_date: common::date("2026-04-20"),
+        },
+    };
+    create_recurring_template(conn, &input)
+        .expect("create the template")
+        .id
+}
+
+/// Posts the next occurrence of `template`, with its own amount unless
+/// `amount_minor` overrides it.
+fn post_occurrence(
+    conn: &Connection,
+    template: RecurringTemplateId,
+    amount_minor: Option<i64>,
+) -> PostedEntryView {
+    post_recurring_template(conn, template, None, amount_minor)
+        .expect("post an occurrence")
+        .entry
+}
+
+#[test]
+fn an_occurrence_settles_the_oldest_matching_open_bill() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn, "Home");
+    // Oldest by date, not by when it was posted.
+    let newest = bill_on(conn, &book, "2026-04-10", book.bills_payable, 4_000);
+    let oldest = bill_on(conn, &book, "2026-04-01", book.bills_payable, 4_000);
+    let middle = bill_on(conn, &book, "2026-04-05", book.bills_payable, 4_000);
+    let template = recurring_payment(conn, &book);
+
+    let paid = post_occurrence(conn, template, None);
+
+    assert_eq!(paid.settles_entry_id, Some(oldest));
+    assert_eq!(
+        get_entry(conn, paid.entry.id)
+            .expect("get")
+            .settles_entry_id,
+        Some(oldest)
+    );
+    assert_eq!(open_ids(conn, &book), [middle, newest]);
+}
+
+#[test]
+fn an_occurrence_skips_bills_of_another_amount_payable_or_book() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn, "Home");
+    let other = self::book(conn, "Shop");
+    let other_amount = bill_on(conn, &book, "2026-04-01", book.bills_payable, 3_999);
+    let on_card = bill_on(conn, &book, "2026-04-01", book.card, 4_000);
+    let elsewhere = bill_on(conn, &other, "2026-04-01", other.bills_payable, 4_000);
+    let matching = bill_on(conn, &book, "2026-04-10", book.bills_payable, 4_000);
+    let template = recurring_payment(conn, &book);
+
+    let paid = post_occurrence(conn, template, None);
+
+    assert_eq!(paid.settles_entry_id, Some(matching));
+    assert_eq!(open_ids(conn, &book), [other_amount, on_card]);
+    assert_eq!(open_ids(conn, &other), [elsewhere]);
+}
+
+#[test]
+fn an_occurrence_matches_the_amount_it_posts() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn, "Home");
+    let at_template_amount = bill_on(conn, &book, "2026-04-01", book.bills_payable, 4_000);
+    let at_override = bill_on(conn, &book, "2026-04-10", book.bills_payable, 4_250);
+    let template = recurring_payment(conn, &book);
+
+    let paid = post_occurrence(conn, template, Some(4_250));
+
+    assert_eq!(paid.settles_entry_id, Some(at_override));
+    assert_eq!(open_ids(conn, &book), [at_template_amount]);
+}
+
+#[test]
+fn an_occurrence_with_no_matching_bill_settles_none() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn, "Home");
+    let other_amount = bill(conn, &book, book.bills_payable, 3_999);
+    let template = recurring_payment(conn, &book);
+
+    let paid = post_occurrence(conn, template, None);
+
+    assert_eq!(paid.settles_entry_id, None);
+    assert_eq!(open_ids(conn, &book), [other_amount]);
+    // The payment is in the books all the same.
+    assert_eq!(entry_count(conn, &book), 2);
+}
+
+#[test]
+fn two_occurrences_settle_two_bills() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn, "Home");
+    let first = bill_on(conn, &book, "2026-04-01", book.bills_payable, 4_000);
+    let second = bill_on(conn, &book, "2026-04-08", book.bills_payable, 4_000);
+    let template = recurring_payment(conn, &book);
+
+    let first_payment = post_occurrence(conn, template, None);
+    let second_payment = post_occurrence(conn, template, None);
+
+    assert_eq!(first_payment.settles_entry_id, Some(first));
+    assert_eq!(second_payment.settles_entry_id, Some(second));
+    assert_eq!(open_ids(conn, &book), []);
+}
+
+#[test]
+fn voiding_an_occurrence_reopens_its_bill() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn, "Home");
+    let bill_id = bill(conn, &book, book.bills_payable, 4_000);
+    let template = recurring_payment(conn, &book);
+    let paid = post_occurrence(conn, template, None);
+    assert_eq!(open_ids(conn, &book), []);
+
+    void_entry(conn, paid.entry.id, Locale::En).expect("void the payment");
+
     assert_eq!(open_ids(conn, &book), [bill_id]);
 }

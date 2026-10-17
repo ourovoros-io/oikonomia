@@ -18,6 +18,12 @@
 //! therefore does not shift the schedule, and an overdue template is caught
 //! up one occurrence per post. [`RecurringSchedule`] defines the steps.
 //!
+//! A template cannot name the bill a payment of an existing bill settles:
+//! each occurrence pays another one. So an occurrence of such a template
+//! settles the oldest open bill of its book owed on its payable account for
+//! exactly its amount, and settles none when there is no such bill. The bill
+//! is chosen in the transaction of the post.
+//!
 //! # Validation
 //!
 //! Creating or updating a template checks its accounts exactly as posting
@@ -31,8 +37,9 @@
 //! it.
 
 use crate::db::{collect_rows, corrupt_column, read_column, stored_date, stored_id};
-use crate::domain::{AccountId, EntityId, RecurringTemplateId};
+use crate::domain::{AccountId, EntityId, JournalEntryId, RecurringTemplateId};
 use crate::error::{DatabaseContext, Error, NameField, Resource, Result, ValidationError};
+use crate::ledger::bills::list_open_bills;
 use crate::ledger::calendar::add_months;
 use crate::ledger::entities::ensure_writable_entity;
 use crate::ledger::journals::{
@@ -498,6 +505,10 @@ pub fn delete_recurring_template(conn: &Connection, id: RecurringTemplateId) -> 
 ///
 /// No background auto-post: this is the only way a template creates an entry.
 ///
+/// An occurrence that pays an existing bill settles the oldest open bill of
+/// the book owed on its payable account for the amount posted, override
+/// included, and settles none when no open bill matches.
+///
 /// # Errors
 ///
 /// - [`Error::NotFound`] for an unknown template, and for a template of an archived entity.
@@ -541,7 +552,7 @@ pub fn post_recurring_template(
         description: template.name.clone(),
         reference: None,
         amount_minor: post_amount,
-        settles_entry_id: None,
+        settles_entry_id: bill_to_settle(&tx, stored.entity_id, template.accounts, post_amount)?,
     };
 
     let entry = post_simple_entry_unchecked(&tx, &input)?;
@@ -562,6 +573,31 @@ pub fn post_recurring_template(
         entry,
         template: stored.into_view(utc_today()),
     })
+}
+
+/// Returns the bill an occurrence of a template with `accounts` settles when
+/// it pays `amount_minor`: for a payment of an existing bill, the oldest
+/// open bill of the book owed on the same payable account for the same
+/// amount; `None` when there is none, and for every other entry.
+///
+/// # Errors
+///
+/// Those of [`list_open_bills`].
+fn bill_to_settle(
+    conn: &Connection,
+    entity_id: EntityId,
+    accounts: SimpleEntryAccounts,
+    amount_minor: i64,
+) -> Result<Option<JournalEntryId>> {
+    let SimpleEntryAccounts::BillPayment { payable, .. } = accounts else {
+        return Ok(None);
+    };
+
+    // The list is oldest first, so the first match is the oldest one.
+    Ok(list_open_bills(conn, entity_id, None)?
+        .into_iter()
+        .find(|bill| bill.payable_account_id == payable && bill.amount_minor == amount_minor)
+        .map(|bill| bill.entry_id))
 }
 
 /// Returns the `next_date` that follows `from` under `schedule`. See

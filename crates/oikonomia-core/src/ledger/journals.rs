@@ -257,8 +257,7 @@ pub struct PostSimpleEntry {
     pub amount_minor: i64,
     /// The open bill this payment settles in full; read only when
     /// `accounts` is a [`SimpleEntryAccounts::BillPayment`]. `None` posts a
-    /// payment that settles no bill in particular, as a recurring payment
-    /// does.
+    /// payment that settles no bill in particular.
     pub settles_entry_id: Option<JournalEntryId>,
 }
 
