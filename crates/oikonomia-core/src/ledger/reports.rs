@@ -49,8 +49,9 @@ use crate::db::{collect_rows, read_column};
 use crate::domain::{AccountType, CurrencyCode, EntityId};
 use crate::error::{DatabaseContext, Error, Result, ValidationError};
 use crate::ledger::balance::{
-    ACTIVE_ENTRY_PREDICATE, add_minor, count_hidden_pnl_entries, normal_balance,
-    parse_account_type, subtract_minor, sum_minor, sum_type_as_of, sum_type_in_range,
+    ACTIVE_ENTRY_PREDICATE, add_minor, count_hidden_entries_through, count_hidden_pnl_entries,
+    normal_balance, parse_account_type, subtract_minor, sum_minor, sum_type_as_of,
+    sum_type_in_range,
 };
 use crate::ledger::calendar::{add_months, months_between};
 use crate::ledger::entities::get_entity;
@@ -176,9 +177,9 @@ pub struct BalanceSheet {
     /// The totals of `liabilities` and `equity` added, in minor units. Equal
     /// to `total_assets` whenever every entry balances.
     pub total_liabilities_equity: i64,
-    /// Hidden entries, dated through `as_of`, that move income or expenses and
-    /// so the equity rows `RE` and `NI`. The balance sheet counts them although
-    /// the P&L export leaves them out.
+    /// Hidden entries dated through `as_of`, which the figures above include
+    /// and the journal export leaves out. Unlike the P&L's count it covers
+    /// entries that touch only balance-sheet accounts, such as a transfer.
     pub hidden_entry_count: usize,
 }
 
@@ -381,7 +382,7 @@ pub fn balance_sheet(conn: &Connection, entity_id: EntityId, as_of: Date) -> Res
         },
         total_assets,
         total_liabilities_equity,
-        hidden_entry_count: count_hidden_pnl_entries(conn, entity_id, None, Some(as_of))?,
+        hidden_entry_count: count_hidden_entries_through(conn, entity_id, as_of)?,
     })
 }
 
