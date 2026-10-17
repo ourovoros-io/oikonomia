@@ -5,14 +5,32 @@ import { useI18n } from '../lib/I18nProvider'
 import type { Currency } from '../lib/money'
 import { Field, Select } from './ui'
 
+/**
+ * The "Bill to pay" choice: none made yet, no bill on purpose, or one bill. A
+ * payment is saved only once the user has chosen, so an unlinked payment is
+ * never posted by leaving the picker alone.
+ */
+export type BillChoice = { kind: 'unchosen' } | { kind: 'unlinked' } | { kind: 'bill'; billId: string }
+
+/** The option value of "Not linked to a bill"; bill ids are UUIDs, so it cannot clash. */
+const UNLINKED_VALUE = 'unlinked'
+
+/** The select value that shows `choice`; the empty placeholder for no choice yet. */
+function optionValue(choice: BillChoice): string {
+  if (choice.kind === 'unchosen') return ''
+  return choice.kind === 'unlinked' ? UNLINKED_VALUE : choice.billId
+}
+
 type Props = {
   entityId: string
   /** The payment being corrected, whose bill is offered again; null for a new payment. */
   correctingPaymentId: string | null
-  /** The picked bill's id, or '' for a payment of no bill in particular. */
-  value: string
+  /** What the user has chosen so far. */
+  value: BillChoice
+  /** The id of the text that says why a choice is still needed, while it is. */
+  describedBy?: string | undefined
   currency: Currency
-  /** The picked bill, or null when the user picks no bill. */
+  /** The picked bill, or null when the user picks "Not linked to a bill". */
   onPick: (bill: OpenBill | null) => void
   onError: (error: UiError) => void
 }
@@ -22,7 +40,15 @@ type Props = {
  * hands it to the form, which fills in its amount and payable account; core
  * checks that the payment matches the bill it settles.
  */
-export function BillPicker({ entityId, correctingPaymentId, value, currency, onPick, onError }: Props) {
+export function BillPicker({
+  entityId,
+  correctingPaymentId,
+  value,
+  describedBy,
+  currency,
+  onPick,
+  onError,
+}: Props) {
   const { t } = useI18n()
   const [bills, setBills] = useState<OpenBill[]>([])
 
@@ -45,10 +71,22 @@ export function BillPicker({ entityId, correctingPaymentId, value, currency, onP
   return (
     <Field label={t('tx.billToPay')} className="sm:col-span-2 lg:col-span-3">
       <Select
-        value={value}
+        value={optionValue(value)}
         onChange={(e) => onPick(bills.find((bill) => bill.entry_id === e.target.value) ?? null)}
+        aria-required
+        aria-describedby={describedBy}
       >
-        <option value="">{t('tx.billToPayNone')}</option>
+        <option value="" disabled>
+          {t('tx.billToPayChoose')}
+        </option>
+        <option value={UNLINKED_VALUE}>{t('tx.billToPayNone')}</option>
+        {/* Until the open bills arrive, the linked bill of an edited payment
+            has no option; without this one the select would show "Not linked". */}
+        {value.kind === 'bill' && !bills.some((bill) => bill.entry_id === value.billId) ? (
+          <option value={value.billId} disabled>
+            {t('common.loading')}
+          </option>
+        ) : null}
         {bills.map((bill) => (
           <option key={bill.entry_id} value={bill.entry_id}>
             {formatDate(bill.entry_date)} · {bill.description} ·{' '}

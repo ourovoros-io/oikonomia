@@ -1751,6 +1751,29 @@ describe('TransactionsPage paying an existing bill', () => {
     })
   })
 
+  test('Save waits until the bill to pay is chosen, a bill or none on purpose', async () => {
+    const reason = 'Choose the bill this payment settles, or “Not linked to a bill”.'
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'New Entry' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Bill' }))
+    expect(screen.getByRole('button', { name: 'Save entry' })).toBeEnabled()
+
+    await userEvent.selectOptions(screen.getByLabelText('Bill status'), 'pay_existing')
+
+    // The picker opens on its empty placeholder, which cannot be picked back.
+    const picker = await screen.findByLabelText('Bill to pay')
+    expect(picker).toHaveValue('')
+    expect(screen.getByRole('option', { name: 'Choose a bill…' })).toBeDisabled()
+    const save = screen.getByRole('button', { name: 'Save entry' })
+    expect(save).toBeDisabled()
+    expect(save).toHaveAccessibleDescription(reason)
+
+    await userEvent.selectOptions(picker, 'unlinked')
+
+    expect(save).toBeEnabled()
+    expect(screen.queryByText(reason)).toBeNull()
+  })
+
   test('a payment of no bill in particular settles none', async () => {
     vi.mocked(api.entryPostSimple).mockResolvedValue(postedEntry)
     await renderReady()
@@ -1758,7 +1781,7 @@ describe('TransactionsPage paying an existing bill', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Bill' }))
     await userEvent.selectOptions(screen.getByLabelText('Bill status'), 'pay_existing')
     await userEvent.selectOptions(await screen.findByLabelText('Bill to pay'), 'b1')
-    await userEvent.selectOptions(screen.getByLabelText('Bill to pay'), '')
+    await userEvent.selectOptions(screen.getByLabelText('Bill to pay'), 'unlinked')
 
     await userEvent.type(screen.getByLabelText('Description'), 'Power')
     await userEvent.click(screen.getByRole('button', { name: 'Save entry' }))
@@ -1795,6 +1818,100 @@ describe('TransactionsPage paying an existing bill', () => {
       expect(screen.getByLabelText('Bill to pay')).toHaveValue('b1')
     })
     expect(api.billListOpen).toHaveBeenCalledWith('e1', 'j1')
+  })
+
+  test('correcting a payment of no bill reopens on Not linked, ready to save', async () => {
+    const unlinked: PostedEntryView = {
+      ...postedEntry,
+      listed_kind: 'bill',
+      simple_form: {
+        kind: 'bill',
+        bill_status: 'pay_existing',
+        category_account_id: null,
+        wallet_account_id: 'w1',
+        payable_account_id: 'cc1',
+        from_account_id: null,
+        to_account_id: null,
+      },
+    }
+    vi.mocked(api.entryList).mockResolvedValue([unlinked])
+    await renderReady()
+
+    await userEvent.click(await screen.findByText('Alpha supermarket'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit entry' }))
+
+    expect(await screen.findByLabelText('Bill to pay')).toHaveValue('unlinked')
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled()
+  })
+
+  test('leaving Pay an existing bill drops the pick, so coming back asks again', async () => {
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'New Entry' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Bill' }))
+    await userEvent.selectOptions(screen.getByLabelText('Bill status'), 'pay_existing')
+    await userEvent.selectOptions(await screen.findByLabelText('Bill to pay'), 'b1')
+
+    await userEvent.selectOptions(screen.getByLabelText('Bill status'), 'paid')
+    // The picked bill no longer fixes the amount.
+    expect(screen.getByLabelText('Amount (EUR)')).toBeEnabled()
+    await userEvent.selectOptions(screen.getByLabelText('Bill status'), 'pay_existing')
+
+    expect(await screen.findByLabelText('Bill to pay')).toHaveValue('')
+    expect(screen.getByRole('button', { name: 'Save entry' })).toBeDisabled()
+  })
+
+  test('a new entry after Cancel starts with no bill chosen', async () => {
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'New Entry' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Bill' }))
+    await userEvent.selectOptions(screen.getByLabelText('Bill status'), 'pay_existing')
+    await userEvent.selectOptions(await screen.findByLabelText('Bill to pay'), 'unlinked')
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    await userEvent.click(screen.getByRole('button', { name: 'New Entry' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Bill' }))
+    await userEvent.selectOptions(screen.getByLabelText('Bill status'), 'pay_existing')
+
+    expect(await screen.findByLabelText('Bill to pay')).toHaveValue('')
+  })
+
+  test('the linked bill of an edited payment shows as loading, never as Not linked', async () => {
+    const paid: PostedEntryView = {
+      ...postedEntry,
+      listed_kind: 'bill',
+      settles_entry_id: 'b1',
+      simple_form: {
+        kind: 'bill',
+        bill_status: 'pay_existing',
+        category_account_id: null,
+        wallet_account_id: 'w1',
+        payable_account_id: 'cc1',
+        from_account_id: null,
+        to_account_id: null,
+      },
+    }
+    vi.mocked(api.entryList).mockResolvedValue([paid])
+    vi.mocked(api.billListOpen).mockReturnValue(new Promise(() => {}))
+    await renderReady()
+
+    await userEvent.click(await screen.findByText('Alpha supermarket'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit entry' }))
+
+    const picker = await screen.findByLabelText('Bill to pay')
+    expect(picker).toHaveValue('b1')
+    expect(picker).toHaveDisplayValue('Loading…')
+  })
+
+  test('an entry edited into a payment starts with no bill chosen', async () => {
+    await renderReady()
+
+    await userEvent.click(await screen.findByText('Alpha supermarket'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit entry' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Bill' }))
+    await userEvent.selectOptions(screen.getByLabelText('Bill status'), 'pay_existing')
+
+    expect(await screen.findByLabelText('Bill to pay')).toHaveValue('')
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeDisabled()
   })
 })
 
