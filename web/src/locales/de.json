@@ -902,7 +902,7 @@
       "badge": "Ausgeblendet"
     },
     "export": {
-      "whisper": "Der Export lässt ausgeblendete Zeilen weg. Gelöschte Buchungen sind enthalten, mit dem Status voided."
+      "whisper": "Der Export lässt ausgeblendete Zeilen weg. Gelöschte Buchungen sind enthalten und haben in der Spalte „status“ den Wert „voided“."
     },
     "void": {
       "title": "Buchung löschen?",
@@ -1096,7 +1096,7 @@
     "csvMissingHeader": "Diese CSV-Datei hat keine Kopfzeile. Die erste Zeile muss die Spalten benennen.",
     "csvJournalExport": "Diese Datei ist ein Journal-Export von Oikonomia. Sie enthält Journalzeilen statt der Umsätze eines Kontos und lässt sich nicht als Kontoauszug importieren. Importieren Sie stattdessen eine CSV-Datei Ihrer Bank.",
     "csvMissingColumn": "Diese Journal-CSV-Datei hat keine Spalte „{column}“. Verwenden Sie eine aus Oikonomia exportierte Datei mit allen ihren Spalten.",
-    "csvInvalidStatus": "„{value}“ ist kein Journalstatus. Der Status muss posted oder voided sein.",
+    "csvInvalidStatus": "„{value}“ ist kein Journalstatus. Die Spalte „status“ muss „posted“ oder „voided“ enthalten.",
     "csvInvalidInteger": "„{value}“ ist keine ganze Zahl. Eine Journal-CSV-Datei enthält Beträge als ganze Zahlen in der kleinsten Währungseinheit (etwa Cent), zum Beispiel 1250 für 12,50.",
     "csvInvalidMapping": "Diese Spaltenauswahl konnte nicht verwendet werden. Prüfen Sie die Spalten und versuchen Sie es erneut.",
     "csvMapping": {

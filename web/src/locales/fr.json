@@ -902,7 +902,7 @@
       "badge": "Masquée"
     },
     "export": {
-      "whisper": "L’export laisse de côté les lignes masquées. Les écritures supprimées sont incluses, avec l’état voided."
+      "whisper": "L’export laisse de côté les lignes masquées. Les écritures supprimées sont incluses, avec la valeur « voided » dans la colonne « status »."
     },
     "void": {
       "title": "Supprimer l’écriture ?",
@@ -959,7 +959,7 @@
       },
       "continuePreview": "Continuer vers l’aperçu",
       "previewTitle": "Aperçu de l’import",
-      "otherCurrency": "Certains montants portent la mention « {marker} », alors que ce livre est en {currency}. Vérifiez que le fichier est en {currency} avant de comptabiliser.",
+      "otherCurrency": "Certains montants portent la mention « {marker} », alors que ce livre est en {currency}. Vérifiez que le fichier est en {currency} avant de comptabiliser.",
       "previewSubtitle": "{rows} · {dupes} · rien n’est enregistré avant votre confirmation",
       "rowOne": "{n} ligne",
       "rowMany": "{n} lignes",
@@ -1096,7 +1096,7 @@
     "csvMissingHeader": "Ce fichier CSV n’a pas de ligne d’en-tête. La première ligne doit nommer les colonnes.",
     "csvJournalExport": "Ce fichier est un export du journal d’Oikonomia. Il contient des lignes de journal et non les mouvements d’un compte, il ne peut donc pas être importé comme relevé bancaire. Importez plutôt un CSV de votre banque.",
     "csvMissingColumn": "Ce CSV du journal n’a pas de colonne « {column} ». Utilisez un fichier exporté depuis Oikonomia avec toutes ses colonnes.",
-    "csvInvalidStatus": "« {value} » n’est pas un état du journal. L’état doit être posted ou voided.",
+    "csvInvalidStatus": "« {value} » n’est pas un état du journal. La colonne « status » doit contenir « posted » ou « voided ».",
     "csvInvalidInteger": "« {value} » n’est pas un nombre entier. Un CSV du journal contient les montants en nombre entier d’unités divisionnaires (centimes, par exemple), soit 1250 pour 12,50.",
     "csvInvalidMapping": "Ces choix de colonnes n’ont pas pu être utilisés. Vérifiez les colonnes, puis réessayez.",
     "csvMapping": {

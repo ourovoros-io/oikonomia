@@ -115,11 +115,9 @@ export function ArcTile({
             </>
           )}
         </div>
-        <div
-          aria-hidden="true"
-          title={label}
-          className="mt-2 line-clamp-2 text-sm leading-tight font-medium text-[var(--color-fg)]"
-        >
+        {/* Not clamped: the label names the metric, so it shows in full even
+            when a long translation takes a third line. */}
+        <div aria-hidden="true" className="mt-2 text-sm leading-tight font-medium break-words hyphens-auto text-[var(--color-fg)]">
           {label}
         </div>
         {hint ? (

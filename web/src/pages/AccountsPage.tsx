@@ -103,6 +103,18 @@ function byCode(a: Account, b: Account): number {
   return a.code.localeCompare(b.code, undefined, { numeric: true })
 }
 
+/** Only open asset and liability accounts take a balance from the user. */
+function canSetBalance(account: Account): boolean {
+  return account.is_active && (account.account_type === 'asset' || account.account_type === 'liability')
+}
+
+/**
+ * The row's Set balance button keeps its label on one line: the button is a
+ * fixed height, so a wrapped Greek label would spill out of it. The minimum is
+ * the old fixed width, which the English label fits.
+ */
+const SET_BALANCE_CLASS = 'min-w-32 shrink-0 whitespace-nowrap'
+
 export function AccountsPage({ entity, onCreateBook }: Props) {
   const { t } = useI18n()
   const [accounts, setAccounts] = useState<Account[]>([])
@@ -675,25 +687,25 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
                   >
                     <Receipt className="size-4" />
                   </Button>
-                  {a.is_active &&
-                  (a.account_type === 'asset' || a.account_type === 'liability') ? (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="w-32 shrink-0"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        openBalance(a)
-                      }}
-                      aria-label={t('acct.setBalanceAria', { name: a.name })}
-                    >
-                      <Coins className="size-4" />
-                      {t('acct.setBalance')}
-                    </Button>
-                  ) : (
-                    // Keeps the actions in columns when a row has fewer of them.
-                    <span aria-hidden className="hidden w-32 shrink-0 sm:block" />
-                  )}
+                  {/* Rendered on every row, invisible where it does not apply,
+                      rather than a fixed-width spacer: the label's width
+                      changes with the language, and the actions must stay in
+                      columns. invisible already keeps it out of reach;
+                      aria-hidden says so to tools that do no layout. */}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className={cn(SET_BALANCE_CLASS, !canSetBalance(a) && 'invisible')}
+                    aria-hidden={canSetBalance(a) ? undefined : true}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      openBalance(a)
+                    }}
+                    aria-label={t('acct.setBalanceAria', { name: a.name })}
+                  >
+                    <Coins className="size-4" />
+                    {t('acct.setBalance')}
+                  </Button>
                   <Button
                     variant="ghost"
                     size="iconSm"
