@@ -81,7 +81,14 @@ vi.mock('./pages/ReportsPage', () => ({
 }))
 
 import { listen } from '@tauri-apps/api/event'
-import { appInfo, vaultPickBackup, vaultRestore, vaultStatus, vaultTouch } from './lib/tauri'
+import {
+  appInfo,
+  vaultPickBackup,
+  vaultRestore,
+  vaultStatus,
+  vaultTouch,
+  vaultUnlock,
+} from './lib/tauri'
 import { api } from './lib/api'
 import { resetI18nForTests } from './lib/i18n'
 import App from './App'
@@ -520,7 +527,54 @@ describe('App book selection', () => {
       'aria-current',
       'true',
     )
+    // The check that matters: the sidebar falls back to a book it holds
+    // either way, but the new book must not be remembered as the last one.
     expect(api.rememberLastEntity).not.toHaveBeenCalled()
+  })
+
+  /** Locks while on Settings, then unlocks with the book list held until `books` is handed over. */
+  async function unlockOntoSettings(books: Entity[]) {
+    render(<App />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Settings' }))
+    await waitFor(() => {
+      expect(listen).toHaveBeenCalledWith('vault-locked', expect.any(Function))
+    })
+    for (const handler of vaultLockedHandlers) handler()
+    await screen.findByRole('button', { name: 'Unlock' })
+
+    let finishLoading: (list: Entity[]) => void = () => undefined
+    vi.mocked(api.entityList).mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishLoading = resolve
+      }),
+    )
+    vi.mocked(vaultUnlock).mockResolvedValue('unlocked')
+    await userEvent.type(screen.getByLabelText('Password'), 'secret')
+    await userEvent.click(screen.getByRole('button', { name: 'Unlock' }))
+    // Settings is back while the list is still empty because it is not read yet.
+    await screen.findByRole('heading', { name: 'Settings' })
+    finishLoading(books)
+  }
+
+  test('unlocking back onto Settings keeps Books folded when there are books', async () => {
+    await unlockOntoSettings([entity])
+
+    await screen.findByRole('button', { name: 'Personal, EUR' })
+    expect(screen.getByRole('button', { name: /^books/i })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    )
+  })
+
+  test('unlocking back onto Settings opens Books once it is known there are none', async () => {
+    await unlockOntoSettings([])
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /^books/i })).toHaveAttribute(
+        'aria-expanded',
+        'true',
+      )
+    })
   })
 })
 

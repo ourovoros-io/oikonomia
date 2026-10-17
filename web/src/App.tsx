@@ -69,6 +69,9 @@ export default function App() {
   /** The preferences file is damaged and the notice has not been dismissed. */
   const [prefsNotice, setPrefsNotice] = useState(false)
   const [entities, setEntities] = useState<Entity[]>([])
+  // False until the books of this unlock are read: an empty list then means none yet known,
+  // not no books.
+  const [entitiesLoaded, setEntitiesLoaded] = useState(false)
   const [entityId, setEntityId] = useState<string | null>(null)
   const [lockTimeoutSecs, setLockTimeoutSecs] = useState(15 * 60)
   const [createBookIntent, setCreateBookIntent] = useState(0)
@@ -120,11 +123,19 @@ export default function App() {
     const list = await api.entityList()
     const remembered = await rememberedEntityId()
     setEntities(list)
+    setEntitiesLoaded(true)
     setEntityId((prev) => {
       if (prev && list.some((e) => e.id === prev)) return prev
       if (remembered && list.some((e) => e.id === remembered)) return remembered
       return list[0]?.id ?? null
     })
+  }, [])
+
+  // A locked vault shows no book, and the next unlock reads them again.
+  const forgetEntities = useCallback(() => {
+    setEntities([])
+    setEntitiesLoaded(false)
+    setEntityId(null)
   }, [])
 
   const selectEntity = useCallback((id: string) => {
@@ -186,8 +197,9 @@ export default function App() {
     }
   }
 
-  // Only a book the reloaded list holds is made current: after a failed reload
-  // the current book stays, rather than one the sidebar does not show.
+  // Only a book the reloaded list holds is made current. After a failed reload
+  // the current book stays: choosing the new one would remember a book the
+  // list does not hold, and the sidebar would quietly show another.
   async function makeCreatedEntityCurrent(id: string) {
     if (await reloadEntities()) selectEntity(id)
   }
@@ -202,8 +214,7 @@ export default function App() {
 
     void listen('vault-locked', () => {
       setStatus('locked')
-      setEntities([])
-      setEntityId(null)
+      forgetEntities()
     }).then((fn) => {
       if (cancelled) fn()
       else unlisten = fn
@@ -213,7 +224,7 @@ export default function App() {
       cancelled = true
       unlisten?.()
     }
-  }, [])
+  }, [forgetEntities])
 
   // Fast-path idle timer, plus a throttled heartbeat so the Rust watchdog
   // counts UI activity (mouse/keyboard) as activity, not just commands.
@@ -251,8 +262,7 @@ export default function App() {
     try {
       const next = await vaultLock()
       setStatus(next)
-      setEntities([])
-      setEntityId(null)
+      forgetEntities()
     } catch (err) {
       setError(commandErrorMessage(err, 'app.failedLock'))
     } finally {
@@ -496,6 +506,7 @@ export default function App() {
                   {active === 'settings' ? (
                     <SettingsPage
                       entities={entities}
+                      entitiesLoaded={entitiesLoaded}
                       appInfo={info}
                       createBookIntent={createBookIntent}
                       onCreateBookIntentHandled={onCreateBookIntentHandled}

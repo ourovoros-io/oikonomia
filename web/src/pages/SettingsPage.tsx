@@ -65,6 +65,8 @@ import { useDialogError } from '../lib/useDialogError'
 
 type Props = {
   entities: Entity[]
+  /** False while App is still reading the books, right after an unlock. */
+  entitiesLoaded?: boolean
   /** False when no vault files exist. Settings is normally only mounted unlocked. */
   vaultPresent?: boolean
   onEntitiesChange: () => Promise<void>
@@ -132,6 +134,7 @@ function passwordFieldForCode(code: string | undefined): 'current' | 'new' | nul
 
 export function SettingsPage({
   entities,
+  entitiesLoaded = true,
   vaultPresent = true,
   onEntitiesChange,
   onEntityCreated,
@@ -194,10 +197,11 @@ export function SettingsPage({
   const newEntityAnchorRef = useRef<HTMLDivElement>(null)
   // The book list is open when the page was opened to add a book, so the new
   // book is in view, and when there is no book yet, so the way to add one is
-  // in view; otherwise it starts folded like the other sections.
-  const [entitiesOpenAtStart] = useState(
-    () => Boolean(createBookIntent) || entities.length === 0,
-  )
+  // in view; otherwise it starts folded like the other sections. Whether there
+  // is a book is only known once the books are read, so the section is
+  // mounted again then (keyed on entitiesLoaded) to decide afresh.
+  const [openedToAddBook] = useState(() => Boolean(createBookIntent))
+  const entitiesOpenAtStart = openedToAddBook || (entitiesLoaded && entities.length === 0)
   const [newBookId, setNewBookId] = useState<string | null>(null)
   const [renameTarget, setRenameTarget] = useState<Entity | null>(null)
 
@@ -298,12 +302,13 @@ export function SettingsPage({
         chart_template: template,
         fiscal_year_start_month: 1,
       })
-      setName('')
-      // The chart is a choice about this one book, unlike the currency, which
-      // the session remembers: the next book starts from the default again.
-      setTemplate(DEFAULT_TEMPLATE)
       await onEntityCreated(entity.id)
       setShowCreate(false)
+      // Cleared once the dialog is closed, so its fields do not change under
+      // the user while the books reload. The chart is a choice about this one
+      // book, unlike the currency, which the session remembers.
+      setName('')
+      setTemplate(DEFAULT_TEMPLATE)
       // The new book is the one the user means to work in next, so it becomes
       // current, but this page stays: adding several books should not take a
       // trip to each one's Dashboard. The new book is marked in the list too.
@@ -868,6 +873,7 @@ export function SettingsPage({
       </Modal>
 
       <CollapsibleSection
+        key={entitiesLoaded ? 'books-loaded' : 'books-loading'}
         title={t('settings.entities.title')}
         description={
           entities.length === 0
