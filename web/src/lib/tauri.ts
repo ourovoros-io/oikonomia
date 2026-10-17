@@ -1,4 +1,5 @@
 import { Channel, invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { asCommandError } from './commandError'
 import {
   failedWithCode,
@@ -56,6 +57,32 @@ export type CommandError = {
 /** True when running inside the Tauri webview (not a plain browser tab). */
 export function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+}
+
+/**
+ * Calls `handle` with the payload of each `event` Rust sends this window, and
+ * returns a function that stops listening. Made for an effect's cleanup: it
+ * works even when called before the listener is in place, which `listen`
+ * sets up asynchronously. Outside the desktop app nothing is ever sent.
+ */
+export function onTauriEvent(event: string, handle: (payload: unknown) => void): () => void {
+  if (!isTauri()) return () => {}
+
+  let stop: (() => void) | undefined
+  let stopped = false
+  listen(event, (sent) => handle(sent.payload)).then(
+    (unlisten) => {
+      // Stopped before the listener was in place: remove it at once.
+      if (stopped) unlisten()
+      else stop = unlisten
+    },
+    (err: unknown) => console.warn(`Could not listen for "${event}"`, err),
+  )
+
+  return () => {
+    stopped = true
+    stop?.()
+  }
 }
 
 export async function vaultStatus(): Promise<VaultStatus> {

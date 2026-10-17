@@ -8,15 +8,12 @@ import type { Entity } from './lib/api'
 
 const vaultLockedHandlers: Array<() => void> = []
 
-vi.mock('@tauri-apps/api/event', () => ({
-  listen: vi.fn(async (event: string, handler: () => void) => {
-    if (event === 'vault-locked') vaultLockedHandlers.push(handler)
-    return () => {}
-  }),
-}))
-
 vi.mock('./lib/tauri', () => ({
   isTauri: () => true,
+  onTauriEvent: vi.fn((event: string, handle: (payload: unknown) => void) => {
+    if (event === 'vault-locked') vaultLockedHandlers.push(() => handle(null))
+    return () => {}
+  }),
   vaultStatus: vi.fn(),
   appInfo: vi.fn(),
   vaultLock: vi.fn(),
@@ -85,9 +82,9 @@ vi.mock('./pages/ReportsPage', () => ({
   ReportsPage: () => <input aria-label="Stub page state" />,
 }))
 
-import { listen } from '@tauri-apps/api/event'
 import {
   appInfo,
+  onTauriEvent,
   vaultPickBackup,
   vaultRestore,
   vaultStatus,
@@ -130,7 +127,7 @@ beforeEach(() => {
   vi.mocked(api.entityListArchived).mockReset().mockResolvedValue([])
   vi.mocked(api.entityArchive).mockReset().mockResolvedValue(undefined)
   vi.mocked(api.rememberLastEntity).mockReset().mockResolvedValue(undefined)
-  vi.mocked(listen).mockClear()
+  vi.mocked(onTauriEvent).mockClear()
 })
 
 describe('App restore-while-unlocked', () => {
@@ -140,7 +137,7 @@ describe('App restore-while-unlocked', () => {
       expect(screen.getByRole('button', { name: 'Settings' })).toBeTruthy()
     })
     await waitFor(() => {
-      expect(listen).toHaveBeenCalledWith('vault-locked', expect.any(Function))
+      expect(onTauriEvent).toHaveBeenCalledWith('vault-locked', expect.any(Function))
     })
 
     await userEvent.click(screen.getByRole('button', { name: 'Settings' }))
@@ -597,7 +594,7 @@ describe('App book selection', () => {
     render(<App />)
     await userEvent.click(await screen.findByRole('button', { name: 'Settings' }))
     await waitFor(() => {
-      expect(listen).toHaveBeenCalledWith('vault-locked', expect.any(Function))
+      expect(onTauriEvent).toHaveBeenCalledWith('vault-locked', expect.any(Function))
     })
     for (const handler of vaultLockedHandlers) handler()
     await screen.findByRole('button', { name: 'Unlock' })

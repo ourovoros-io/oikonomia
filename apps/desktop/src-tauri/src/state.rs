@@ -134,8 +134,10 @@ impl AppState {
     ///
     /// Held across the three steps, so that a language change and a quick-add
     /// post cannot each load the old file and write over the other's change.
-    /// Recovers from poisoning: the mutex guards no data, only the order of file
-    /// operations.
+    /// It is taken only on the blocking pool, never on the main thread, so a
+    /// holder may wait on the main thread (`commands::settings` rebuilds the
+    /// tray menu under it). Recovers from poisoning: the mutex guards no data,
+    /// only the order of file operations.
     pub(crate) fn lock_prefs(&self) -> MutexGuard<'_, ()> {
         match self.prefs_lock.lock() {
             Ok(guard) => guard,

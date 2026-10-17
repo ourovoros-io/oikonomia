@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { listen } from '@tauri-apps/api/event'
 import { api, formatMoney } from './lib/api'
-import { isTauri, vaultStatus, vaultTouch, type VaultStatus } from './lib/tauri'
+import { onTauriEvent, vaultStatus, vaultTouch, type VaultStatus } from './lib/tauri'
 import { Button } from './components/ui'
 import { trapTab } from './components/useDialogFocus'
 import {
@@ -61,33 +60,25 @@ export default function QuickAddApp() {
       .catch(() => setStatus('locked'))
   }, [])
 
-  useEffect(() => {
-    if (!isTauri()) return
-    let unlisten: (() => void) | undefined
-    let cancelled = false
-    void listen('vault-locked', () => {
-      busyRef.current = false
-      if (successTimerRef.current) {
-        clearTimeout(successTimerRef.current)
-        successTimerRef.current = null
-      }
-      if (blurHideTimerRef.current) {
-        clearTimeout(blurHideTimerRef.current)
-        blurHideTimerRef.current = null
-      }
-      void setQuickAddHeight(QUICK_ADD_COMPACT_HEIGHT)
-      setStatus('locked')
-      setPosted(null)
-      setFormEpoch((n) => n + 1)
-    }).then((fn) => {
-      if (cancelled) fn()
-      else unlisten = fn
-    })
-    return () => {
-      cancelled = true
-      unlisten?.()
-    }
-  }, [])
+  useEffect(
+    () =>
+      onTauriEvent('vault-locked', () => {
+        busyRef.current = false
+        if (successTimerRef.current) {
+          clearTimeout(successTimerRef.current)
+          successTimerRef.current = null
+        }
+        if (blurHideTimerRef.current) {
+          clearTimeout(blurHideTimerRef.current)
+          blurHideTimerRef.current = null
+        }
+        void setQuickAddHeight(QUICK_ADD_COMPACT_HEIGHT)
+        setStatus('locked')
+        setPosted(null)
+        setFormEpoch((n) => n + 1)
+      }),
+    [],
+  )
 
   useEffect(() => {
     if (status !== 'unlocked') return

@@ -370,6 +370,26 @@ describe('I18nProvider', () => {
       expect(getLocale()).toBe('fr')
     })
 
+    test('wins over the read the window started with, when it arrives first', async () => {
+      let finishResolve: (stored: Locale) => void = () => undefined
+      vi.mocked(api.resolveLocale).mockReturnValue(
+        new Promise<Locale>((resolve) => {
+          finishResolve = resolve
+        }),
+      )
+      render(
+        <I18nProvider>
+          <Probe />
+        </I18nProvider>,
+      )
+
+      act(() => sendLocale('de'))
+      await act(async () => finishResolve('en'))
+
+      expect(getLocale()).toBe('de')
+      expect(screen.getByText('de')).toBeTruthy()
+    })
+
     test('stops arriving once the provider is gone', async () => {
       await renderHydrated('en')
       expect(api.onLocaleChanged).toHaveBeenCalledTimes(1)

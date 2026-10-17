@@ -1,7 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
 import { asCommandError, errorReport } from './commandError'
-import { isTauri } from './tauri'
+import { isTauri, onTauriEvent } from './tauri'
 import type { UiText } from './uiText'
 
 export type ChartTemplate = 'personal' | 'company' | 'blank'
@@ -408,27 +407,13 @@ function logFrontendError(location: FrontendErrorLocation, error: unknown): void
 }
 
 /**
- * Calls `apply` with each language the backend stores, whichever window
- * changed it: Rust sends `locale-changed` (`LOCALE_CHANGED` in
+ * Calls `apply` with each language the backend puts into effect, whichever
+ * window changed it: Rust sends `locale-changed` (`LOCALE_CHANGED` in
  * `commands/settings.rs`) to every window. The payload is passed on as sent,
- * for the caller to parse. Returns a function that stops listening; outside
- * the desktop app nothing is ever sent.
+ * for the caller to parse. Returns a function that stops listening.
  */
 function onLocaleChanged(apply: (locale: unknown) => void): () => void {
-  if (!isTauri()) return () => {}
-
-  let stop: (() => void) | undefined
-  let stopped = false
-  void listen('locale-changed', (event) => apply(event.payload)).then((unlisten) => {
-    // Stopped before the listener was in place: remove it at once.
-    if (stopped) unlisten()
-    else stop = unlisten
-  })
-
-  return () => {
-    stopped = true
-    stop?.()
-  }
+  return onTauriEvent('locale-changed', apply)
 }
 
 export const api = {
