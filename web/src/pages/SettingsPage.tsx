@@ -65,9 +65,14 @@ import { useDialogError } from '../lib/useDialogError'
 
 type Props = {
   entities: Entity[]
+  /** False while App is still reading the books, right after an unlock. */
+  entitiesLoaded?: boolean
   /** False when no vault files exist. Settings is normally only mounted unlocked. */
   vaultPresent?: boolean
   onEntitiesChange: () => Promise<void>
+  /** Reloads the books and makes the new one current, without leaving this page. */
+  onEntityCreated: (id: string) => Promise<void>
+  /** Opens a book: makes it current and goes to its Dashboard. */
   onSelectEntity: (id: string) => void
   onLockTimeoutChange?: (secs: number) => void
   /** Bumped by App's empty-state CTAs to pop the new-entity form open and scroll to it. */
@@ -77,6 +82,8 @@ type Props = {
   /** Build identity from Rust `app_info`; the support address rides on it. Null until App has fetched it. */
   appInfo?: AppInfo | null
 }
+
+const DEFAULT_TEMPLATE: ChartTemplate = 'personal'
 
 const TEMPLATES: Array<{
   id: ChartTemplate
@@ -127,8 +134,10 @@ function passwordFieldForCode(code: string | undefined): 'current' | 'new' | nul
 
 export function SettingsPage({
   entities,
+  entitiesLoaded = true,
   vaultPresent = true,
   onEntitiesChange,
+  onEntityCreated,
   onSelectEntity,
   onLockTimeoutChange,
   createBookIntent,
@@ -147,7 +156,7 @@ export function SettingsPage({
   const [mailTried, setMailTried] = useState(false)
   const [name, setName] = useState('')
   const [currency, setCurrency] = useState(rememberedBookCurrency)
-  const [template, setTemplate] = useState<ChartTemplate>('personal')
+  const [template, setTemplate] = useState<ChartTemplate>(DEFAULT_TEMPLATE)
   const [busy, setBusy] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
   const [lockMins, setLockMins] = useState(15)
@@ -187,8 +196,12 @@ export function SettingsPage({
   const [restorePicking, setRestorePicking] = useState(false)
   const newEntityAnchorRef = useRef<HTMLDivElement>(null)
   // The book list is open when the page was opened to add a book, so the new
-  // book is in view; otherwise it starts folded like the other sections.
-  const [entitiesOpenAtStart] = useState(() => Boolean(createBookIntent))
+  // book is in view, and when there is no book yet, so the way to add one is
+  // in view; otherwise it starts folded like the other sections. Whether there
+  // is a book is only known once the books are read, so the section is
+  // mounted again then (keyed on entitiesLoaded) to decide afresh.
+  const [openedToAddBook] = useState(() => Boolean(createBookIntent))
+  const entitiesOpenAtStart = openedToAddBook || (entitiesLoaded && entities.length === 0)
   const [newBookId, setNewBookId] = useState<string | null>(null)
   const [renameTarget, setRenameTarget] = useState<Entity | null>(null)
 
@@ -289,11 +302,16 @@ export function SettingsPage({
         chart_template: template,
         fiscal_year_start_month: 1,
       })
-      setName('')
-      await onEntitiesChange()
+      await onEntityCreated(entity.id)
       setShowCreate(false)
-      // Stay here: adding several books should not take a trip to each
-      // one's Dashboard. The new book is marked in the list instead.
+      // Cleared once the dialog is closed, so its fields do not change under
+      // the user while the books reload. The chart is a choice about this one
+      // book, unlike the currency, which the session remembers.
+      setName('')
+      setTemplate(DEFAULT_TEMPLATE)
+      // The new book is the one the user means to work in next, so it becomes
+      // current, but this page stays: adding several books should not take a
+      // trip to each one's Dashboard. The new book is marked in the list too.
       setNewBookId(entity.id)
       setCreatedBook(entity.name)
     } catch (err) {
@@ -855,6 +873,7 @@ export function SettingsPage({
       </Modal>
 
       <CollapsibleSection
+        key={entitiesLoaded ? 'books-loaded' : 'books-loading'}
         title={t('settings.entities.title')}
         description={
           entities.length === 0

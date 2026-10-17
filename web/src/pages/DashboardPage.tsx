@@ -40,7 +40,7 @@ import {
 import { cn } from '../lib/cn'
 import { commandErrorMessage } from '../lib/commandError'
 import { useI18n } from '../lib/I18nProvider'
-import { tn } from '../lib/i18n'
+import { tn, type Locale } from '../lib/i18n'
 
 type Props = { entity: Entity | null; onCreateBook?: () => void }
 
@@ -55,12 +55,12 @@ type ActivityRow = {
 }
 
 /** One row of Recent activity, labelled with the kind core lists the entry as. */
-function activityRow(view: PostedEntryView): ActivityRow {
+function activityRow(view: PostedEntryView, locale: Locale): ActivityRow {
   const amount = view.lines.reduce((s, l) => s + l.debit.amount_minor, 0)
   const kind = view.listed_kind
   return {
     id: view.entry.id,
-    date: formatDate(view.entry.entry_date),
+    date: formatDate(view.entry.entry_date, locale),
     description: view.entry.description,
     signedMinor: isMoneyOut(kind) ? -amount : amount,
     kind,
@@ -143,8 +143,8 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
     return entries
       .filter((e) => !e.is_voided)
       .slice(0, 8)
-      .map(activityRow)
-  }, [entries])
+      .map((e) => activityRow(e, locale))
+  }, [entries, locale])
 
   if (!entity) {
     return (
@@ -247,7 +247,9 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
         />
       </Hero>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* Four across only from xl: below it a tile leaves its label a column
+          too narrow for one Greek or French word. */}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <ArcTile
           label={t('dashboard.arc.savings.label')}
           hint={t('dashboard.arc.savings.hint')}

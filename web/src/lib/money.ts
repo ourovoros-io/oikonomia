@@ -1,4 +1,4 @@
-import { getLocale } from './i18n'
+import { getLocale, type Locale } from './i18n'
 
 /**
  * A currency as core describes it: its code, and how many decimals one minor
@@ -175,13 +175,30 @@ function dateParts(value: unknown): { y: number; m: number; d: number } | null {
 }
 
 /**
- * Render entry dates from Rust the European / Greek way: `dd/mm/yyyy`.
+ * The mark between day, month and year in each app language.
+ *
+ * Only the mark follows the language; the order is day-month-year in every
+ * language. Intl's date pattern is not used because for English it is the
+ * US month-first order.
+ */
+const DATE_SEPARATORS: Record<Locale, string> = {
+  en: '/',
+  el: '/',
+  fr: '/',
+  de: '.',
+}
+
+/**
+ * Render an entry date from Rust as day-month-year: `16/10/2026`, or
+ * `16.10.2026` in German, after the app language by default.
  * Display only — anything sent back to the API stays ISO.
  */
-export function formatDate(value: unknown): string {
+export function formatDate(value: unknown, locale: Locale = getLocale()): string {
   const p = dateParts(value)
   if (!p) return typeof value === 'string' ? value : String(value ?? '')
-  return `${pad2(p.d)}/${pad2(p.m)}/${p.y}`
+
+  const separator = DATE_SEPARATORS[locale]
+  return `${pad2(p.d)}${separator}${pad2(p.m)}${separator}${p.y}`
 }
 
 /** Normalize an entry date to ISO `YYYY-MM-DD` (for date inputs). */
@@ -201,8 +218,10 @@ export function daysInMonth(y: number, m: number): number {
 }
 
 /**
- * Parse a user-typed European date — `dd/mm/yyyy`, tolerant of `d.m.yy` and
- * dashes, with ISO accepted as a fallback — into ISO `YYYY-MM-DD`.
+ * Parse a user-typed day-month-year date into ISO `YYYY-MM-DD`. Slashes, dots
+ * and dashes are accepted whatever the app language (`16/10/2026`,
+ * `16.10.26`), so a date written the way another language writes it still
+ * reads; ISO is accepted as a fallback.
  * Returns null when the input is not a real calendar date.
  */
 export function parseEuropeanDateToISO(input: string): string | null {

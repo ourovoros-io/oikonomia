@@ -3,14 +3,17 @@ import { parseMajorToMinor } from './amountParse'
 import {
   amountProblemKey,
   bookCurrency,
+  daysInMonth,
   formatDate,
   formatMoney,
   isoDate,
+  MAX_YEAR,
+  MIN_YEAR,
   minorToInputText,
   parseEuropeanDateToISO,
   type Currency,
 } from './money'
-import { applyLocale, resetI18nForTests, type Locale } from './i18n'
+import { applyLocale, LOCALES, resetI18nForTests, type Locale } from './i18n'
 import { formatPercent } from './arc'
 
 const EUR: Currency = { code: 'EUR', decimals: 2 }
@@ -164,6 +167,8 @@ describe('bookCurrency', () => {
 })
 
 describe('formatDate', () => {
+  afterEach(() => resetI18nForTests())
+
   test('renders ISO strings as dd/mm/yyyy', () => {
     expect(formatDate('2026-03-15')).toBe('15/03/2026')
     expect(formatDate('2026-03-15T00:00:00')).toBe('15/03/2026')
@@ -177,6 +182,49 @@ describe('formatDate', () => {
   test('leaves non-date strings untouched', () => {
     expect(formatDate('yesterday')).toBe('yesterday')
   })
+
+  // Day first in every language, English included: only the separator moves.
+  test.each<[Locale, string]>([
+    ['en', '16/10/2026'],
+    ['el', '16/10/2026'],
+    ['fr', '16/10/2026'],
+    ['de', '16.10.2026'],
+  ])('%s writes the date as %s', (locale, expected) => {
+    applyLocale(locale)
+
+    expect(formatDate('2026-10-16')).toBe(expected)
+    expect(formatDate('2026-10-16', locale)).toBe(expected)
+  })
+})
+
+describe('a shown date reads back', () => {
+  function* everyDay(): Generator<string> {
+    for (let y = MIN_YEAR; y <= MAX_YEAR; y++) {
+      for (let m = 1; m <= 12; m++) {
+        for (let d = 1; d <= daysInMonth(y, m); d++) {
+          yield `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+        }
+      }
+    }
+  }
+
+  test.each(LOCALES)('every supported day survives formatting and parsing in %s', (locale) => {
+    for (const iso of everyDay()) {
+      const shown = formatDate(iso, locale)
+      if (parseEuropeanDateToISO(shown) !== iso) {
+        expect.fail(`${iso} shown as ${shown} in ${locale} did not read back`)
+      }
+    }
+  })
+
+  // The parser takes no language, so a date typed the way any language
+  // writes it reads in all of them.
+  test.each(['16/10/2026', '16.10.2026', '16-10-2026', '16.10.26', '2026-10-16'])(
+    '%s reads as 16 October 2026',
+    (typed) => {
+      expect(parseEuropeanDateToISO(typed)).toBe('2026-10-16')
+    },
+  )
 })
 
 describe('isoDate', () => {

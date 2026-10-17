@@ -117,7 +117,7 @@ fn start(app: &mut tauri::App) -> Result<(), StartupError> {
     // The tray menu is worded in the stored language; the webview applies
     // its own copy of the preference later.
     let prefs = oikonomia_core::prefs::load_ui_prefs(app_state.data_dir());
-    tray::init(app, prefs.locale()).map_err(StartupError::Shell)?;
+    tray::install(app, prefs.locale());
 
     // Rust-side idle lock: guarantees the vault locks even if the
     // webview throttles timers or stalls entirely. Started before the state
@@ -205,10 +205,9 @@ fn on_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
 /// running app's main window and exit.
 ///
 /// Registered before every other plugin so the second process stops before
-/// it creates a window or touches the vault directory. Without it, closing
-/// the window to the tray on a desktop that shows no tray (stock GNOME) would
-/// leave the app running with no way back in, and a relaunch would open the
-/// same vault from two processes.
+/// it creates a window or touches the vault directory. Without it, a relaunch
+/// while the window is hidden in the tray would open the same vault from two
+/// processes.
 #[cfg(any(target_os = "windows", target_os = "linux"))]
 fn with_single_instance(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
     builder.plugin(tauri_plugin_single_instance::init(
@@ -332,49 +331,56 @@ fn ipc_commands() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
     ]
 }
 
-/// What a close request does to a window instead of closing it.
+/// What a close request does to a window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CloseAction {
-    /// Hide the window; the tray menu or a relaunch brings it back.
-    HideToTray,
-    /// Minimize the window, which the taskbar or the window switcher restores.
-    Minimize,
+    /// Hide the window and keep the app running; the tray menu, a relaunch
+    /// or (on macOS) the Dock icon brings it back.
+    Hide,
+    /// Exit the app.
+    Quit,
 }
 
 impl CloseAction {
     /// Returns what closing the window labelled `label` does.
     ///
-    /// A Linux desktop can show no tray at all (stock GNOME has no
-    /// `AppIndicator` host) and the app cannot tell, so a hidden main window
-    /// could be left running with nothing to bring it back or to quit it.
-    /// There the main window is minimized, which every desktop can undo.
-    fn for_window(label: &str, on_linux: bool) -> Self {
-        if on_linux && label == "main" {
-            Self::Minimize
+    /// The quick-add window is always hidden: the tray reopens it, and the
+    /// main window is still there. The main window is hidden only when
+    /// something can bring it back and quit the app: a usable tray, or the
+    /// Dock on macOS (`dock_reopens`). Otherwise a hidden main window would
+    /// leave the app running with no window and no way to quit it, so
+    /// closing it quits.
+    ///
+    /// `tray_usable` is called only when the answer decides the action,
+    /// because on Linux it asks the session bus ([`tray::is_usable`]).
+    fn for_window(label: &str, dock_reopens: bool, tray_usable: impl FnOnce() -> bool) -> Self {
+        if label != tray::MAIN_WINDOW_LABEL || dock_reopens || tray_usable() {
+            Self::Hide
         } else {
-            Self::HideToTray
+            Self::Quit
         }
     }
 }
 
-/// Handles a window event: a close request keeps the app running (see
-/// [`CloseAction`]), and a file drop is recorded as a grant.
-///
-/// Closing does not quit; Quit is in the tray menu and on the system's quit
-/// shortcut.
+/// Handles a window event: a close request is decided by [`CloseAction`],
+/// and a file drop is recorded as a grant.
 fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
-    // Closing the window keeps the app running instead of quitting;
-    // Quit lives in the tray menu (or Cmd+Q).
     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+        // Letting the main window close would not end the process while the
+        // hidden quick-add window exists, so quitting goes through `exit`.
         api.prevent_close();
 
-        let action = CloseAction::for_window(window.label(), cfg!(target_os = "linux"));
-        let kept = match action {
-            CloseAction::HideToTray => window.hide(),
-            CloseAction::Minimize => window.minimize(),
-        };
-        if let Err(err) = kept {
-            log::warn!("failed to {action:?} the window on close: {err}");
+        let app = window.app_handle();
+        let dock_reopens = cfg!(target_os = "macos");
+        let action = CloseAction::for_window(window.label(), dock_reopens, || tray::is_usable(app));
+
+        match action {
+            CloseAction::Hide => {
+                if let Err(err) = window.hide() {
+                    log::warn!("failed to hide the window on close: {err}");
+                }
+            }
+            CloseAction::Quit => app.exit(0),
         }
     }
 
@@ -398,26 +404,51 @@ fn record_native_drops(window: &tauri::Window, event: &tauri::WindowEvent) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
 
     #[test]
-    fn closing_the_main_window_minimizes_it_on_linux_and_hides_it_elsewhere() {
-        assert_eq!(CloseAction::for_window("main", true), CloseAction::Minimize);
+    fn closing_the_main_window_hides_it_while_the_tray_is_usable() {
         assert_eq!(
-            CloseAction::for_window("main", false),
-            CloseAction::HideToTray
+            CloseAction::for_window(tray::MAIN_WINDOW_LABEL, false, || true),
+            CloseAction::Hide
         );
     }
 
     #[test]
-    fn closing_the_quick_add_window_hides_it_everywhere() {
-        // It cannot be minimized, and it has no taskbar entry to restore it.
+    fn closing_the_main_window_quits_without_a_usable_tray() {
         assert_eq!(
-            CloseAction::for_window("quick-add", true),
-            CloseAction::HideToTray
+            CloseAction::for_window(tray::MAIN_WINDOW_LABEL, false, || false),
+            CloseAction::Quit
         );
-        assert_eq!(
-            CloseAction::for_window("quick-add", false),
-            CloseAction::HideToTray
+    }
+
+    #[test]
+    fn closing_the_main_window_hides_it_where_the_dock_reopens_it() {
+        let asked = Cell::new(false);
+        let action = CloseAction::for_window(tray::MAIN_WINDOW_LABEL, true, || {
+            asked.set(true);
+            false
+        });
+
+        assert_eq!(action, CloseAction::Hide);
+        assert!(
+            !asked.get(),
+            "the tray does not decide where the Dock reopens"
         );
+    }
+
+    #[test]
+    fn closing_the_quick_add_window_hides_it_without_asking_about_the_tray() {
+        // It has no taskbar entry, and the main window is still there.
+        for dock_reopens in [false, true] {
+            let asked = Cell::new(false);
+            let action = CloseAction::for_window("quick-add", dock_reopens, || {
+                asked.set(true);
+                false
+            });
+
+            assert_eq!(action, CloseAction::Hide);
+            assert!(!asked.get(), "the tray does not decide for quick add");
+        }
     }
 }

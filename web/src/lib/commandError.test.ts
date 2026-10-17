@@ -218,7 +218,7 @@ describe('command error localization', () => {
     )
     expect(
       commandErrorMessage({ code: 'csv_invalid_date', message: 'raw', params: { value: '31/31/2026' } }),
-    ).toBe('"31/31/2026" is not a valid date.')
+    ).toBe('“31/31/2026” is not a valid date.')
   })
 
   it('has a sentence for every mapping problem Rust names, in every language', () => {
@@ -293,6 +293,12 @@ describe('command error localization', () => {
     expect(cut).toContain(`“${'x'.repeat(FILE_TEXT_LIMIT)}…”`)
     expect(cut).not.toContain('x'.repeat(FILE_TEXT_LIMIT + 1))
     expect(markup).toContain('“<b>posted</b>”')
+  })
+
+  it('names the literal status column values a re-import accepts', () => {
+    expect(commandErrorMessage({ code: 'csv_invalid_status', message: 'raw', params: { value: 'void' } })).toBe(
+      '“void” is not a journal status. The “status” column must contain “posted” or “voided”.',
+    )
   })
 
   it('fills the copy in from the error params', () => {

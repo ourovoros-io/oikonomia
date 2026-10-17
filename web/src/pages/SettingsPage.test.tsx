@@ -84,6 +84,7 @@ describe('SettingsPage', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -100,6 +101,7 @@ describe('SettingsPage', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -118,6 +120,7 @@ describe('SettingsPage', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -134,6 +137,7 @@ describe('SettingsPage', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -146,7 +150,7 @@ describe('SettingsPage', () => {
     expect(newEntity).not.toHaveAttribute('title')
   })
 
-  test('creating a book sends the form payload and stays on Settings', async () => {
+  test('creating a book makes it current and stays on Settings', async () => {
     vi.mocked(api.entityCreate).mockResolvedValue({
       id: 'e2',
       name: 'Work',
@@ -155,12 +159,13 @@ describe('SettingsPage', () => {
       fiscal_year_start_month: 1,
       chart_template: 'personal',
     })
-    const onEntitiesChange = vi.fn(noopAsync)
+    const onEntityCreated = vi.fn(noopAsync)
     const onSelectEntity = vi.fn()
     render(
       <SettingsPage
         entities={[entity]}
-        onEntitiesChange={onEntitiesChange}
+        onEntitiesChange={noopAsync}
+        onEntityCreated={onEntityCreated}
         onSelectEntity={onSelectEntity}
       />,
     )
@@ -178,7 +183,8 @@ describe('SettingsPage', () => {
       chart_template: 'personal',
       fiscal_year_start_month: 1,
     })
-    expect(onEntitiesChange).toHaveBeenCalledTimes(1)
+    expect(onEntityCreated).toHaveBeenCalledExactlyOnceWith('e2')
+    // Opening a book also goes to its Dashboard; a new book only becomes current.
     expect(onSelectEntity).not.toHaveBeenCalled()
   })
 
@@ -188,12 +194,13 @@ describe('SettingsPage', () => {
       message: 'the name "Personal" is already in use',
       params: { name: 'Personal' },
     })
-    const onEntitiesChange = vi.fn(noopAsync)
+    const onEntityCreated = vi.fn(noopAsync)
     const onSelectEntity = vi.fn()
     render(
       <SettingsPage
         entities={[entity]}
-        onEntitiesChange={onEntitiesChange}
+        onEntitiesChange={noopAsync}
+        onEntityCreated={onEntityCreated}
         onSelectEntity={onSelectEntity}
       />,
     )
@@ -208,7 +215,7 @@ describe('SettingsPage', () => {
     ).toBeInTheDocument()
     expect(screen.queryByText(/is already in use$/)).toBeNull()
     expect(api.entityCreate).toHaveBeenCalledTimes(1)
-    expect(onEntitiesChange).not.toHaveBeenCalled()
+    expect(onEntityCreated).not.toHaveBeenCalled()
     expect(onSelectEntity).not.toHaveBeenCalled()
   })
 
@@ -219,7 +226,12 @@ describe('SettingsPage', () => {
       params: { name: 'Personal' },
     })
     render(
-      <SettingsPage entities={[entity]} onEntitiesChange={vi.fn(noopAsync)} onSelectEntity={vi.fn()} />,
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={vi.fn(noopAsync)}
+        onEntityCreated={async () => {}}
+        onSelectEntity={vi.fn()}
+      />,
     )
 
     await userEvent.click(screen.getByRole('button', { name: /^books/i }))
@@ -236,7 +248,12 @@ describe('SettingsPage', () => {
 
   test('an empty entity name is reported in the app own words', async () => {
     render(
-      <SettingsPage entities={[entity]} onEntitiesChange={vi.fn(noopAsync)} onSelectEntity={vi.fn()} />,
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={vi.fn(noopAsync)}
+        onEntityCreated={async () => {}}
+        onSelectEntity={vi.fn()}
+      />,
     )
 
     await userEvent.click(screen.getByRole('button', { name: /^books/i }))
@@ -257,7 +274,12 @@ describe('SettingsPage', () => {
       message: 'UNIQUE constraint failed: entities.name',
     })
     render(
-      <SettingsPage entities={[entity]} onEntitiesChange={vi.fn(noopAsync)} onSelectEntity={vi.fn()} />,
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={vi.fn(noopAsync)}
+        onEntityCreated={async () => {}}
+        onSelectEntity={vi.fn()}
+      />,
     )
 
     await userEvent.click(screen.getByRole('button', { name: /^books/i }))
@@ -276,6 +298,7 @@ describe('SettingsPage', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
         appInfo={appInfo}
       />,
@@ -298,6 +321,7 @@ describe('SettingsPage', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
         appInfo={appInfo}
       />,
@@ -317,6 +341,7 @@ describe('SettingsPage', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -332,6 +357,7 @@ describe('SettingsPage hidden chrome HOLD', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -347,6 +373,7 @@ describe('SettingsPage vault backup', () => {
       <SettingsPage
         entities={[]}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -367,6 +394,7 @@ describe('SettingsPage vault backup', () => {
         entities={[]}
         vaultPresent={false}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -384,6 +412,7 @@ describe('SettingsPage vault backup', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -397,6 +426,7 @@ describe('SettingsPage vault backup', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -413,6 +443,7 @@ describe('SettingsPage vault backup', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -453,6 +484,7 @@ describe('SettingsPage vault backup', () => {
         <SettingsPage
           entities={[entity]}
           onEntitiesChange={noopAsync}
+          onEntityCreated={async () => {}}
           onSelectEntity={() => {}}
         />,
       )
@@ -489,6 +521,7 @@ describe('SettingsPage vault backup', () => {
         <SettingsPage
           entities={[entity]}
           onEntitiesChange={noopAsync}
+          onEntityCreated={async () => {}}
           onSelectEntity={() => {}}
         />,
       )
@@ -512,6 +545,7 @@ describe('SettingsPage vault backup', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -535,6 +569,7 @@ describe('SettingsPage vault backup', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -553,6 +588,7 @@ describe('SettingsPage vault backup', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -570,6 +606,7 @@ describe('SettingsPage vault backup', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -589,6 +626,7 @@ describe('SettingsPage section design', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -602,6 +640,7 @@ describe('SettingsPage section design', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -631,7 +670,12 @@ describe('SettingsPage section design', () => {
       params: { min: '12' },
     })
     render(
-      <SettingsPage entities={[entity]} onEntitiesChange={noopAsync} onSelectEntity={() => {}} />,
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
+        onSelectEntity={() => {}}
+      />,
     )
     await userEvent.click(screen.getByRole('button', { name: /master password/i }))
     await userEvent.type(await screen.findByLabelText('Current password'), 'oldpass')
@@ -655,7 +699,12 @@ describe('SettingsPage section design', () => {
       message: 'sqlcipher: rekey failed',
     })
     render(
-      <SettingsPage entities={[entity]} onEntitiesChange={noopAsync} onSelectEntity={() => {}} />,
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
+        onSelectEntity={() => {}}
+      />,
     )
     await userEvent.click(screen.getByRole('button', { name: /master password/i }))
     await userEvent.type(await screen.findByLabelText('Current password'), 'oldpass')
@@ -671,7 +720,12 @@ describe('SettingsPage section design', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     vi.mocked(vaultChangePassword).mockRejectedValue(undefined)
     render(
-      <SettingsPage entities={[entity]} onEntitiesChange={noopAsync} onSelectEntity={() => {}} />,
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
+        onSelectEntity={() => {}}
+      />,
     )
     await userEvent.click(screen.getByRole('button', { name: /master password/i }))
     await userEvent.type(await screen.findByLabelText('Current password'), 'oldpass')
@@ -688,6 +742,7 @@ describe('SettingsPage section design', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -712,6 +767,7 @@ describe('SettingsPage section design', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -754,6 +810,7 @@ describe('SettingsPage createBookIntent', () => {
       <SettingsPage
         entities={[]}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
         createBookIntent={0}
       />,
@@ -764,6 +821,7 @@ describe('SettingsPage createBookIntent', () => {
       <SettingsPage
         entities={[]}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
         createBookIntent={1}
       />,
@@ -777,7 +835,12 @@ describe('SettingsPage createBookIntent', () => {
 
   test('does not open the form when createBookIntent is not provided', () => {
     render(
-      <SettingsPage entities={[]} onEntitiesChange={noopAsync} onSelectEntity={() => {}} />,
+      <SettingsPage
+        entities={[]}
+        onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
+        onSelectEntity={() => {}}
+      />,
     )
     expect(screen.queryByRole('dialog', { name: /^new book$/i })).toBeNull()
   })
@@ -788,6 +851,7 @@ describe('SettingsPage createBookIntent', () => {
       <SettingsPage
         entities={[]}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
         createBookIntent={0}
         onCreateBookIntentHandled={onCreateBookIntentHandled}
@@ -799,6 +863,7 @@ describe('SettingsPage createBookIntent', () => {
       <SettingsPage
         entities={[]}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
         createBookIntent={1}
         onCreateBookIntentHandled={onCreateBookIntentHandled}
@@ -816,6 +881,7 @@ describe('SettingsPage createBookIntent', () => {
       <SettingsPage
         entities={[]}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
         createBookIntent={0}
         onCreateBookIntentHandled={onCreateBookIntentHandled}
@@ -829,6 +895,7 @@ describe('SettingsPage createBookIntent', () => {
       <SettingsPage
         entities={[]}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
         createBookIntent={0}
       />,
@@ -837,6 +904,7 @@ describe('SettingsPage createBookIntent', () => {
       <SettingsPage
         entities={[]}
         onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
         createBookIntent={1}
       />,
@@ -851,7 +919,12 @@ describe('SettingsPage Auto-lock feedback', () => {
   test('the collapsed row shows the value, and a change says it was saved', async () => {
     vi.mocked(api.setLockTimeout).mockResolvedValue(undefined)
     render(
-      <SettingsPage entities={[entity]} onEntitiesChange={noopAsync} onSelectEntity={() => {}} />,
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
+        onSelectEntity={() => {}}
+      />,
     )
 
     const header = screen.getByRole('button', { name: /auto-lock/i })
@@ -870,7 +943,12 @@ describe('SettingsPage New book currency', () => {
 
   test('the next New book form starts from the last currency picked', async () => {
     render(
-      <SettingsPage entities={[entity]} onEntitiesChange={noopAsync} onSelectEntity={() => {}} />,
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
+        onSelectEntity={() => {}}
+      />,
     )
     await userEvent.click(screen.getByRole('button', { name: /^books/i }))
     await userEvent.click(await screen.findByRole('button', { name: /^new book$/i }))
@@ -880,7 +958,12 @@ describe('SettingsPage New book currency', () => {
     cleanup()
 
     render(
-      <SettingsPage entities={[entity]} onEntitiesChange={noopAsync} onSelectEntity={() => {}} />,
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
+        onSelectEntity={() => {}}
+      />,
     )
     await userEvent.click(screen.getByRole('button', { name: /^books/i }))
     await userEvent.click(await screen.findByRole('button', { name: /^new book$/i }))
@@ -900,7 +983,8 @@ describe('SettingsPage books', () => {
       return (
         <SettingsPage
           entities={books}
-          onEntitiesChange={async () => setBooks([entity, created])}
+          onEntitiesChange={async () => {}}
+          onEntityCreated={async () => setBooks([entity, created])}
           onSelectEntity={onSelectEntity}
         />
       )
@@ -919,6 +1003,51 @@ describe('SettingsPage books', () => {
     expect(onSelectEntity).not.toHaveBeenCalled()
   })
 
+  test('with no book the list starts open, showing how to add one', async () => {
+    render(
+      <SettingsPage
+        entities={[]}
+        onEntitiesChange={noopAsync}
+        onEntityCreated={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: /^books/i })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
+    expect(screen.getByText('Create your first book with the New book button.')).toBeVisible()
+    expect(screen.getByRole('button', { name: /^new book$/i })).toBeEnabled()
+  })
+
+  test('the next New book form starts from the default chart again', async () => {
+    vi.mocked(api.entityCreate).mockResolvedValue(created)
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onEntityCreated={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: /^books/i }))
+
+    async function createBook(name: string, chart?: RegExp) {
+      await userEvent.click(await screen.findByRole('button', { name: /^new book$/i }))
+      const dialog = await screen.findByRole('dialog', { name: 'New book' })
+      await userEvent.type(within(dialog).getByLabelText('Name'), name)
+      if (chart) await userEvent.click(within(dialog).getByRole('button', { name: chart }))
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Create book' }))
+      await screen.findByText(`Book ${created.name} created.`)
+    }
+    await createBook('Shop', /^Company/)
+    await createBook('Home')
+
+    const charts = vi.mocked(api.entityCreate).mock.calls.map(([input]) => input.chart_template)
+    expect(charts).toEqual(['company', 'personal'])
+  })
+
   test('a book can be renamed', async () => {
     vi.mocked(api.entityUpdate).mockResolvedValue({ ...entity, name: 'Home' })
     const onEntitiesChange = vi.fn(async () => {})
@@ -926,6 +1055,7 @@ describe('SettingsPage books', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={onEntitiesChange}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -947,7 +1077,12 @@ describe('SettingsPage books', () => {
   test('a rename the backend refuses is explained in the dialog', async () => {
     vi.mocked(api.entityUpdate).mockRejectedValue({ code: 'name_taken', message: 'taken' })
     render(
-      <SettingsPage entities={[entity]} onEntitiesChange={noopAsync} onSelectEntity={() => {}} />,
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onEntityCreated={async () => {}}
+        onSelectEntity={() => {}}
+      />,
     )
 
     await userEvent.click(screen.getByRole('button', { name: /^books/i }))

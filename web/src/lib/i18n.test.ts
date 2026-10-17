@@ -106,7 +106,7 @@ describe('Writer el catalog', () => {
     expect(flat['tx.form.hidden.label']).toBe('Απόκρυψη')
     expect(flat['tx.form.hidden.hint']).toBe('Απόκρυψη από την εξαγωγή')
     expect(flat['tx.list.meta.counts']).toBe('{posted} καταχωρισμένα · {hidden} κρυφά')
-    expect(flat['tx.export.whisper']).toBe('Η εξαγωγή παραλείπει τις κρυφές γραμμές. Οι διαγραμμένες εγγραφές περιλαμβάνονται, με την ένδειξη voided.')
+    expect(flat['tx.export.whisper']).toBe('Η εξαγωγή παραλείπει τις κρυφές γραμμές. Οι διαγραμμένες εγγραφές περιλαμβάνονται, με την τιμή «voided» στη στήλη «status».')
     expect(flat['quickAdd.kind.billShort']).toBe('Τιμ.')
     expect(flat['quickAdd.kind.transferShort']).toBe('Μεταφ.')
     expect(flat['settings.language.title']).toBe('Γλώσσα')
@@ -148,7 +148,7 @@ describe('Writer el catalog', () => {
     expect(t('tx.hidden.badge')).toBe('Κρυφή')
     expect(t('tx.form.hidden.label')).toBe('Απόκρυψη')
     expect(t('tx.form.hidden.hint')).toBe('Απόκρυψη από την εξαγωγή')
-    expect(t('tx.export.whisper')).toBe('Η εξαγωγή παραλείπει τις κρυφές γραμμές. Οι διαγραμμένες εγγραφές περιλαμβάνονται, με την ένδειξη voided.')
+    expect(t('tx.export.whisper')).toBe('Η εξαγωγή παραλείπει τις κρυφές γραμμές. Οι διαγραμμένες εγγραφές περιλαμβάνονται, με την τιμή «voided» στη στήλη «status».')
     expect(t('tx.csv.import')).toBe('Εισαγωγή CSV')
     expect(t('tx.csv.kind.expense')).toBe('Έξοδα')
   })
@@ -536,6 +536,30 @@ describe('locale parity guard', () => {
       const missing = englishKeys.filter((key) => !resolvesInLocale(locale, key))
       expect(missing, `${locale} silently falls back for: ${missing.join(', ')}`).toEqual([])
     }
+  })
+})
+
+describe('locale quote marks', () => {
+  const catalogs = { en, el, fr, de }
+
+  test('no catalog quotes with straight double quotes', () => {
+    for (const [locale, catalog] of Object.entries(catalogs)) {
+      const straight = Object.entries(flattenMessages(catalog)).filter(([, text]) => text.includes('"'))
+      expect(straight.map(([key]) => key), `${locale} uses straight quotes`).toEqual([])
+    }
+  })
+
+  test('english never borrows guillemets or low quotes', () => {
+    const foreign = Object.entries(flattenMessages(en)).filter(([, text]) => /[«»„]/.test(text))
+    expect(foreign.map(([key]) => key)).toEqual([])
+  })
+
+  test('french guillemets hold a narrow no-break space on the inside', () => {
+    // A plain space lets a line break split the mark from the quoted word.
+    const loose = Object.entries(flattenMessages(fr)).filter(
+      ([, text]) => /«(?!\u202f)|(?<!\u202f)»/.test(text),
+    )
+    expect(loose.map(([key]) => key)).toEqual([])
   })
 })
 
