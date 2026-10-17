@@ -24,10 +24,12 @@ const FROZEN_NOW = new Date('2026-09-24T12:00:00')
 const SLACK = 0.5
 
 /**
- * Every visible base Button (the only element with `data-variant`) keeps
- * its label on one line and inside its box. A TruncatedLabel clips its own
- * text, so a cut label passes as long as the button itself does not
- * overflow.
+ * Every rendered base Button (the only element with `data-variant`) keeps
+ * its label on one line and inside its box. `checkVisibility()` without
+ * options keeps `visibility: hidden` buttons on purpose: an invisible
+ * placeholder still takes its space in the layout. A label that truncates
+ * inside its own element clips its text, so it passes as long as the button
+ * itself does not overflow.
  */
 function buttonProblems(slack) {
   const lineCount = (element) => {
@@ -132,7 +134,10 @@ async function checkScreen(page, screen) {
   const failures = []
   for (const width of WIDTHS) {
     await page.setViewportSize({ width, height: 900 })
-    await waitForDomSettled(page, { quietMs: 150 })
+    // A layout effect may re-render after the resize; measure only once it is done.
+    if (!(await waitForDomSettled(page, { quietMs: 150 }))) {
+      failures.push(`${width}px ${screen.name}: DOM never settled after the resize`)
+    }
 
     const problems = await page.evaluate(buttonProblems, SLACK)
     const extra = EXTRA_CHECKS[screen.name]
