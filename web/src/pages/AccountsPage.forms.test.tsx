@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import '@testing-library/jest-dom/vitest'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { act, cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
@@ -14,13 +14,15 @@ vi.mock('../lib/api', async (importOriginal) => {
       accountList: vi.fn(),
       accountCreate: vi.fn(),
       accountBalance: vi.fn(),
+      accountSetOpeningBalance: vi.fn(),
     },
   }
 })
 
 import type { Account, Entity } from '../lib/api'
 import { api } from '../lib/api'
-import { resetI18nForTests } from '../lib/i18n'
+import { resetI18nForTests, setLocale, t } from '../lib/i18n'
+import { formatMoney } from '../lib/money'
 import { AccountsPage } from './AccountsPage'
 
 afterEach(() => {
@@ -98,5 +100,53 @@ describe('AccountsPage form errors', () => {
     expect(screen.getByRole('button', { name: 'Set balance for Checking' })).toHaveTextContent(
       'Set balance',
     )
+  })
+})
+
+describe('AccountsPage notices', () => {
+  test('a language switch re-words the notice for an added account', async () => {
+    vi.mocked(api.accountList).mockResolvedValue([checking])
+    vi.mocked(api.accountCreate).mockResolvedValue(checking)
+    render(<AccountsPage entity={entity} />)
+    await screen.findByText('Checking')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Add account' }))
+    await userEvent.type(screen.getByLabelText('Code'), '1010')
+    await userEvent.type(screen.getByLabelText('Name'), 'Savings')
+    await userEvent.click(screen.getByRole('button', { name: 'Create account' }))
+    const english = 'Account 1010 · Savings added.'
+    expect(await screen.findByRole('status')).toHaveTextContent(english)
+
+    act(() => setLocale('el'))
+
+    const greek = t('accounts.form.created', { code: '1010', name: 'Savings' })
+    expect(greek).not.toBe(english)
+    expect(screen.getByRole('status')).toHaveTextContent(greek)
+  })
+
+  test('a language switch re-words a saved-balance notice and re-formats its amount', async () => {
+    const euro = { code: 'EUR', decimals: 2 }
+    vi.mocked(api.accountList).mockResolvedValue([checking])
+    vi.mocked(api.accountBalance).mockResolvedValue(0)
+    // The page ignores the posted entry, as in AccountsPage.test.tsx.
+    vi.mocked(api.accountSetOpeningBalance).mockResolvedValue({} as never)
+    render(<AccountsPage entity={entity} />)
+    await screen.findByText('Checking')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Set balance for Checking' }))
+    const dialog = await screen.findByRole('dialog')
+    const amount = within(dialog).getByRole('textbox', { name: /actual balance/i })
+    await userEvent.type(amount, '1234.50{Enter}')
+    const notice = await screen.findByRole('status')
+    expect(notice.textContent).toContain(formatMoney(123450, euro, 'en'))
+    const english = notice.textContent
+
+    act(() => setLocale('el'))
+
+    const greekAmount = formatMoney(123450, euro, 'el')
+    const greek = t('accounts.balance.saved', { name: 'Checking', amount: greekAmount })
+    expect(greekAmount).not.toBe(formatMoney(123450, euro, 'en'))
+    expect(greek).not.toBe(english)
+    expect(screen.getByRole('status').textContent).toBe(greek)
   })
 })
