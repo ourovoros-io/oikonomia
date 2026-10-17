@@ -550,6 +550,7 @@
     }
   },
   "entry": {
+    "paidBill": "Facture, payée",
     "kind": {
       "openingBalance": "Solde d’ouverture",
       "other": "Écriture de journal"

@@ -93,6 +93,11 @@ export type PostedEntryView = {
   simple_form: SimpleEntryAccounts | null
   /** The bill this payment settles; the edit form reopens with it picked. */
   settles_entry_id: string | null
+  /**
+   * The active payment that settles this bill. Core refuses to void or correct
+   * such a bill until that payment is voided, so the UI offers neither.
+   */
+  settled_by_entry_id: string | null
 }
 
 /** How an entry of a history relates to the edit that replaced it. */

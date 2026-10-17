@@ -35,7 +35,7 @@ import { useDialogError } from '../lib/useDialogError'
 import { renderUiTexts, type UiText } from '../lib/uiText'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import { beginExclusive } from '../lib/guards'
-import { amountTone, isMoneyOut } from '../lib/entryKind'
+import { amountTone, isMoneyOut, listedKindKey } from '../lib/entryKind'
 import { BillPicker } from '../components/BillPicker'
 import { CashFlowPulse } from '../components/CashFlowPulse'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -1293,6 +1293,8 @@ export function TransactionsPage({
                 .join('  ')
               const moneyOut = isMoneyOut(kindLabel)
               const signed = moneyOut ? -amountMinor : amountMinor
+              // Core refuses to void a bill a payment settles; say so up front.
+              const settled = view.settled_by_entry_id !== null
 
               return (
                 <li
@@ -1300,7 +1302,7 @@ export function TransactionsPage({
                   onClick={() => setDetailId(view.entry.id)}
                   className="group flex cursor-pointer items-center gap-4 px-5 py-3 transition hover:bg-white/[0.05] focus-within:bg-white/[0.05]"
                 >
-                  <EntryKindBadge kind={kindLabel} />
+                  <EntryKindBadge kind={kindLabel} paid={settled} />
                   {/* Keyboard path: activating this button bubbles its click
                       to the row handler above — no duplicate handler. */}
                   <button type="button" className="min-w-0 flex-1 text-left">
@@ -1313,7 +1315,7 @@ export function TransactionsPage({
                     <div className="truncate text-xs text-[var(--color-muted)] tabular-nums">
                       {formatDate(view.entry.entry_date)}
                       <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
-                      <span>{t(`kind.${kindLabel}`)}</span>
+                      <span>{t(listedKindKey(kindLabel, settled))}</span>
                       {view.entry.reference ? (
                         <span>{t('entry.ref', { reference: view.entry.reference })}</span>
                       ) : null}
@@ -1337,19 +1339,28 @@ export function TransactionsPage({
                         })}
                       </AmountPill>
                     </span>
-                    <Button
-                      variant="ghost"
-                      size="iconSm"
-                      className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setVoidId(view.entry.id)
-                      }}
-                      aria-label={t('tx.deleteEntry')}
-                      title={t('common.delete')}
+                    {/* The wrapper hides the button until the row is hovered or
+                        focused, and dims nothing itself, so a disabled button
+                        stays hidden too. It carries the reason as well: an
+                        engine may show no tooltip for a disabled control. */}
+                    <span
+                      className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+                      title={settled ? t('error.billSettled') : undefined}
                     >
-                      <Trash2 className="size-4" />
-                    </Button>
+                      <Button
+                        variant="ghost"
+                        size="iconSm"
+                        disabled={settled}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setVoidId(view.entry.id)
+                        }}
+                        aria-label={t('tx.deleteEntry')}
+                        title={settled ? t('error.billSettled') : t('common.delete')}
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </span>
                   </span>
                 </li>
               )

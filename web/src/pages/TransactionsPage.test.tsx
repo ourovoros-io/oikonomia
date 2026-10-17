@@ -205,6 +205,7 @@ const postedEntry: PostedEntryView = {
   ],
   is_voided: false,
   settles_entry_id: null,
+  settled_by_entry_id: null,
   listed_kind: 'expense',
   simple_form: {
     kind: 'expense',
@@ -247,6 +248,7 @@ const incomeEntry: PostedEntryView = {
   ],
   is_voided: false,
   settles_entry_id: null,
+  settled_by_entry_id: null,
   listed_kind: 'income',
   simple_form: {
     kind: 'income',
@@ -1896,6 +1898,38 @@ describe('TransactionsPage edit form', () => {
 
     expect(await screen.findByRole('dialog')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Edit entry' })).toBeNull()
+  })
+
+  test('a bill a payment settles is listed as paid and offers neither Edit nor Delete', async () => {
+    const reason = 'This bill has a payment. Delete the payment first, then change or delete the bill.'
+    const settledBill: PostedEntryView = {
+      ...postedEntry,
+      listed_kind: 'bill',
+      settled_by_entry_id: 'p1',
+      simple_form: {
+        kind: 'bill',
+        bill_status: 'unpaid',
+        category_account_id: 'exp1',
+        wallet_account_id: null,
+        payable_account_id: 'cc1',
+        from_account_id: null,
+        to_account_id: null,
+      },
+    }
+    vi.mocked(api.entryList).mockResolvedValue([settledBill, incomeEntry])
+    await renderReady()
+
+    const billRow = (await screen.findByText('Bill, paid')).closest('li')
+    expect(billRow?.querySelector('svg.lucide-file-check')).not.toBeNull()
+    const [billDelete, incomeDelete] = screen.getAllByRole('button', { name: 'Delete entry' })
+    expect(billDelete).toBeDisabled()
+    expect(billDelete).toHaveAccessibleDescription(reason)
+    expect(incomeDelete).toBeEnabled()
+
+    await userEvent.click(screen.getByText('Alpha supermarket'))
+    const edit = await screen.findByRole('button', { name: 'Edit entry' })
+    expect(edit).toBeDisabled()
+    expect(edit).toHaveAccessibleDescription(reason)
   })
 })
 

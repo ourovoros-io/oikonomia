@@ -91,6 +91,7 @@ const entries: PostedEntryView[] = [
     listed_kind: 'expense',
     simple_form: null,
     settles_entry_id: null,
+    settled_by_entry_id: null,
   },
   {
     entry: { id: 'j2', entity_id: 'e1', entry_date: '2026-08-11', description: 'Client invoice', reference: null, status: 'posted', hidden: false },
@@ -99,6 +100,7 @@ const entries: PostedEntryView[] = [
     listed_kind: 'income',
     simple_form: null,
     settles_entry_id: null,
+    settled_by_entry_id: null,
   },
 ]
 
@@ -177,6 +179,25 @@ describe('DashboardPage activity kinds', () => {
     const transfer = await row('To savings')
     expect(transfer).toHaveTextContent('Transfer')
     expect(transfer?.querySelector('[data-amount]')).toHaveAttribute('data-amount', 'neutral')
+  })
+
+  test('a bill a payment settles reads as paid, as in the entry list', async () => {
+    const [expense] = entries as [PostedEntryView, PostedEntryView]
+    const bill = (id: string, description: string, settledBy: string | null): PostedEntryView => ({
+      ...expense,
+      entry: { ...expense.entry, id, description },
+      listed_kind: 'bill',
+      settled_by_entry_id: settledBy,
+    })
+    vi.mocked(api.entryList).mockResolvedValue([bill('b1', 'Power settled', 'p1'), bill('b2', 'Water owed', null)])
+    render(<DashboardPage entity={entity} />)
+
+    const settled = (await screen.findByText('Power settled')).closest('li')
+    expect(settled).toHaveTextContent('Bill, paid')
+    expect(settled?.querySelector('svg.lucide-file-check')).not.toBeNull()
+    const owed = screen.getByText('Water owed').closest('li')
+    expect(owed).not.toHaveTextContent('paid')
+    expect(owed?.querySelector('svg.lucide-file-text')).not.toBeNull()
   })
 
   test('only an entry core lists as an opening balance is labelled one', async () => {

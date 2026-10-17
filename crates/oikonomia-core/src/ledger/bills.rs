@@ -57,6 +57,23 @@ const ACTIVE_PAYMENT_PREDICATE: &str = "
     pay.status = 'posted' AND pay.voided_by_entry_id IS NULL
 ";
 
+/// The scalar subquery that reads the active payment settling the entry
+/// `je`, or `NULL` when none does.
+///
+/// It is a lookup on `idx_entries_settles`, once per entry. A bill has at
+/// most one active payment because `post_simple_entry` lets a payment name
+/// only an open bill. The schema does not enforce it; were it broken, the
+/// subquery returns the payment posted first.
+pub(crate) fn settled_by_sql() -> String {
+    format!(
+        "
+        (SELECT pay.id FROM journal_entries pay
+         WHERE pay.settles_entry_id = je.id AND {ACTIVE_PAYMENT_PREDICATE}
+         ORDER BY pay.rowid LIMIT 1)
+        "
+    )
+}
+
 /// Which open bills [`query_open_bills`] reads.
 #[derive(Debug, Clone, Copy)]
 enum OpenBills {
@@ -125,34 +142,6 @@ pub(crate) fn open_bill(
     query_open_bills(conn, entity_id, OpenBills::One(bill_id))?
         .pop()
         .ok_or_else(|| ValidationError::BillNotOpen.into())
-}
-
-/// Checks that no active payment settles the entry `id`, before it is
-/// voided or corrected.
-///
-/// # Errors
-///
-/// [`ValidationError::BillSettled`] when one does; [`Error::Database`] on
-/// database errors.
-pub(crate) fn ensure_not_settled(conn: &Connection, id: JournalEntryId) -> Result<()> {
-    let settled: bool = conn
-        .query_row(
-            &format!(
-                "
-                SELECT EXISTS (
-                    SELECT 1 FROM journal_entries pay
-                    WHERE pay.settles_entry_id = ?1 AND {ACTIVE_PAYMENT_PREDICATE}
-                )
-                "
-            ),
-            [id.to_string()],
-            |row| row.get(0),
-        )
-        .database("look for the payment of a bill")?;
-    if settled {
-        return Err(ValidationError::BillSettled.into());
-    }
-    Ok(())
 }
 
 /// Reads the open bills of `entity_id` that `which` selects.
