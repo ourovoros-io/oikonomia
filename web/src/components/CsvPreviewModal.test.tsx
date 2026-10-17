@@ -1,11 +1,11 @@
 /** @vitest-environment jsdom */
 
 import '@testing-library/jest-dom/vitest'
-import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, test } from 'vitest'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import { CsvPreviewModal } from './CsvPreviewModal'
-import type { CsvImportPreview } from '../lib/api'
+import type { Account, CsvImportPreview, SimpleEntryInput } from '../lib/api'
 import { resetI18nForTests, setLocale, type Locale } from '../lib/i18n'
 
 afterEach(() => {
@@ -98,5 +98,127 @@ describe('CsvPreviewModal row problems', () => {
 
     expect(screen.getByText('Diese Zeile konnte nicht gelesen werden.')).toBeInTheDocument()
     expect(screen.queryByText('csv_from_the_future')).toBeNull()
+  })
+})
+
+function account(id: string, name: string, accountType: 'expense' | 'income'): Account {
+  return {
+    id,
+    entity_id: 'e1',
+    code: id,
+    name,
+    account_type: accountType,
+    is_active: true,
+    is_system: false,
+    sort_order: 0,
+  }
+}
+
+const expenseAccounts = [account('exp1', 'Groceries', 'expense'), account('exp2', 'Rent', 'expense')]
+const incomeAccounts = [account('inc1', 'Salary', 'income'), account('inc2', 'Interest', 'income')]
+
+function suggestedRow(
+  sourceRow: number,
+  kind: 'expense' | 'income',
+  categoryId: string | null = kind === 'expense' ? 'exp1' : 'inc1',
+): CsvImportPreview['rows'][number] {
+  return {
+    source_row: sourceRow,
+    duplicate: false,
+    error: null,
+    suggested: {
+      entity_id: 'e1',
+      kind,
+      bill_status: null,
+      entry_date: '2026-08-12',
+      description: `Row ${sourceRow}`,
+      reference: null,
+      amount_minor: 4250,
+      category_account_id: categoryId,
+      wallet_account_id: 'w1',
+      payable_account_id: null,
+      from_account_id: null,
+      to_account_id: null,
+    },
+    signed_amount_minor: kind === 'expense' ? -4250 : 4250,
+  }
+}
+
+const mixedRows = [suggestedRow(2, 'expense'), suggestedRow(3, 'expense'), suggestedRow(4, 'income')]
+
+function renderCategoryPreview(
+  rows: CsvImportPreview['rows'],
+  onConfirm: (input: { rows: SimpleEntryInput[] }) => void = () => {},
+) {
+  render(
+    <CsvPreviewModal
+      open
+      preview={{ source: 'bank.csv', headers: ['Date', 'Description', 'Amount'], rows }}
+      currency={{ code: 'EUR', decimals: 2 }}
+      walletAccounts={[]}
+      expenseAccounts={expenseAccounts}
+      incomeAccounts={incomeAccounts}
+      onClose={() => {}}
+      onConfirm={onConfirm}
+    />,
+  )
+}
+
+function rowCategory(n: number): HTMLSelectElement {
+  return screen.getByRole('combobox', { name: `Category for row ${n}` })
+}
+
+function optionNames(select: HTMLSelectElement): string[] {
+  return within(select)
+    .getAllByRole('option')
+    .map((option) => option.textContent)
+}
+
+describe('CsvPreviewModal category column', () => {
+  test('shows the category each row posts to', () => {
+    renderCategoryPreview(mixedRows)
+
+    expect(rowCategory(2)).toHaveDisplayValue('Groceries')
+    expect(rowCategory(4)).toHaveDisplayValue('Salary')
+  })
+
+  test('lists only the accounts of the row kind', () => {
+    renderCategoryPreview(mixedRows)
+
+    expect(optionNames(rowCategory(2))).toEqual(['Groceries', 'Rent'])
+    expect(optionNames(rowCategory(4))).toEqual(['Salary', 'Interest'])
+  })
+
+  test('a row pick changes only that row and is what gets posted', () => {
+    const onConfirm = vi.fn<(input: { rows: SimpleEntryInput[] }) => void>()
+    renderCategoryPreview(mixedRows, onConfirm)
+
+    fireEvent.change(rowCategory(2), { target: { value: 'exp2' } })
+
+    expect(rowCategory(2)).toHaveDisplayValue('Rent')
+    expect(rowCategory(3)).toHaveDisplayValue('Groceries')
+    fireEvent.click(screen.getByRole('button', { name: 'Post 3 selected' }))
+    const posted = onConfirm.mock.calls[0]?.[0].rows.map((row) => row.category_account_id)
+    expect(posted).toEqual(['exp2', 'exp1', 'inc1'])
+  })
+
+  test('apply to selected shows in the column, for the matching kind only', () => {
+    renderCategoryPreview(mixedRows)
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Bulk category' }), {
+      target: { value: 'exp2' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Apply to selected' }))
+
+    expect(rowCategory(2)).toHaveDisplayValue('Rent')
+    expect(rowCategory(3)).toHaveDisplayValue('Rent')
+    expect(rowCategory(4)).toHaveDisplayValue('Salary')
+  })
+
+  test('a row whose category is not listed opens on an empty choice', () => {
+    renderCategoryPreview([suggestedRow(2, 'expense', null), suggestedRow(3, 'income', 'gone')])
+
+    expect(rowCategory(2)).toHaveDisplayValue('Choose a category')
+    expect(rowCategory(3)).toHaveDisplayValue('Choose a category')
   })
 })

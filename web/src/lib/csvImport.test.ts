@@ -16,6 +16,7 @@ import {
   postLabel,
   previewHasColumnMap,
   previewSubtitle,
+  rowCategoryOptions,
   rowSelectable,
 } from './csvImport'
 
@@ -72,6 +73,26 @@ describe('defaultChecked', () => {
 
   test('unchecks error rows', () => {
     expect(defaultChecked(row({ error: INVALID_AMOUNT, suggested: null }))).toBe(false)
+  })
+})
+
+describe('rowCategoryOptions', () => {
+  const lists = {
+    expense: [{ id: 'exp1', name: 'Groceries', account_type: 'expense', is_active: true }],
+    income: [{ id: 'inc1', name: 'Salary', account_type: 'income', is_active: true }],
+  } as const
+
+  test('an expense row lists only expense accounts', () => {
+    expect(rowCategoryOptions('expense', lists)).toEqual(lists.expense)
+  })
+
+  test('an income row lists only income accounts', () => {
+    expect(rowCategoryOptions('income', lists)).toEqual(lists.income)
+  })
+
+  test('bills and transfers get no list', () => {
+    expect(rowCategoryOptions('bill', lists)).toEqual([])
+    expect(rowCategoryOptions('transfer', lists)).toEqual([])
   })
 })
 

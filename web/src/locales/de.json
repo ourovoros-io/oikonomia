@@ -972,12 +972,15 @@
       "applySelected": "Auf Auswahl anwenden",
       "selectAll": "Alle importierbaren Zeilen auswählen",
       "selectRow": "Zeile {n} auswählen",
+      "rowCategory": "Kategorie für Zeile {n}",
+      "chooseCategory": "Kategorie wählen",
       "col": {
         "date": "Datum",
         "description": "Beschreibung",
         "amount": "Betrag",
         "type": "Art",
-        "note": "Notiz"
+        "note": "Notiz",
+        "category": "Kategorie"
       },
       "kind": {
         "expense": "Ausgabe",

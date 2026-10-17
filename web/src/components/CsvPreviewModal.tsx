@@ -9,6 +9,7 @@ import {
   initialBulkAccounts,
   postLabel,
   previewSubtitle,
+  rowCategoryOptions,
   rowSelectable,
 } from '../lib/csvImport'
 import { useI18n } from '../lib/I18nProvider'
@@ -35,6 +36,50 @@ function kindLabelKey(kind: SimpleEntryInput['kind']): string {
   if (kind === 'bill') return 'tx.csv.kind.bill'
   if (kind === 'transfer') return 'tx.csv.kind.transfer'
   return 'tx.csv.kind.expense'
+}
+
+/**
+ * The per-row category picker. It lists only the accounts the row's kind may
+ * post to, so a pick here can never send income to an expense account.
+ */
+function RowCategoryCell({
+  row,
+  options,
+  disabled,
+  onChange,
+}: {
+  row: DraftRow
+  options: readonly Account[]
+  disabled: boolean
+  onChange: (categoryId: string) => void
+}) {
+  const { t } = useI18n()
+  if (options.length === 0) return <>—</>
+
+  const value = row.suggested?.category_account_id ?? ''
+  // An unlisted id (none suggested, or an inactive account) must not show as
+  // the first listed account, so the select opens on an empty choice instead.
+  const listed = options.some((a) => a.id === value)
+  return (
+    <Select
+      className="w-44"
+      value={listed ? value : ''}
+      disabled={disabled}
+      onChange={(e) => onChange(e.target.value)}
+      aria-label={t('tx.csv.rowCategory', { n: row.source_row })}
+    >
+      {listed ? null : (
+        <option value="" disabled>
+          {t('tx.csv.chooseCategory')}
+        </option>
+      )}
+      {options.map((a) => (
+        <option key={a.id} value={a.id}>
+          {a.name}
+        </option>
+      ))}
+    </Select>
+  )
 }
 
 /** Step 3 of CSV import: review, bulk-edit, then post selected rows. */
@@ -95,6 +140,15 @@ export function CsvPreviewModal({
   function toggleAll(checked: boolean) {
     setDrafts((prev) =>
       prev.map((row) => (rowSelectable(row) ? { ...row, checked } : row)),
+    )
+  }
+
+  function setRowCategory(sourceRow: number, categoryId: string) {
+    setDrafts((prev) =>
+      prev.map((row) => {
+        if (row.source_row !== sourceRow || !row.suggested) return row
+        return { ...row, suggested: { ...row.suggested, category_account_id: categoryId } }
+      }),
     )
   }
 
@@ -195,7 +249,7 @@ export function CsvPreviewModal({
       </div>
 
       <div className="overflow-x-auto rounded-xl border border-[var(--color-border)]">
-        <table className="w-full min-w-[40rem] text-left text-sm">
+        <table className="w-full min-w-[48rem] text-left text-sm">
           <thead>
             <tr className="border-b border-[var(--color-border)] font-mono text-[11px] font-medium tracking-[0.14em] text-[var(--color-muted)] uppercase">
               <th className="w-10 px-3 py-2.5">
@@ -212,6 +266,7 @@ export function CsvPreviewModal({
               <th className="px-3 py-2.5">{t('tx.csv.col.description')}</th>
               <th className="px-3 py-2.5 text-right">{t('tx.csv.col.amount')}</th>
               <th className="px-3 py-2.5">{t('tx.csv.col.type')}</th>
+              <th className="px-3 py-2.5">{t('tx.csv.col.category')}</th>
               <th className="px-3 py-2.5">{t('tx.csv.col.note')}</th>
             </tr>
           </thead>
@@ -239,7 +294,7 @@ export function CsvPreviewModal({
                   <td className="px-3 py-2.5 tabular-nums text-[var(--color-fg-secondary)]">
                     {row.suggested ? formatDate(row.suggested.entry_date) : '—'}
                   </td>
-                  <td className="max-w-[16rem] truncate px-3 py-2.5 text-[var(--color-fg)]">
+                  <td className="max-w-[12rem] truncate px-3 py-2.5 text-[var(--color-fg)]">
                     {row.suggested?.description || '—'}
                   </td>
                   <td
@@ -264,6 +319,21 @@ export function CsvPreviewModal({
                       >
                         {t(kindLabelKey(kind))}
                       </span>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
+                  <td className="px-3 py-1.5">
+                    {kind ? (
+                      <RowCategoryCell
+                        row={row}
+                        options={rowCategoryOptions(kind, {
+                          expense: expenseAccounts,
+                          income: incomeAccounts,
+                        })}
+                        disabled={busy}
+                        onChange={(id) => setRowCategory(row.source_row, id)}
+                      />
                     ) : (
                       '—'
                     )}

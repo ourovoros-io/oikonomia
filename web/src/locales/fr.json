@@ -972,12 +972,15 @@
       "applySelected": "Appliquer à la sélection",
       "selectAll": "Sélectionner toutes les lignes importables",
       "selectRow": "Sélectionner la ligne {n}",
+      "rowCategory": "Catégorie de la ligne {n}",
+      "chooseCategory": "Choisir une catégorie",
       "col": {
         "date": "Date",
         "description": "Description",
         "amount": "Montant",
         "type": "Type",
-        "note": "Note"
+        "note": "Note",
+        "category": "Catégorie"
       },
       "kind": {
         "expense": "Dépense",
