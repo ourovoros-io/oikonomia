@@ -519,12 +519,9 @@ jobs:
         if: steps.browser-cache.outputs.cache-hit != 'true'
         run: npx playwright install --only-shell chromium
 
-      # The runner image usually has every system library Chromium needs;
-      # the dry run checks that without an apt-get update, and only a miss
-      # pays for the install.
-      - name: Install Chromium's system libraries if any are missing
-        run: npx playwright install-deps --dry-run chromium || npx playwright install-deps chromium
-
+      # No `install-deps`: the runner image has every library Chromium needs,
+      # and the only packages it lacks are fonts, which the app bundles. If an
+      # image drops a library, the browser launch fails and names it.
       - run: npm run check:layout
 
   audit:
