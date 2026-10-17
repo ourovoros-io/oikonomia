@@ -10,7 +10,7 @@ use crate::error::{AccountRole, DatabaseContext, Result};
 use crate::ledger::accounts::{list_accounts, opening_balance_account};
 use crate::ledger::entities::get_entity;
 use crate::ledger::simple_entry::{
-    RoleAccount, SimpleBillStatus, SimpleEntryAccounts, SimpleEntryKind,
+    RoleAccount, SimpleBillStatus, SimpleEntryAccounts, SimpleEntryKind, SimpleEntryShape,
 };
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -115,36 +115,51 @@ impl ListedEntryKind {
 /// An entry that stores no kind has no `PostedAs` at all, whatever its status
 /// column holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PostedAs {
-    /// The kind it was posted as (schema v10).
-    pub(crate) kind: SimpleEntryKind,
-    /// The bill status it was posted with (schema v11): `None` for an entry
-    /// whose accounts have none, and for a bill posted before v11.
-    pub(crate) bill_status: Option<SimpleBillStatus>,
+pub(crate) enum PostedAs {
+    /// Posted as this shape: every simple entry since v11, and one of v10
+    /// that is not a bill, whose shape its kind gives.
+    Shape(SimpleEntryShape),
+    /// A bill posted under v10, which stored its kind (schema v10) and not
+    /// its status (schema v11); its lines say which bill it is.
+    BillWithoutStatus,
 }
 
 impl PostedAs {
-    /// Returns whether the form of an entry posted as this needs the line
-    /// fallback: a bill always has a status from v11, so a bill without one
-    /// was posted before.
-    fn lacks_status(self) -> bool {
-        self.kind == SimpleEntryKind::Bill && self.bill_status.is_none()
+    /// Reads the pair of columns an entry that stores a kind holds.
+    pub(crate) fn from_columns(
+        kind: SimpleEntryKind,
+        bill_status: Option<SimpleBillStatus>,
+    ) -> Self {
+        SimpleEntryShape::from_kind(kind, bill_status).map_or(Self::BillWithoutStatus, Self::Shape)
+    }
+
+    /// Returns the kind stored for an entry posted as this.
+    pub(crate) const fn kind(self) -> SimpleEntryKind {
+        match self {
+            Self::Shape(shape) => shape.kind(),
+            Self::BillWithoutStatus => SimpleEntryKind::Bill,
+        }
+    }
+
+    /// Returns the bill status stored for an entry posted as this.
+    pub(crate) const fn bill_status(self) -> Option<SimpleBillStatus> {
+        match self {
+            Self::Shape(shape) => shape.bill_status(),
+            Self::BillWithoutStatus => None,
+        }
     }
 }
 
 impl From<SimpleEntryAccounts> for PostedAs {
     fn from(accounts: SimpleEntryAccounts) -> Self {
-        Self {
-            kind: accounts.kind(),
-            bill_status: accounts.bill_status(),
-        }
+        Self::Shape(accounts.shape())
     }
 }
 
 /// Returns whether reading an entry posted as `posted_as` needs a loaded
 /// [`LineFallback`]: one that stores no kind, or a bill posted before v11.
 fn needs_fallback(posted_as: Option<PostedAs>) -> bool {
-    posted_as.is_none_or(PostedAs::lacks_status)
+    !matches!(posted_as, Some(PostedAs::Shape(_)))
 }
 
 /// What the line fallback needs to know about one book: the type of each
@@ -244,7 +259,7 @@ impl LineFallback {
         posted_as: Option<PostedAs>,
         lines: &[JournalLine],
     ) -> ListedEntryKind {
-        posted_as.map_or_else(|| self.classify(lines), |posted| posted.kind.into())
+        posted_as.map_or_else(|| self.classify(lines), |posted| posted.kind().into())
     }
 
     /// Returns the simple entry form that describes an entry posted as
@@ -290,45 +305,41 @@ impl LineFallback {
         let (debit, credit) = debit_and_credit(lines)?;
 
         let kind = match posted_as {
-            Some(posted) if !posted.lacks_status() => {
-                return SimpleEntryAccounts::from_sides(
-                    posted.kind,
-                    posted.bill_status,
-                    debit,
-                    credit,
-                );
+            Some(PostedAs::Shape(shape)) => {
+                return Some(SimpleEntryAccounts::from_sides(shape, debit, credit));
             }
-            Some(posted) => posted.kind,
+            Some(PostedAs::BillWithoutStatus) => SimpleEntryKind::Bill,
             None => self.classify(lines).simple_kind()?,
         };
-        let status = self.line_status(kind, debit, credit);
-        SimpleEntryAccounts::from_sides(kind, status, debit, credit)
+        let shape = self.line_shape(kind, debit, credit);
+        Some(SimpleEntryAccounts::from_sides(shape, debit, credit))
             .filter(|form| self.accepts(form))
     }
 
-    /// Reads the bill status of an entry of `kind` from its lines, by the
-    /// rules on [`simple_form`](Self::simple_form).
-    fn line_status(
+    /// Reads the shape of an entry of `kind` from its lines, by the rules on
+    /// [`simple_form`](Self::simple_form).
+    fn line_shape(
         &self,
         kind: SimpleEntryKind,
         debit: AccountId,
         credit: AccountId,
-    ) -> Option<SimpleBillStatus> {
+    ) -> SimpleEntryShape {
         match kind {
             SimpleEntryKind::Bill => {
                 if self.account_types.get(&debit) != Some(&AccountType::Expense) {
-                    Some(SimpleBillStatus::PayExisting)
+                    SimpleEntryShape::BillPayment
                 } else if self.bill_accounts.contains(&credit) {
-                    Some(SimpleBillStatus::Unpaid)
+                    SimpleEntryShape::BillUnpaid
                 } else {
-                    Some(SimpleBillStatus::Paid)
+                    SimpleEntryShape::BillPaid
                 }
             }
-            SimpleEntryKind::Income => self
-                .receivable_accounts
-                .contains(&debit)
-                .then_some(SimpleBillStatus::Unpaid),
-            SimpleEntryKind::Expense | SimpleEntryKind::Transfer => None,
+            SimpleEntryKind::Income if self.receivable_accounts.contains(&debit) => {
+                SimpleEntryShape::IncomeReceivable
+            }
+            SimpleEntryKind::Income => SimpleEntryShape::Income,
+            SimpleEntryKind::Expense => SimpleEntryShape::Expense,
+            SimpleEntryKind::Transfer => SimpleEntryShape::Transfer,
         }
     }
 
@@ -520,10 +531,7 @@ mod tests {
     }
 
     /// A bill posted under v10: its kind is stored and its status is not.
-    const V10_BILL: Option<PostedAs> = Some(PostedAs {
-        kind: SimpleEntryKind::Bill,
-        bill_status: None,
-    });
+    const V10_BILL: Option<PostedAs> = Some(PostedAs::BillWithoutStatus);
 
     #[test]
     fn a_stored_form_is_read_from_the_lines_without_the_fallback() {
@@ -579,10 +587,7 @@ mod tests {
     #[test]
     fn an_income_that_stores_no_status_reads_as_received() {
         let book = book();
-        let income = Some(PostedAs {
-            kind: SimpleEntryKind::Income,
-            bill_status: None,
-        });
+        let income = Some(PostedAs::from_columns(SimpleEntryKind::Income, None));
 
         // Even on the receivable: only a stored status says it is owed.
         assert!(!needs_fallback(income));

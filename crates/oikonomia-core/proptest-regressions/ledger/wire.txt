@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc ba3665e998793222376557b94fe1099f6f7ce27d9e80adf5575edae5ec02aad1 # shrinks to debit_minor = 1, credit_minor = 1
+cc 0e465efb56fd4c1d8da958c8f870e45f22131bff74f369030fa83efa17fccd01 # shrinks to request = CreateRecurringTemplateRequest { entity_id: EntityId(00000000-0000-0000-0000-000000000000), name: "Rent", kind: Income, bill_status: Some(Unpaid), amount_minor: 1, cadence: Monthly, day_of_month: Some(1), category_account_id: Some(AccountId(00000000-0000-0000-0000-000000000000)), wallet_account_id: None, payable_account_id: Some(AccountId(00000000-0000-0000-0000-000000000000)), from_account_id: None, to_account_id: None, memo: None, next_date: "2026-09-01" }

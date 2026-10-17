@@ -25,7 +25,10 @@
 //! [`SimpleEntryAccounts`], the form of a posted entry, are strict in memory
 //! and serialize through flat twins that stay inside the crate, so the UI
 //! keeps reading the kind, the bill status and five optional accounts side
-//! by side.
+//! by side. Each twin flattens the two halves of the accounts: the
+//! [`SimpleEntryShape`], which serializes as the kind and the bill status,
+//! and the [`SimpleEntryRoleAccounts`], which serialize as the five
+//! accounts.
 //!
 //! The strict types are strict about what this module converts: dates, the
 //! accounts of a simple entry, the side of a line, and the schedule of a
@@ -68,6 +71,7 @@ use crate::ledger::recurring::{
 };
 use crate::ledger::simple_entry::{
     SimpleBillStatus, SimpleEntryAccounts, SimpleEntryKind, SimpleEntryRoleAccounts,
+    SimpleEntryShape,
 };
 use crate::money::Money;
 use crate::util::parse_entry_date;
@@ -303,8 +307,7 @@ impl PostSimpleEntryRequest {
         }
 
         SimpleEntryAccounts::from_roles(
-            self.kind,
-            self.bill_status,
+            request_shape(self.kind, self.bill_status)?,
             SimpleEntryRoleAccounts {
                 category: self.category_account_id,
                 wallet: self.wallet_account_id,
@@ -373,8 +376,7 @@ impl TryFrom<CreateRecurringTemplateRequest> for CreateRecurringTemplate {
         let schedule = RecurringSchedule::from_cadence(request.cadence, request.day_of_month)?;
         let next_date = parse_entry_date(&request.next_date)?;
         let accounts = SimpleEntryAccounts::from_roles(
-            request.kind,
-            request.bill_status,
+            request_shape(request.kind, request.bill_status)?,
             SimpleEntryRoleAccounts {
                 category: request.category_account_id,
                 wallet: request.wallet_account_id,
@@ -446,8 +448,7 @@ impl TryFrom<UpdateRecurringTemplateRequest> for UpdateRecurringTemplate {
         let schedule = RecurringSchedule::from_cadence(request.cadence, request.day_of_month)?;
         let next_date = parse_entry_date(&request.next_date)?;
         let accounts = SimpleEntryAccounts::from_roles(
-            request.kind,
-            request.bill_status,
+            request_shape(request.kind, request.bill_status)?,
             SimpleEntryRoleAccounts {
                 category: request.category_account_id,
                 wallet: request.wallet_account_id,
@@ -471,10 +472,26 @@ impl TryFrom<UpdateRecurringTemplateRequest> for UpdateRecurringTemplate {
     }
 }
 
+/// Returns the shape of a request of `kind` with `bill_status`.
+///
+/// # Errors
+///
+/// [`ValidationError::BillStatusRequired`] for a bill without a status.
+fn request_shape(
+    kind: SimpleEntryKind,
+    bill_status: Option<SimpleBillStatus>,
+) -> Result<SimpleEntryShape> {
+    SimpleEntryShape::from_kind(kind, bill_status)
+        .ok_or_else(|| ValidationError::BillStatusRequired.into())
+}
+
 /// The JSON shape of a [`RecurringTemplateView`].
 ///
 /// The view converts into this to be serialized and out of it when read
-/// back, so no function outside those two conversions names the type.
+/// back, so no function outside those two conversions names the type. The
+/// two flattened halves of its accounts keep their place in the JSON: the
+/// kind and the bill status after the name, the five accounts after the
+/// schedule.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct RecurringTemplateViewWire {
     /// Id of the template.
@@ -483,26 +500,18 @@ pub(crate) struct RecurringTemplateViewWire {
     entity_id: EntityId,
     /// Name of the template and description of the entries it posts.
     name: String,
-    /// Kind of entry the template posts.
-    kind: SimpleEntryKind,
-    /// Payment state of a bill; `None` for the other kinds.
-    bill_status: Option<SimpleBillStatus>,
+    /// What the template posts: `kind` and `bill_status`.
+    #[serde(flatten)]
+    shape: SimpleEntryShape,
     /// Amount in minor units.
     amount_minor: i64,
     /// How often the template recurs.
     cadence: RecurringCadence,
     /// Day of the month for a monthly template; `None` for the others.
     day_of_month: Option<u8>,
-    /// Expense or income category account, when the kind has one.
-    category_account_id: Option<AccountId>,
-    /// Bank, cash or card account, when the kind has one.
-    wallet_account_id: Option<AccountId>,
-    /// Bills payable liability account, when the kind has one.
-    payable_account_id: Option<AccountId>,
-    /// Account a transfer takes from.
-    from_account_id: Option<AccountId>,
-    /// Account a transfer pays into.
-    to_account_id: Option<AccountId>,
+    /// The five role accounts, the two the shape posts to filled in.
+    #[serde(flatten)]
+    roles: SimpleEntryRoleAccounts,
     /// Note stored on the template; `None` when there is none.
     memo: Option<String>,
     /// Next scheduled occurrence.
@@ -514,26 +523,18 @@ pub(crate) struct RecurringTemplateViewWire {
 }
 
 impl From<RecurringTemplateView> for RecurringTemplateViewWire {
-    /// Spells the accounts of `view` out as a kind, a bill status and five
-    /// optional accounts.
     fn from(view: RecurringTemplateView) -> Self {
         let fields = view.fields;
-        let roles = fields.accounts.roles();
 
         Self {
             id: view.id,
             entity_id: view.entity_id,
             name: fields.name,
-            kind: fields.accounts.kind(),
-            bill_status: fields.accounts.bill_status(),
+            shape: fields.accounts.shape(),
             amount_minor: fields.amount_minor,
             cadence: fields.schedule.cadence(),
             day_of_month: fields.schedule.day_of_month(),
-            category_account_id: roles.category,
-            wallet_account_id: roles.wallet,
-            payable_account_id: roles.payable,
-            from_account_id: roles.from,
-            to_account_id: roles.to,
+            roles: fields.accounts.roles(),
             memo: fields.memo,
             next_date: fields.next_date,
             due: view.due,
@@ -549,23 +550,12 @@ impl TryFrom<RecurringTemplateViewWire> for RecurringTemplateView {
     /// # Errors
     ///
     /// [`ValidationError::DayOfMonthInvalid`] when the day of the month does
-    /// not go with the cadence, and [`ValidationError::BillStatusRequired`]
-    /// or [`ValidationError::AccountRequired`] when `wire` does not hold
-    /// what its kind needs. A view this crate serialized has none of these
-    /// faults.
+    /// not go with the cadence, and [`ValidationError::AccountRequired`]
+    /// when `wire` does not hold what its shape needs. A view this crate
+    /// serialized has none of these faults.
     fn try_from(wire: RecurringTemplateViewWire) -> Result<Self> {
         let schedule = RecurringSchedule::from_cadence(wire.cadence, wire.day_of_month)?;
-        let accounts = SimpleEntryAccounts::from_roles(
-            wire.kind,
-            wire.bill_status,
-            SimpleEntryRoleAccounts {
-                category: wire.category_account_id,
-                wallet: wire.wallet_account_id,
-                payable: wire.payable_account_id,
-                from: wire.from_account_id,
-                to: wire.to_account_id,
-            },
-        )?;
+        let accounts = SimpleEntryAccounts::from_roles(wire.shape, wire.roles)?;
 
         Ok(Self {
             id: wire.id,
@@ -589,35 +579,19 @@ impl TryFrom<RecurringTemplateViewWire> for RecurringTemplateView {
 /// field by field.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SimpleEntryAccountsWire {
-    /// Kind of entry.
-    kind: SimpleEntryKind,
-    /// Payment state of a bill or of an income not yet received; `None` for
-    /// the other entries.
-    bill_status: Option<SimpleBillStatus>,
-    /// Expense or income category account, when the kind has one.
-    category_account_id: Option<AccountId>,
-    /// Bank, cash or card account, when the kind has one.
-    wallet_account_id: Option<AccountId>,
-    /// Bills payable or receivable account, when the kind has one.
-    payable_account_id: Option<AccountId>,
-    /// Account a transfer takes from.
-    from_account_id: Option<AccountId>,
-    /// Account a transfer pays into.
-    to_account_id: Option<AccountId>,
+    /// What the entry is: `kind` and `bill_status`.
+    #[serde(flatten)]
+    shape: SimpleEntryShape,
+    /// The five role accounts, the two the shape posts to filled in.
+    #[serde(flatten)]
+    roles: SimpleEntryRoleAccounts,
 }
 
 impl From<SimpleEntryAccounts> for SimpleEntryAccountsWire {
     fn from(accounts: SimpleEntryAccounts) -> Self {
-        let roles = accounts.roles();
-
         Self {
-            kind: accounts.kind(),
-            bill_status: accounts.bill_status(),
-            category_account_id: roles.category,
-            wallet_account_id: roles.wallet,
-            payable_account_id: roles.payable,
-            from_account_id: roles.from,
-            to_account_id: roles.to,
+            shape: accounts.shape(),
+            roles: accounts.roles(),
         }
     }
 }
@@ -632,17 +606,41 @@ impl TryFrom<SimpleEntryAccountsWire> for SimpleEntryAccounts {
     /// Those of [`SimpleEntryAccounts::from_roles`]; accounts this crate
     /// serialized have none of them.
     fn try_from(wire: SimpleEntryAccountsWire) -> Result<Self> {
-        Self::from_roles(
-            wire.kind,
-            wire.bill_status,
-            SimpleEntryRoleAccounts {
-                category: wire.category_account_id,
-                wallet: wire.wallet_account_id,
-                payable: wire.payable_account_id,
-                from: wire.from_account_id,
-                to: wire.to_account_id,
-            },
-        )
+        Self::from_roles(wire.shape, wire.roles)
+    }
+}
+
+/// The JSON shape of a [`SimpleEntryShape`]: the pair of a kind and a bill
+/// status, as the requests and the vault hold it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SimpleEntryShapeWire {
+    /// Kind of entry.
+    kind: SimpleEntryKind,
+    /// Payment state of a bill or of an income not yet received; `None` for
+    /// the other entries.
+    bill_status: Option<SimpleBillStatus>,
+}
+
+impl From<SimpleEntryShape> for SimpleEntryShapeWire {
+    fn from(shape: SimpleEntryShape) -> Self {
+        Self {
+            kind: shape.kind(),
+            bill_status: shape.bill_status(),
+        }
+    }
+}
+
+impl TryFrom<SimpleEntryShapeWire> for SimpleEntryShape {
+    type Error = Error;
+
+    /// Reads a serialized shape back.
+    ///
+    /// # Errors
+    ///
+    /// [`ValidationError::BillStatusRequired`] for a bill without a status,
+    /// which this crate never serializes.
+    fn try_from(wire: SimpleEntryShapeWire) -> Result<Self> {
+        request_shape(wire.kind, wire.bill_status)
     }
 }
 
@@ -871,7 +869,7 @@ mod tests {
                 ..SimpleEntryRoleAccounts::default()
             }
         );
-        assert_eq!(entry.accounts.kind(), SimpleEntryKind::Expense);
+        assert_eq!(entry.accounts.shape(), SimpleEntryShape::Expense);
         assert_eq!(entry.entry_date, parse_date("2026-08-10").unwrap());
         assert_eq!(entry.amount_minor, 4_500);
     }
@@ -953,7 +951,7 @@ mod tests {
         assert_eq!(created.fields, updated.fields);
         assert_eq!(created.fields.name, "Rent");
         assert_eq!(created.fields.next_date, parse_date("2026-09-01").unwrap());
-        assert_eq!(created.fields.accounts.kind(), SimpleEntryKind::Expense);
+        assert_eq!(created.fields.accounts.shape(), SimpleEntryShape::Expense);
     }
 
     #[test]
@@ -1207,13 +1205,13 @@ mod properties {
             };
 
             let wire = RecurringTemplateViewWire::from(view.clone());
-            prop_assert_eq!(wire.kind, request.kind);
+            prop_assert_eq!(wire.shape.kind(), request.kind);
             for (written, sent) in [
-                (wire.category_account_id, request.category_account_id),
-                (wire.wallet_account_id, request.wallet_account_id),
-                (wire.payable_account_id, request.payable_account_id),
-                (wire.from_account_id, request.from_account_id),
-                (wire.to_account_id, request.to_account_id),
+                (wire.roles.category, request.category_account_id),
+                (wire.roles.wallet, request.wallet_account_id),
+                (wire.roles.payable, request.payable_account_id),
+                (wire.roles.from, request.from_account_id),
+                (wire.roles.to, request.to_account_id),
             ] {
                 prop_assert!(written.is_none() || written == sent);
             }

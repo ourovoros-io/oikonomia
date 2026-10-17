@@ -173,6 +173,7 @@ pub use reports::{
 pub use settings::{DEFAULT_LOCK_TIMEOUT_SECS, get_lock_timeout_secs, set_lock_timeout_secs};
 pub use simple_entry::{
     SimpleBillStatus, SimpleEntryAccounts, SimpleEntryKind, SimpleEntryRoleAccounts,
+    SimpleEntryShape,
 };
 pub use wire::{
     CreateRecurringTemplateRequest, JournalLineRequest, PostJournalRequest, PostSimpleEntryRequest,

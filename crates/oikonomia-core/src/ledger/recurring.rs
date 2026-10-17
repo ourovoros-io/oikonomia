@@ -47,6 +47,7 @@ use crate::ledger::journals::{
 };
 use crate::ledger::simple_entry::{
     MissingPart, SimpleBillStatus, SimpleEntryAccounts, SimpleEntryKind, SimpleEntryRoleAccounts,
+    SimpleEntryShape,
 };
 use crate::util::{format_date, now_utc_string, utc_today};
 use rusqlite::Connection;
@@ -376,6 +377,7 @@ pub fn create_recurring_template(
     input: &CreateRecurringTemplate,
 ) -> Result<RecurringTemplateView> {
     let fields = validated_fields(conn, input.entity_id, &input.fields)?;
+    let shape = fields.accounts.shape();
     let roles = fields.accounts.roles();
     let id = RecurringTemplateId::generate();
 
@@ -391,7 +393,7 @@ pub fn create_recurring_template(
             id.to_string(),
             input.entity_id.to_string(),
             fields.name,
-            fields.accounts.kind().identifier(),
+            shape.kind().identifier(),
             fields.amount_minor,
             fields.schedule.cadence().identifier(),
             fields.schedule.day_of_month().map(i64::from),
@@ -402,10 +404,7 @@ pub fn create_recurring_template(
             account_id_text(roles.to),
             fields.memo,
             format_date(fields.next_date),
-            fields
-                .accounts
-                .bill_status()
-                .map(SimpleBillStatus::identifier),
+            shape.bill_status().map(SimpleBillStatus::identifier),
             now_utc_string(),
         ],
     )
@@ -426,6 +425,7 @@ pub fn update_recurring_template(
 ) -> Result<RecurringTemplateView> {
     let existing = load_template(conn, input.id)?;
     let fields = validated_fields(conn, existing.entity_id, &input.fields)?;
+    let shape = fields.accounts.shape();
     let roles = fields.accounts.roles();
 
     let updated = conn
@@ -449,7 +449,7 @@ pub fn update_recurring_template(
             ",
             rusqlite::params![
                 fields.name,
-                fields.accounts.kind().identifier(),
+                shape.kind().identifier(),
                 fields.amount_minor,
                 fields.schedule.cadence().identifier(),
                 fields.schedule.day_of_month().map(i64::from),
@@ -460,10 +460,7 @@ pub fn update_recurring_template(
                 account_id_text(roles.to),
                 fields.memo,
                 format_date(fields.next_date),
-                fields
-                    .accounts
-                    .bill_status()
-                    .map(SimpleBillStatus::identifier),
+                shape.bill_status().map(SimpleBillStatus::identifier),
                 input.id.to_string(),
             ],
         )
@@ -844,9 +841,22 @@ fn map_template_row(operation: &'static str, row: &rusqlite::Row<'_>) -> Result<
         from: stored_account(operation, row, 10, "recurring_templates.from_account_id")?,
         to: stored_account(operation, row, 11, "recurring_templates.to_account_id")?,
     };
-    // A template is saved only with the accounts its kind posts to, so a row
-    // without one of them was not written by the application.
-    let accounts = SimpleEntryAccounts::from_roles_or_missing_part(kind, bill_status, roles)
+
+    // A template is saved only with a shape, so a bill without a status was
+    // not written by the application.
+    let shape = SimpleEntryShape::from_kind(kind, bill_status).ok_or_else(|| {
+        corrupt_column(
+            "recurring_templates.bill_status",
+            format_args!(
+                "no bill status for a template of kind {}",
+                kind.identifier()
+            ),
+        )
+    })?;
+
+    // A template is saved only with the accounts its shape posts to, so a
+    // row without one of them was not written by the application.
+    let accounts = SimpleEntryAccounts::from_roles_or_missing_part(shape, roles)
         .map_err(|missing| missing_part_corruption(kind, missing))?;
 
     Ok(StoredTemplate {
@@ -868,7 +878,6 @@ fn map_template_row(operation: &'static str, row: &rusqlite::Row<'_>) -> Result<
 fn missing_part_corruption(kind: SimpleEntryKind, missing: MissingPart) -> Error {
     let kind = kind.identifier();
     let (column, what) = match missing {
-        MissingPart::BillStatus => ("bill_status", "bill status"),
         MissingPart::Category(_) => ("category_account_id", "category account"),
         MissingPart::Wallet(_) => ("wallet_account_id", "wallet account"),
         MissingPart::Payable(_) => ("payable_account_id", "payable account"),

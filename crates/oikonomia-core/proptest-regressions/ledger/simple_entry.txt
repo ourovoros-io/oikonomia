@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 740c6e06d603bbfc66682b563cc66409f87b6c047f92b55fb9263db5c1dc33be # shrinks to shape = IncomeReceivable, roles = SimpleEntryRoleAccounts { category: Some(AccountId(00000000-0000-0000-0000-000000000000)), wallet: None, payable: Some(AccountId(00000000-0000-0000-0000-000000000000)), from: None, to: None }
+cc 7df209011d51ea9bd859986e6acc5ae6b69892db5585625c3178175d35e26b94 # shrinks to shape = BillPayment, roles = SimpleEntryRoleAccounts { category: None, wallet: Some(AccountId(00000000-0000-0000-0000-000000000000)), payable: Some(AccountId(00000000-0000-0000-0000-000000000001)), from: None, to: None }
