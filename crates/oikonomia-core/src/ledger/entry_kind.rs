@@ -130,7 +130,7 @@ impl PostedAs {
         kind: SimpleEntryKind,
         bill_status: Option<SimpleBillStatus>,
     ) -> Self {
-        SimpleEntryShape::from_kind(kind, bill_status).map_or(Self::BillWithoutStatus, Self::Shape)
+        SimpleEntryShape::from_pair(kind, bill_status).map_or(Self::BillWithoutStatus, Self::Shape)
     }
 
     /// Returns the kind stored for an entry posted as this.

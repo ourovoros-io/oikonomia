@@ -1,9 +1,9 @@
-//! The requests the UI sends and the views it reads, in the flat shape they
+//! The requests the UI sends and the views it reads, in the flat form they
 //! have as JSON.
 //!
-//! # Two types per shape
+//! # Two types per form
 //!
-//! A request crosses IPC as JSON whose shape the web UI mirrors by hand, and
+//! A request crosses IPC as JSON whose layout the web UI mirrors by hand, and
 //! that shape is loose on purpose: a date is text, and a form is sent as far
 //! as the user has filled it in, so an account may be missing or a bill may
 //! not say whether it is paid. Inside the crate the same request is a strict
@@ -307,7 +307,7 @@ impl PostSimpleEntryRequest {
         }
 
         SimpleEntryAccounts::from_roles(
-            request_shape(self.kind, self.bill_status)?,
+            shape_from_pair(self.kind, self.bill_status)?,
             SimpleEntryRoleAccounts {
                 category: self.category_account_id,
                 wallet: self.wallet_account_id,
@@ -376,7 +376,7 @@ impl TryFrom<CreateRecurringTemplateRequest> for CreateRecurringTemplate {
         let schedule = RecurringSchedule::from_cadence(request.cadence, request.day_of_month)?;
         let next_date = parse_entry_date(&request.next_date)?;
         let accounts = SimpleEntryAccounts::from_roles(
-            request_shape(request.kind, request.bill_status)?,
+            shape_from_pair(request.kind, request.bill_status)?,
             SimpleEntryRoleAccounts {
                 category: request.category_account_id,
                 wallet: request.wallet_account_id,
@@ -448,7 +448,7 @@ impl TryFrom<UpdateRecurringTemplateRequest> for UpdateRecurringTemplate {
         let schedule = RecurringSchedule::from_cadence(request.cadence, request.day_of_month)?;
         let next_date = parse_entry_date(&request.next_date)?;
         let accounts = SimpleEntryAccounts::from_roles(
-            request_shape(request.kind, request.bill_status)?,
+            shape_from_pair(request.kind, request.bill_status)?,
             SimpleEntryRoleAccounts {
                 category: request.category_account_id,
                 wallet: request.wallet_account_id,
@@ -472,20 +472,21 @@ impl TryFrom<UpdateRecurringTemplateRequest> for UpdateRecurringTemplate {
     }
 }
 
-/// Returns the shape of a request of `kind` with `bill_status`.
+/// Returns the shape of the pair `kind` and `bill_status` as the wire holds
+/// it, for a request or a serialized view.
 ///
 /// # Errors
 ///
 /// [`ValidationError::BillStatusRequired`] for a bill without a status.
-fn request_shape(
+fn shape_from_pair(
     kind: SimpleEntryKind,
     bill_status: Option<SimpleBillStatus>,
 ) -> Result<SimpleEntryShape> {
-    SimpleEntryShape::from_kind(kind, bill_status)
+    SimpleEntryShape::from_pair(kind, bill_status)
         .ok_or_else(|| ValidationError::BillStatusRequired.into())
 }
 
-/// The JSON shape of a [`RecurringTemplateView`].
+/// The JSON form of a [`RecurringTemplateView`].
 ///
 /// The view converts into this to be serialized and out of it when read
 /// back, so no function outside those two conversions names the type. The
@@ -573,7 +574,7 @@ impl TryFrom<RecurringTemplateViewWire> for RecurringTemplateView {
     }
 }
 
-/// The JSON shape of a [`SimpleEntryAccounts`]: the kind, the bill status
+/// The JSON form of a [`SimpleEntryAccounts`]: the kind, the bill status
 /// and the five role accounts of the simple entry form, with the names
 /// [`PostSimpleEntryRequest`] gives them, so the UI fills its form from it
 /// field by field.
@@ -610,8 +611,8 @@ impl TryFrom<SimpleEntryAccountsWire> for SimpleEntryAccounts {
     }
 }
 
-/// The JSON shape of a [`SimpleEntryShape`]: the pair of a kind and a bill
-/// status, as the requests and the vault hold it.
+/// The JSON form of a [`SimpleEntryShape`]: the pair of a kind and a bill
+/// status, under the field names the requests give them.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SimpleEntryShapeWire {
     /// Kind of entry.
@@ -640,7 +641,7 @@ impl TryFrom<SimpleEntryShapeWire> for SimpleEntryShape {
     /// [`ValidationError::BillStatusRequired`] for a bill without a status,
     /// which this crate never serializes.
     fn try_from(wire: SimpleEntryShapeWire) -> Result<Self> {
-        request_shape(wire.kind, wire.bill_status)
+        shape_from_pair(wire.kind, wire.bill_status)
     }
 }
 
@@ -925,6 +926,12 @@ mod tests {
             amount_minor: 1,
             ..everything_wrong.clone()
         };
+        let bill_without_status = PostSimpleEntryRequest {
+            kind: SimpleEntryKind::Bill,
+            bill_status: None,
+            wallet_account_id: None,
+            ..accounts_and_date_wrong.clone()
+        };
 
         assert_eq!(
             simple_error(everything_wrong),
@@ -938,6 +945,11 @@ mod tests {
                 }
                 .into()
             )
+        );
+        // The status is read before the accounts it decides.
+        assert_eq!(
+            simple_error(bill_without_status),
+            Some(ValidationError::BillStatusRequired.into())
         );
     }
 
@@ -1039,6 +1051,12 @@ mod tests {
             next_date: "2026-09-01".to_owned(),
             ..with_schedule.clone()
         };
+        let bill_without_status = CreateRecurringTemplateRequest {
+            kind: SimpleEntryKind::Bill,
+            bill_status: None,
+            category_account_id: None,
+            ..with_date.clone()
+        };
 
         assert_eq!(
             template_error(everything_wrong),
@@ -1066,6 +1084,11 @@ mod tests {
                 }
                 .into()
             )
+        );
+        // The status is read before the accounts it decides.
+        assert_eq!(
+            template_error(bill_without_status),
+            Some(ValidationError::BillStatusRequired.into())
         );
     }
 

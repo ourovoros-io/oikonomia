@@ -844,13 +844,10 @@ fn map_template_row(operation: &'static str, row: &rusqlite::Row<'_>) -> Result<
 
     // A template is saved only with a shape, so a bill without a status was
     // not written by the application.
-    let shape = SimpleEntryShape::from_kind(kind, bill_status).ok_or_else(|| {
+    let shape = SimpleEntryShape::from_pair(kind, bill_status).ok_or_else(|| {
         corrupt_column(
             "recurring_templates.bill_status",
-            format_args!(
-                "no bill status for a template of kind {}",
-                kind.identifier()
-            ),
+            format_args!("no bill status for a template of kind bill"),
         )
     })?;
 

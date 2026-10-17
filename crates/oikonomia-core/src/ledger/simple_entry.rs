@@ -15,14 +15,15 @@
 //!
 //! # The flat form
 //!
-//! On the wire, in the `journal_entries` and `recurring_templates` tables
-//! and in the preferences file, the same information is flat: a kind, an
-//! optional bill status, and five optional accounts
-//! ([`SimpleEntryRoleAccounts`]). That form can say things that mean
-//! nothing, such as a transfer with a category or a bill with no status.
+//! On the wire, in the `recurring_templates` table and in the preferences
+//! file, the same information is flat: a kind, an optional bill status, and
+//! five optional accounts ([`SimpleEntryRoleAccounts`]). That form can say
+//! things that mean nothing, such as a transfer with a category or a bill
+//! with no status. `journal_entries` stores the kind and the status of the
+//! same pair; its lines hold the accounts.
 //!
 //! The pair of a kind and a status converts to a shape in one place,
-//! [`SimpleEntryShape::from_kind`], and back in one place,
+//! [`SimpleEntryShape::from_pair`], and back in one place,
 //! [`SimpleEntryShape::kind`] and [`SimpleEntryShape::bill_status`]. A shape
 //! and the five accounts convert to [`SimpleEntryAccounts`] through
 //! [`SimpleEntryAccounts::from_roles`], and back through
@@ -156,15 +157,15 @@ impl SimpleBillStatus {
 /// use oikonomia_core::ledger::{SimpleBillStatus, SimpleEntryKind, SimpleEntryShape};
 ///
 /// let unpaid = Some(SimpleBillStatus::Unpaid);
-/// let shape = SimpleEntryShape::from_kind(SimpleEntryKind::Bill, unpaid);
+/// let shape = SimpleEntryShape::from_pair(SimpleEntryKind::Bill, unpaid);
 /// assert_eq!(shape, Some(SimpleEntryShape::BillUnpaid));
 ///
 /// // A status means nothing on an expense, so it is dropped.
-/// let expense = SimpleEntryShape::from_kind(SimpleEntryKind::Expense, unpaid);
+/// let expense = SimpleEntryShape::from_pair(SimpleEntryKind::Expense, unpaid);
 /// assert_eq!(expense.map(SimpleEntryShape::bill_status), Some(None));
 ///
 /// // A bill must say whether it is paid.
-/// assert_eq!(SimpleEntryShape::from_kind(SimpleEntryKind::Bill, None), None);
+/// assert_eq!(SimpleEntryShape::from_pair(SimpleEntryKind::Bill, None), None);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
@@ -195,7 +196,7 @@ impl SimpleEntryShape {
     /// The status is read only for a bill, and for an income, where only
     /// `unpaid` has a meaning; any other status is dropped.
     #[must_use]
-    pub const fn from_kind(
+    pub const fn from_pair(
         kind: SimpleEntryKind,
         bill_status: Option<SimpleBillStatus>,
     ) -> Option<Self> {
@@ -241,19 +242,19 @@ impl SimpleEntryShape {
 
 /// The two accounts of a simple entry, named for the part each plays.
 ///
-/// Each variant is one [`SimpleEntryShape`] with the accounts that shape
-/// needs, so a value says which accounts are posted to and which is
-/// debited:
+/// Each variant is the [`SimpleEntryShape`] of the same name with the
+/// accounts that shape needs, so a value says which accounts are posted to
+/// and which is debited:
 ///
-/// | Variant | Kind, bill status | Debit | Credit |
-/// |---------|-------------------|-------|--------|
-/// | `Expense` | expense | category (expense) | wallet (asset or liability) |
-/// | `Income` | income | wallet (asset) | category (income) |
-/// | `IncomeReceivable` | income, unpaid | receivable (asset) | category (income) |
-/// | `BillPaid` | bill, paid | category (expense) | wallet (asset or liability) |
-/// | `BillUnpaid` | bill, unpaid | category (expense) | payable (liability) |
-/// | `BillPayment` | bill, pay existing | payable (liability) | wallet (asset or liability) |
-/// | `Transfer` | transfer | to (asset or liability) | from (asset or liability) |
+/// | Variant | Debit | Credit |
+/// |---------|-------|--------|
+/// | `Expense` | category (expense) | wallet (asset or liability) |
+/// | `Income` | wallet (asset) | category (income) |
+/// | `IncomeReceivable` | receivable (asset) | category (income) |
+/// | `BillPaid` | category (expense) | wallet (asset or liability) |
+/// | `BillUnpaid` | category (expense) | payable (liability) |
+/// | `BillPayment` | payable (liability) | wallet (asset or liability) |
+/// | `Transfer` | to (asset or liability) | from (asset or liability) |
 ///
 /// The account types in brackets are what each part accepts. They are not
 /// part of the type, because an account's type is known only to the
@@ -284,8 +285,8 @@ impl SimpleEntryShape {
 /// assert_eq!(unpaid.roles(), roles);
 /// ```
 ///
-/// It serializes in the flat shape of the simple entry form: the kind, the
-/// bill status and the five role accounts side by side.
+/// It serializes in the flat form of the simple entry form's fields: the
+/// kind, the bill status and the five role accounts side by side.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     into = "crate::ledger::wire::SimpleEntryAccountsWire",
@@ -583,7 +584,7 @@ impl SimpleEntryAccounts {
 /// The flat form of [`SimpleEntryAccounts`]: one optional account for each
 /// part an entry of any kind can have.
 ///
-/// This is the shape the five `*_account_id` fields of a request, the five
+/// This is the layout the five `*_account_id` fields of a request, the five
 /// role columns of `recurring_templates` and a
 /// [`LastRoleAccounts`](crate::prefs::LastRoleAccounts) of the preferences
 /// file all share. On its own it says nothing about which accounts belong
@@ -722,7 +723,7 @@ mod tests {
     fn every_shape_is_stored_as_a_pair_that_reads_back_as_it() {
         for shape in SHAPES {
             assert_eq!(
-                SimpleEntryShape::from_kind(shape.kind(), shape.bill_status()),
+                SimpleEntryShape::from_pair(shape.kind(), shape.bill_status()),
                 Some(shape),
                 "{shape:?}"
             );
@@ -733,7 +734,7 @@ mod tests {
     fn every_pair_but_a_bill_without_a_status_has_a_shape_of_its_kind() {
         for kind in KINDS {
             for status in STATUSES {
-                let shape = SimpleEntryShape::from_kind(kind, status);
+                let shape = SimpleEntryShape::from_pair(kind, status);
                 let is_bill_without_status = kind == SimpleEntryKind::Bill && status.is_none();
 
                 assert_eq!(
@@ -755,22 +756,22 @@ mod tests {
 
         for status in STATUSES {
             assert_eq!(
-                SimpleEntryShape::from_kind(SimpleEntryKind::Expense, status),
+                SimpleEntryShape::from_pair(SimpleEntryKind::Expense, status),
                 Some(SimpleEntryShape::Expense)
             );
             assert_eq!(
-                SimpleEntryShape::from_kind(SimpleEntryKind::Transfer, status),
+                SimpleEntryShape::from_pair(SimpleEntryKind::Transfer, status),
                 Some(SimpleEntryShape::Transfer)
             );
         }
         for status in [None, Some(Paid), Some(PayExisting)] {
             assert_eq!(
-                SimpleEntryShape::from_kind(SimpleEntryKind::Income, status),
+                SimpleEntryShape::from_pair(SimpleEntryKind::Income, status),
                 Some(SimpleEntryShape::Income)
             );
         }
         assert_eq!(
-            SimpleEntryShape::from_kind(SimpleEntryKind::Income, Some(Unpaid)),
+            SimpleEntryShape::from_pair(SimpleEntryKind::Income, Some(Unpaid)),
             Some(SimpleEntryShape::IncomeReceivable)
         );
     }

@@ -31,8 +31,8 @@ use crate::db::{collect_rows, read_column, stored_date};
 use crate::domain::{AccountId, AccountType, EntityId};
 use crate::error::{DatabaseContext, Error, Result, ValidationError};
 use crate::ledger::{
-    ACTIVE_ENTRY_PREDICATE, PostSimpleEntryRequest, PostedEntryView, SimpleBillStatus,
-    SimpleEntryKind, ensure_writable_entity, get_account, get_entity, list_accounts,
+    ACTIVE_ENTRY_PREDICATE, PostSimpleEntryRequest, PostedEntryView, SimpleEntryKind,
+    SimpleEntryShape, ensure_writable_entity, get_account, get_entity, list_accounts,
     post_simple_entry_unchecked,
 };
 use crate::util::parse_date;
@@ -324,15 +324,14 @@ impl Flow {
     /// a row cannot be posted, so the answer only decides whether it is
     /// skipped as a duplicate before it is refused.
     const fn of_request(row: &PostSimpleEntryRequest) -> Self {
-        match (row.kind, row.bill_status) {
-            (SimpleEntryKind::Income, _) => Self::In,
-            (SimpleEntryKind::Expense, _)
-            | (
-                SimpleEntryKind::Bill,
-                Some(SimpleBillStatus::Paid | SimpleBillStatus::Unpaid) | None,
-            ) => Self::Out,
-            (SimpleEntryKind::Bill, Some(SimpleBillStatus::PayExisting))
-            | (SimpleEntryKind::Transfer, _) => Self::Internal,
+        use SimpleEntryShape::{
+            BillPaid, BillPayment, BillUnpaid, Expense, Income, IncomeReceivable, Transfer,
+        };
+
+        match SimpleEntryShape::from_pair(row.kind, row.bill_status) {
+            Some(Income | IncomeReceivable) => Self::In,
+            Some(Expense | BillPaid | BillUnpaid) | None => Self::Out,
+            Some(BillPayment | Transfer) => Self::Internal,
         }
     }
 
