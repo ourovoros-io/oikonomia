@@ -43,6 +43,11 @@ use tauri::{AppHandle, Manager, PhysicalPosition, WebviewUrl};
 /// (libayatana-appindicator) only ever shows the menu.
 const TRAY_REPORTS_CLICKS: bool = !cfg!(target_os = "linux");
 
+/// The directory, inside the app's cache directory, that the Linux tray
+/// writes its icon image into.
+#[cfg(target_os = "linux")]
+const TRAY_ICON_DIR: &str = "tray";
+
 /// The window label of the quick-add window. The frontend tells the two
 /// windows apart by it.
 const QUICK_ADD_LABEL: &str = "quick-add";
@@ -488,6 +493,40 @@ pub(crate) fn show_quick_add(app: &AppHandle, click: Option<PhysicalPosition<f64
     }
 }
 
+/// Whether the tray icon was created at start. Managed state, set once by
+/// [`install`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TrayStatus {
+    /// The icon was created.
+    Created,
+    /// Creating the icon failed, and the app runs without one.
+    Missing,
+}
+
+impl TrayStatus {
+    /// Returns the status that the outcome of [`init`] leaves, logging a
+    /// failure as a warning.
+    fn after(outcome: tauri::Result<()>) -> Self {
+        match outcome {
+            Ok(()) => Self::Created,
+            Err(err) => {
+                log::warn!("starting without a tray icon: {err}");
+                Self::Missing
+            }
+        }
+    }
+}
+
+/// Creates the tray icon and records whether it exists as the managed
+/// [`TrayStatus`].
+///
+/// A tray that cannot be created does not stop the start. It fails on
+/// desktops with no usable session bus, and the main window does not need
+/// it.
+pub(crate) fn install(app: &tauri::App, locale: Locale) {
+    app.manage(TrayStatus::after(init(app, locale)));
+}
+
 /// Creates the tray icon, with its menu and its click handler.
 ///
 /// The menu is worded in `locale`. A left click opens the quick-add window
@@ -496,8 +535,9 @@ pub(crate) fn show_quick_add(app: &AppHandle, click: Option<PhysicalPosition<f64
 /// # Errors
 ///
 /// Returns Tauri's error when the menu, the icon image or the tray itself
-/// cannot be created. The caller fails startup.
-pub(crate) fn init(app: &tauri::App, locale: Locale) -> tauri::Result<()> {
+/// cannot be created, or when the system names no cache directory for the
+/// Linux icon file.
+fn init(app: &tauri::App, locale: Locale) -> tauri::Result<()> {
     let menu = build_menu(app, locale)?;
 
     let tray = TrayIconBuilder::with_id("main")
@@ -535,6 +575,12 @@ pub(crate) fn init(app: &tauri::App, locale: Locale) -> tauri::Result<()> {
         tray
     };
 
+    // The Linux tray reads its icon from a file. Without a directory of its
+    // own, tray-icon writes it to `$XDG_RUNTIME_DIR/tray-icon`, else to the
+    // shared `/tmp/tray-icon`, which another user may already own.
+    #[cfg(target_os = "linux")]
+    let tray = tray.temp_dir_path(app.path().app_cache_dir()?.join(TRAY_ICON_DIR));
+
     tray.build(app)?;
 
     Ok(())
@@ -569,6 +615,17 @@ mod tests {
         assert_eq!(tray_tooltip(Locale::El), "Oikonomia");
         assert_eq!(tray_tooltip(Locale::Fr), "Oikonomia");
         assert_eq!(tray_tooltip(Locale::De), "Oikonomia");
+    }
+
+    #[test]
+    fn a_tray_that_cannot_be_created_is_recorded_as_missing_not_raised() {
+        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+
+        assert_eq!(
+            TrayStatus::after(Err(tauri::Error::Io(denied))),
+            TrayStatus::Missing
+        );
+        assert_eq!(TrayStatus::after(Ok(())), TrayStatus::Created);
     }
 
     /// Returns the number in the web source's `export const <name> = <number>`
