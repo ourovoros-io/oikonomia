@@ -314,8 +314,8 @@ function EditFooter({
   return (
     <div className="flex items-center justify-end gap-3 border-t border-[var(--color-border)] pt-4">
       {settled ? (
-        <p id={reasonId} className="text-xs text-[var(--color-muted)]">
-          {t('entry.settledBillLocked')}
+        <p id={reasonId} className="mr-auto text-sm text-[var(--color-muted)]">
+          {t('error.billSettled')}
         </p>
       ) : null}
       <Button

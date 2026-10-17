@@ -62,13 +62,14 @@ const ACTIVE_PAYMENT_PREDICATE: &str = "
 ///
 /// It is a lookup on `idx_entries_settles`, once per entry. A bill has at
 /// most one active payment because `post_simple_entry` lets a payment name
-/// only an open bill; the schema does not enforce it, and were it broken the
-/// subquery would return one of the payments.
+/// only an open bill. The schema does not enforce it; were it broken, the
+/// subquery returns the payment posted first.
 pub(crate) fn settled_by_sql() -> String {
     format!(
         "
         (SELECT pay.id FROM journal_entries pay
-         WHERE pay.settles_entry_id = je.id AND {ACTIVE_PAYMENT_PREDICATE})
+         WHERE pay.settles_entry_id = je.id AND {ACTIVE_PAYMENT_PREDICATE}
+         ORDER BY pay.rowid LIMIT 1)
         "
     )
 }

@@ -1901,7 +1901,7 @@ describe('TransactionsPage edit form', () => {
   })
 
   test('a bill a payment settles is listed as paid and offers neither Edit nor Delete', async () => {
-    const reason = 'A payment settles this bill. Delete the payment first to change or delete the bill.'
+    const reason = 'This bill has a payment. Delete the payment first, then change or delete the bill.'
     const settledBill: PostedEntryView = {
       ...postedEntry,
       listed_kind: 'bill',
@@ -1919,7 +1919,8 @@ describe('TransactionsPage edit form', () => {
     vi.mocked(api.entryList).mockResolvedValue([settledBill, incomeEntry])
     await renderReady()
 
-    expect(await screen.findByText('Bill, paid')).toBeTruthy()
+    const billRow = (await screen.findByText('Bill, paid')).closest('li')
+    expect(billRow?.querySelector('svg.lucide-file-check')).not.toBeNull()
     const [billDelete, incomeDelete] = screen.getAllByRole('button', { name: 'Delete entry' })
     expect(billDelete).toBeDisabled()
     expect(billDelete).toHaveAccessibleDescription(reason)

@@ -158,8 +158,26 @@ fn a_bill_names_the_active_payment_that_settles_it() {
     // Only the bill names its payment, never the payment itself.
     assert_eq!(settled_by(conn, &book, paid.entry.id), [None, None]);
 
+    // A corrected payment is replaced: the bill names the replacement.
+    let correction = PostSimpleEntry {
+        entity_id: book.entity_id,
+        accounts: payment(&book, book.bills_payable),
+        entry_date: common::date("2026-04-12"),
+        description: "power, paid".into(),
+        reference: None,
+        amount_minor: 4_000,
+        settles_entry_id: Some(bill_id),
+    };
+    let replacement =
+        replace_simple_entry(conn, paid.entry.id, &correction, Locale::En).expect("correct");
+    let replacement_id = Some(replacement.entry.id);
+    assert_eq!(
+        settled_by(conn, &book, bill_id),
+        [replacement_id, replacement_id]
+    );
+
     // A voided payment settles nothing: the bill is open again.
-    void_entry(conn, paid.entry.id, Locale::En).expect("void the payment");
+    void_entry(conn, replacement.entry.id, Locale::En).expect("void the payment");
     assert_eq!(settled_by(conn, &book, bill_id), [None, None]);
 }
 

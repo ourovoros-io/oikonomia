@@ -550,7 +550,7 @@
     }
   },
   "entry": {
-    "settledBillLocked": "Un paiement règle cette facture. Supprimez d’abord le paiement pour modifier ou supprimer la facture.",
+    "paidBill": "Facture, payée",
     "kind": {
       "openingBalance": "Solde d’ouverture",
       "other": "Écriture de journal"
@@ -916,7 +916,6 @@
     "list": {
       "title": "Toutes les écritures",
       "matchingTitle": "Écritures correspondantes",
-      "paidBill": "Facture, payée",
       "new": "Nouvelle écriture",
       "meta": {
         "counts": "{posted} enregistrées · {hidden} masquées"

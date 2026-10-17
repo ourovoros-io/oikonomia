@@ -35,7 +35,7 @@ import { useDialogError } from '../lib/useDialogError'
 import { renderUiTexts, type UiText } from '../lib/uiText'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import { beginExclusive } from '../lib/guards'
-import { amountTone, isMoneyOut } from '../lib/entryKind'
+import { amountTone, isMoneyOut, listedKindKey } from '../lib/entryKind'
 import { BillPicker } from '../components/BillPicker'
 import { CashFlowPulse } from '../components/CashFlowPulse'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -1311,7 +1311,7 @@ export function TransactionsPage({
                     <div className="truncate text-xs text-[var(--color-muted)] tabular-nums">
                       {formatDate(view.entry.entry_date)}
                       <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
-                      <span>{settled ? t('tx.list.paidBill') : t(`kind.${kindLabel}`)}</span>
+                      <span>{t(listedKindKey(kindLabel, settled))}</span>
                       {view.entry.reference ? (
                         <span>{t('entry.ref', { reference: view.entry.reference })}</span>
                       ) : null}
@@ -1335,20 +1335,24 @@ export function TransactionsPage({
                         })}
                       </AmountPill>
                     </span>
-                    {/* A disabled button gets no hover in every webview, so the
-                        reason sits on a wrapper too. */}
-                    <span title={settled ? t('entry.settledBillLocked') : undefined}>
+                    {/* The wrapper hides the button until the row is hovered or
+                        focused, and dims nothing itself, so a disabled button
+                        stays hidden too. It carries the reason as well: an
+                        engine may show no tooltip for a disabled control. */}
+                    <span
+                      className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100"
+                      title={settled ? t('error.billSettled') : undefined}
+                    >
                       <Button
                         variant="ghost"
                         size="iconSm"
-                        className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100"
                         disabled={settled}
                         onClick={(e) => {
                           e.stopPropagation()
                           setVoidId(view.entry.id)
                         }}
                         aria-label={t('tx.deleteEntry')}
-                        title={settled ? t('entry.settledBillLocked') : t('common.delete')}
+                        title={settled ? t('error.billSettled') : t('common.delete')}
                       >
                         <Trash2 className="size-4" />
                       </Button>
