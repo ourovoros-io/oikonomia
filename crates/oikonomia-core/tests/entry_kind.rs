@@ -11,13 +11,13 @@ mod common;
 
 use oikonomia_core::csv::post_import_rows;
 use oikonomia_core::documents::{NewDocument, post_simple_entry_with_document};
-use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, JournalEntryId};
+use oikonomia_core::domain::{AccountId, AccountType, ChartTemplate, EntityId, JournalEntryId};
 use oikonomia_core::ledger::{
-    CreateRecurringTemplate, CreateRecurringTemplateRequest, EntryFilter, ListedEntryKind,
-    PostSimpleEntry, PostSimpleEntryRequest, PostedEntryView, RecurringCadence, SimpleBillStatus,
-    SimpleEntryAccounts, SimpleEntryKind, create_recurring_template, get_entry, list_entries,
-    post_recurring_template, post_simple_entry, replace_simple_entry, set_account_opening_balance,
-    void_entry,
+    CreateAccount, CreateRecurringTemplate, CreateRecurringTemplateRequest, EntryFilter,
+    ListedEntryKind, PostSimpleEntry, PostSimpleEntryRequest, PostedEntryView, RecurringCadence,
+    SimpleBillStatus, SimpleEntryAccounts, SimpleEntryKind, archive_account, create_account,
+    create_recurring_template, get_entry, list_entries, post_recurring_template, post_simple_entry,
+    replace_simple_entry, set_account_opening_balance, void_entry,
 };
 use oikonomia_core::prefs::Locale;
 use rusqlite::Connection;
@@ -290,6 +290,84 @@ fn an_imported_row_and_an_entry_with_a_document_store_their_kind() {
 
     assert_listed_as(conn, &imported.posted[0], ListedEntryKind::Bill);
     assert_listed_as(conn, &with_document, ListedEntryKind::Bill);
+}
+
+#[test]
+fn the_reversal_of_a_paid_bill_is_listed_as_a_bill_too() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn);
+    let paid = SimpleEntryAccounts::BillPaid {
+        category: book.food,
+        wallet: book.checking,
+    };
+    let original = post_simple_entry(conn, &simple(&book, paid)).expect("post");
+
+    let voided = void_entry(conn, original.entry.id, Locale::En).expect("void");
+
+    assert_eq!(
+        stored_kind(conn, voided.reverse_id).as_deref(),
+        Some("bill")
+    );
+    let reverse = get_entry(conn, voided.reverse_id).expect("get");
+    assert_eq!(reverse.listed_kind, ListedEntryKind::Bill);
+}
+
+#[test]
+fn an_archived_payable_keeps_its_bills_and_does_not_make_the_card_one() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn);
+    let unpaid = SimpleEntryAccounts::BillUnpaid {
+        category: book.food,
+        payable: book.bills_payable,
+    };
+    let on_card = SimpleEntryAccounts::Expense {
+        category: book.food,
+        wallet: book.card,
+    };
+    let bill = post_simple_entry(conn, &simple(&book, unpaid)).expect("post");
+    let card = post_simple_entry(conn, &simple(&book, on_card)).expect("post");
+    forget_kind(conn, bill.entry.id);
+    forget_kind(conn, card.entry.id);
+
+    // With Bills Payable archived, the entry form's default for the part
+    // falls back to the first liability, the card.
+    archive_account(conn, book.bills_payable).expect("archive");
+
+    assert_eq!(
+        listed_kind(conn, book.entity_id, bill.entry.id),
+        ListedEntryKind::Bill
+    );
+    assert_eq!(
+        listed_kind(conn, book.entity_id, card.entry.id),
+        ListedEntryKind::Expense
+    );
+}
+
+#[test]
+fn a_blank_book_has_no_bill_account_but_its_recurring_bills() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let entity_id = common::book(conn, "Blank", ChartTemplate::Blank);
+    for (code, account_type) in [
+        ("2000", AccountType::Liability),
+        ("1000", AccountType::Asset),
+        ("5000", AccountType::Expense),
+    ] {
+        let input = CreateAccount {
+            entity_id,
+            code: code.into(),
+            name: code.into(),
+            account_type,
+            sort_order: None,
+        };
+        create_account(conn, &input).expect("account");
+    }
+
+    let card_expense = common::post_two_line(conn, entity_id, "2026-03-02", ("5000", "2000"), 900);
+
+    assert_listed_as(conn, &card_expense, ListedEntryKind::Expense);
 }
 
 #[test]

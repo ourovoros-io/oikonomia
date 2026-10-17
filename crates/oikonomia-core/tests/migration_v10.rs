@@ -83,6 +83,15 @@ fn a_v9_vault_lists_its_entries_from_their_lines_and_stores_kinds_after() {
     assert_eq!(kind_of(older_paid.entry.id), ListedEntryKind::Expense);
     assert_eq!(kind_of(older_unpaid.entry.id), ListedEntryKind::Bill);
     assert_eq!(kind_of(newer_paid.entry.id), ListedEntryKind::Bill);
+
+    let refused = conn.execute(
+        "UPDATE journal_entries SET kind = 'other' WHERE id = ?1",
+        [older_paid.entry.id.to_string()],
+    );
+    assert!(
+        refused.is_err(),
+        "the migrated column has its CHECK: {refused:?}"
+    );
 }
 
 #[test]

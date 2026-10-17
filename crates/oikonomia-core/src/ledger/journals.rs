@@ -163,8 +163,8 @@ pub struct PostedEntryView {
     /// it is the reversing entry that a void posted.
     pub is_voided: bool,
     /// What the entry is listed as: the kind it was posted as, or for an
-    /// entry that stores none, the kind its lines suggest
-    /// ([`ListedEntryKind`] has the rules).
+    /// entry that stores none, the kind its lines suggest. The rules are on
+    /// [`ListedEntryKind`].
     pub listed_kind: ListedEntryKind,
 }
 
@@ -252,7 +252,9 @@ pub struct EntryFilter {
 ///
 /// # Errors
 ///
-/// [`Error::VaultCorrupt`] for a stored id, date or amount that does not
+/// [`Error::VaultCorrupt`] for a stored id, date, kind or amount that does
+/// not parse, and, when a listed entry stores no kind, for an account of the
+/// book or a payable account of one of its recurring bills that does not
 /// parse; database errors as [`Error::Database`]. A stored status that is
 /// not `posted` is not an error here: the query leaves that entry out.
 pub fn list_entries(
@@ -293,10 +295,61 @@ pub fn list_entries(
 /// # Errors
 ///
 /// - [`Error::NotFound`] for an unknown entry.
-/// - [`Error::VaultCorrupt`] for a stored id, date, status or amount that
-///   does not parse.
+/// - [`Error::VaultCorrupt`] for a stored id, date, status, kind or amount
+///   that does not parse. For an entry that stores no kind, also for an
+///   account of its book, or the payable account of one of its recurring
+///   bills, that does not parse: the fallback reads them.
 /// - [`Error::Database`] on database errors.
 pub fn get_entry(conn: &Connection, id: JournalEntryId) -> Result<PostedEntryView> {
+    load_entry(conn, id)?.into_view(conn)
+}
+
+/// An entry as stored, before it is classified for the list.
+pub(crate) struct StoredEntry {
+    /// The entry itself.
+    pub(crate) entry: JournalEntry,
+    /// Its lines, in the order they were posted.
+    pub(crate) lines: Vec<JournalLine>,
+    /// Whether it is out of the active books.
+    is_voided: bool,
+    /// The simple-entry kind it was posted as, if it stores one.
+    kind: Option<SimpleEntryKind>,
+}
+
+impl StoredEntry {
+    /// Builds the view [`get_entry`] returns, classifying an entry that
+    /// stores no kind from its lines.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`KindFallback::load`], only for an entry without a kind.
+    fn into_view(self, conn: &Connection) -> Result<PostedEntryView> {
+        let listed_kind = match self.kind {
+            Some(kind) => ListedEntryKind::from(kind),
+            None => KindFallback::load(conn, self.entry.entity_id)?.classify(&self.lines),
+        };
+        Ok(PostedEntryView {
+            entry: self.entry,
+            lines: self.lines,
+            is_voided: self.is_voided,
+            listed_kind,
+        })
+    }
+}
+
+/// Reads one entry with its lines, without classifying it.
+///
+/// Callers that need the entry but not what it is listed as use this, so
+/// that voiding, correcting or attaching a document never reads the rest of
+/// the book, and never fails on a damaged row there.
+///
+/// # Errors
+///
+/// - [`Error::NotFound`] for an unknown entry.
+/// - [`Error::VaultCorrupt`] for a stored id, date, status, kind or amount
+///   that does not parse.
+/// - [`Error::Database`] on database errors.
+pub(crate) fn load_entry(conn: &Connection, id: JournalEntryId) -> Result<StoredEntry> {
     const OPERATION: &str = "read journal entry";
 
     let (entry, has_void_link, kind) = conn
@@ -325,16 +378,12 @@ pub fn get_entry(conn: &Connection, id: JournalEntryId) -> Result<PostedEntryVie
 
     let is_voided = has_void_link || entry_is_void_reverse(conn, entry.id)?;
     let lines = load_lines(conn, entry.id)?;
-    let listed_kind = match kind {
-        Some(kind) => ListedEntryKind::from(kind),
-        None => KindFallback::load(conn, entry.entity_id)?.classify(&lines),
-    };
 
-    Ok(PostedEntryView {
+    Ok(StoredEntry {
         entry,
         lines,
         is_voided,
-        listed_kind,
+        kind,
     })
 }
 
@@ -392,7 +441,8 @@ pub fn post_entry(conn: &Connection, input: &PostJournal) -> Result<PostedEntryV
     let tx = conn
         .unchecked_transaction()
         .database("begin journal entry post")?;
-    let view = post_entry_in_tx(&tx, input, false, ArchivedAccounts::Refuse, None)?;
+    let view =
+        post_entry_in_tx(&tx, input, false, ArchivedAccounts::Refuse, None)?.into_view(&tx)?;
     tx.commit().database("commit journal entry post")?;
     Ok(view)
 }
@@ -484,7 +534,7 @@ pub fn replace_simple_entry(
         .unchecked_transaction()
         .database("begin journal entry replacement")?;
 
-    let original = get_entry(&tx, original_id)?;
+    let original = load_entry(&tx, original_id)?;
     if original.entry.entity_id != input.entity_id {
         return Err(ValidationError::WrongBook.into());
     }
@@ -721,7 +771,8 @@ fn post_simple_entry_in_tx(
         hidden,
         ArchivedAccounts::Refuse,
         Some(input.accounts.kind()),
-    )
+    )?
+    .into_view(conn)
 }
 
 /// Checks `accounts` for an entry in the book of `entity_id` exactly as
@@ -1052,7 +1103,7 @@ fn post_entry_in_tx(
     hidden: bool,
     archived: ArchivedAccounts,
     kind: Option<SimpleEntryKind>,
-) -> Result<PostedEntryView> {
+) -> Result<StoredEntry> {
     // First, so that an archived entity is refused whatever else is wrong
     // with the entry, and by every operation that posts one.
     ensure_writable_entity(conn, input.entity_id)?;
@@ -1131,7 +1182,7 @@ fn post_entry_in_tx(
         .database("insert journal line")?;
     }
 
-    get_entry(conn, entry_id)
+    load_entry(conn, entry_id)
 }
 
 /// Resolves the (debit, credit) account pair for a simple entry, checking
@@ -1233,7 +1284,7 @@ fn ensure_active(account: &Account) -> Result<()> {
 ///
 /// Those of [`void_entry`].
 fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Result<VoidResult> {
-    let view = get_entry(conn, id)?;
+    let view = load_entry(conn, id)?;
     if view.is_voided {
         return Err(ValidationError::EntryAlreadyVoided.into());
     }
@@ -1256,14 +1307,15 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
         reference: view.entry.reference.clone(),
         lines: reverse_lines,
     };
-    // The reversal stores no kind: it is not an entry the user made, and the
-    // list shows it only as part of a voided pair.
+    // The reversal takes the original's kind, so the two halves of a voided
+    // pair are listed alike; the lines of a reversed paid bill would say
+    // expense.
     let reverse = post_entry_in_tx(
         conn,
         &reverse_input,
         view.entry.hidden,
         ArchivedAccounts::Accept,
-        None,
+        view.kind,
     )?;
 
     conn.execute(

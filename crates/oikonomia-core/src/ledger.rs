@@ -149,12 +149,12 @@ pub use entities::{
 };
 pub use entry_kind::ListedEntryKind;
 pub use history::{EntryChange, EntryHistoryItem, entry_history};
-pub(crate) use journals::post_simple_entry_unchecked;
 pub use journals::{
     EntryFilter, PostJournal, PostJournalLine, PostSimpleEntry, PostedEntryView, RegisterLine,
     VoidResult, account_register, get_entry, list_entries, post_entry, post_simple_entry,
     replace_simple_entry, set_account_opening_balance, set_entry_hidden, void_entry,
 };
+pub(crate) use journals::{load_entry, post_simple_entry_unchecked};
 pub use recurring::{
     CreateRecurringTemplate, DayOfMonth, RecurringCadence, RecurringPostResult, RecurringSchedule,
     RecurringTemplateFields, RecurringTemplateView, UpdateRecurringTemplate, advance_next_date,

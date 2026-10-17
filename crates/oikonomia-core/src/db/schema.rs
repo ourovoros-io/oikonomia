@@ -452,15 +452,17 @@ fn migrate_v9(tx: &Transaction<'_>) -> Result<()> {
 /// cannot tell the entry list which one the user entered. The column holds
 /// [`crate::ledger::SimpleEntryKind::identifier`] for every entry posted
 /// through the simple entry form, a correction, a recurring template, a CSV
-/// import or a document. It stays NULL for a journal entry posted line by
-/// line, for the reversing entry of a void, for an opening balance adjustment,
-/// and for every entry posted before this step; the entry list classifies
-/// those from their lines ([`crate::ledger::ListedEntryKind`]).
+/// import or a document, and the reversing entry of a void takes the kind of
+/// the entry it reverses. It stays NULL for a journal entry posted line by
+/// line, for an opening balance adjustment, for the reversal of either, and
+/// for every entry posted before this step; the entry list classifies those
+/// from their lines ([`crate::ledger::ListedEntryKind`]).
 ///
 /// The `CHECK` holds the column to those four codes. `SQLite` allows a `CHECK`
 /// on an added column and tests it against the existing rows
 /// (<https://www.sqlite.org/lang_altertable.html#alter_table_add_column>);
-/// they are all NULL, which passes.
+/// they are all NULL, which passes. `SQLite` cannot change a `CHECK` in
+/// place, so a fifth kind needs a migration that rebuilds the table.
 fn migrate_v10(tx: &Transaction<'_>) -> Result<()> {
     // `ADD COLUMN` has no `IF NOT EXISTS`, and the older migration tests take a
     // current vault back to an earlier version without dropping this column.
