@@ -8,10 +8,11 @@ use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
     CreateEntity, CreateRecurringTemplate, CreateRecurringTemplateRequest, EntryFilter,
     RecurringCadence, RecurringSchedule, RecurringTemplateFields, RecurringTemplateView,
-    SimpleBillStatus, SimpleEntryKind, UpdateRecurringTemplate, UpdateRecurringTemplateRequest,
-    archive_account, create_entity, create_recurring_template, delete_entity,
-    delete_recurring_template, list_accounts, list_entries, list_recurring_templates,
-    list_recurring_templates_as_of, post_recurring_template, update_recurring_template,
+    SimpleBillStatus, SimpleEntryKind, SimpleEntryShape, UpdateRecurringTemplate,
+    UpdateRecurringTemplateRequest, archive_account, create_entity, create_recurring_template,
+    delete_entity, delete_recurring_template, list_accounts, list_entries,
+    list_recurring_templates, list_recurring_templates_as_of, post_recurring_template,
+    update_recurring_template,
 };
 use oikonomia_core::prefs::Locale;
 use oikonomia_core::util::parse_date;
@@ -86,7 +87,7 @@ fn create_and_list_by_entity() {
 
     let created = create_template(conn, &monthly_rent(entity_id, &accounts)).expect("create");
     assert_eq!(created.fields.name, "Rent");
-    assert_eq!(created.fields.accounts.kind(), SimpleEntryKind::Expense);
+    assert_eq!(created.fields.accounts.shape(), SimpleEntryShape::Expense);
     assert_eq!(created.fields.amount_minor, 85_000);
     assert_eq!(created.fields.schedule.cadence(), RecurringCadence::Monthly);
     assert_eq!(created.fields.schedule.day_of_month(), Some(1));
@@ -381,17 +382,14 @@ fn income_template_and_bill_status() {
         },
     )
     .expect("income");
-    assert_eq!(salary.fields.accounts.kind(), SimpleEntryKind::Income);
+    assert_eq!(salary.fields.accounts.shape(), SimpleEntryShape::Income);
 
     let mut bill = monthly_rent(entity_id, &accounts);
     bill.name = "Phone".into();
     bill.kind = SimpleEntryKind::Bill;
     bill.bill_status = Some(SimpleBillStatus::Paid);
     let created = create_template(conn, &bill).expect("bill");
-    assert_eq!(
-        created.fields.accounts.bill_status(),
-        Some(SimpleBillStatus::Paid)
-    );
+    assert_eq!(created.fields.accounts.shape(), SimpleEntryShape::BillPaid);
 }
 
 #[test]

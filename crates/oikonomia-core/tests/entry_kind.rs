@@ -181,7 +181,7 @@ fn each_simple_entry_stores_and_lists_its_kind() {
 
         assert_eq!(
             stored_kind(conn, posted.entry.id).as_deref(),
-            Some(accounts.kind().identifier()),
+            Some(accounts.shape().kind().identifier()),
             "{accounts:?}"
         );
         assert_listed_as(conn, &posted, expected);

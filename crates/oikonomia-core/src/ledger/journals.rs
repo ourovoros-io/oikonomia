@@ -1054,7 +1054,7 @@ fn stored_posted_as(
         })
         .transpose()?;
 
-    Ok(Some(PostedAs { kind, bill_status }))
+    Ok(Some(PostedAs::from_columns(kind, bill_status)))
 }
 
 /// The query of [`load_listed_headers`]: the entries
@@ -1276,9 +1276,9 @@ fn post_entry_in_tx(
             reference,
             now,
             i64::from(hidden),
-            posted_as.map(|posted| posted.kind.identifier()),
+            posted_as.map(|posted| posted.kind().identifier()),
             posted_as
-                .and_then(|posted| posted.bill_status)
+                .and_then(PostedAs::bill_status)
                 .map(SimpleBillStatus::identifier),
         ],
     )
