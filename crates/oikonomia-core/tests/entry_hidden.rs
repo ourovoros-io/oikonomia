@@ -378,6 +378,28 @@ fn the_dashboard_counts_hidden_entries_behind_its_comparison() {
     );
 }
 
+/// A window that is not whole months compares with the same number of days
+/// before it, and the note covers exactly those days too.
+#[test]
+fn the_dashboard_counts_a_day_window_comparison() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = create_book(conn, "Personal", ChartTemplate::Personal);
+    for date in ["2026-02-22", "2026-02-23", "2026-03-04", "2026-03-15"] {
+        let view = common::post_two_line(conn, book.entity_id, date, ("5100", "2000"), 900);
+        set_entry_hidden(conn, view.entry.id, true).expect("hide");
+    }
+
+    // Compares with 2026-02-23..=2026-03-04.
+    let (from, to) = (common::date("2026-03-05"), common::date("2026-03-14"));
+    let summary = dashboard_summary(conn, book.entity_id, from, to, to).expect("dashboard");
+
+    assert_eq!(
+        summary.hidden_entry_count, 2,
+        "the first and last days of the previous window; not the day before it or after `to`"
+    );
+}
+
 #[test]
 fn voiding_hidden_entry_omits_original_and_reverse_from_export() {
     let (_dir, vault) = common::vault();

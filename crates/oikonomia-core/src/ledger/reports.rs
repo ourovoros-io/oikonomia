@@ -219,6 +219,8 @@ pub struct DashboardSummary {
     /// `net_vs_previous_bps`, which an export leaves out: those in the window
     /// or the [`previous_window`] on an income or expense account, and those
     /// through the `assets_as_of` date on an asset account, each counted once.
+    /// Those in the previous window count even when `net_vs_previous_bps` is
+    /// `None` because their net is zero, since they are what made it zero.
     pub hidden_entry_count: usize,
 }
 
@@ -447,14 +449,17 @@ pub fn dashboard_summary(
         }
         None => None,
     };
-    // The previous window ends the day before `from`, so the net and its
-    // comparison read one unbroken range, and one count covers both.
-    let pnl_from = previous.map_or(from, |(previous_from, _)| previous_from);
     let (savings_rate_bps, spend_ratio_bps) = if income > 0 {
         (ratio_bps(net_income, income), ratio_bps(expenses, income))
     } else {
         (None, None)
     };
+
+    // The previous window ends the day before `from`, so the net and its
+    // comparison read one unbroken range, and one count covers both.
+    let pnl_from = previous.map_or(from, |(previous_from, _)| previous_from);
+    let hidden_entry_count =
+        count_hidden_dashboard_entries(conn, entity_id, pnl_from, to, assets_as_of)?;
 
     Ok(DashboardSummary {
         entity_id,
@@ -468,13 +473,7 @@ pub fn dashboard_summary(
         spend_ratio_bps,
         top_expense: top_expense(conn, entity_id, from, to, expenses)?,
         net_vs_previous_bps,
-        hidden_entry_count: count_hidden_dashboard_entries(
-            conn,
-            entity_id,
-            pnl_from,
-            to,
-            assets_as_of,
-        )?,
+        hidden_entry_count,
     })
 }
 
@@ -486,6 +485,9 @@ pub fn dashboard_summary(
 /// month compares with the month before, a quarter with the quarter before and
 /// a year with the year before. Any other window steps back by the same number
 /// of days. `None` only at the edge of the calendar.
+///
+/// The result always ends the day before `from`, so it and `[from, to]` form
+/// one unbroken range; the dashboard's hidden-entry count relies on that.
 ///
 /// The caller passes `from <= to`; the result for an inverted pair is not a
 /// window before `from`.
