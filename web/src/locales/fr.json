@@ -365,6 +365,7 @@
       "restoreError": "Impossible de restaurer le livre.",
       "restoreNameTaken": "Un autre livre s’appelle désormais « {name} ». Archivez ou supprimez cet autre livre avant de restaurer celui-ci.",
       "created": "Livre {name} créé.",
+      "restored": "Livre {name} restauré.",
       "rename": {
         "title": "Renommer le livre",
         "aria": "Renommer {name}"

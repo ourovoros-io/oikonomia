@@ -365,6 +365,7 @@
       "restoreError": "Das Buch konnte nicht wiederhergestellt werden.",
       "restoreNameTaken": "Ein anderes Buch heißt inzwischen „{name}“. Archivieren oder löschen Sie das andere Buch, bevor Sie dieses wiederherstellen.",
       "created": "Buch {name} erstellt.",
+      "restored": "Buch {name} wiederhergestellt.",
       "rename": {
         "title": "Buch umbenennen",
         "aria": "{name} umbenennen"
