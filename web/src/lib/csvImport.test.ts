@@ -51,6 +51,7 @@ function suggested(kind: 'expense' | 'income'): SimpleEntryInput {
     payable_account_id: null,
     from_account_id: null,
     to_account_id: null,
+    settles_entry_id: null,
   }
 }
 

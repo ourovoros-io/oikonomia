@@ -141,6 +141,7 @@ function suggestedRow(
       payable_account_id: null,
       from_account_id: null,
       to_account_id: null,
+      settles_entry_id: null,
     },
     signed_amount_minor: kind === 'expense' ? -4250 : 4250,
   }

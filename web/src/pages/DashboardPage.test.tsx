@@ -90,6 +90,7 @@ const entries: PostedEntryView[] = [
     is_voided: false,
     listed_kind: 'expense',
     simple_form: null,
+    settles_entry_id: null,
   },
   {
     entry: { id: 'j2', entity_id: 'e1', entry_date: '2026-08-11', description: 'Client invoice', reference: null, status: 'posted', hidden: false },
@@ -97,6 +98,7 @@ const entries: PostedEntryView[] = [
     is_voided: false,
     listed_kind: 'income',
     simple_form: null,
+    settles_entry_id: null,
   },
 ]
 
