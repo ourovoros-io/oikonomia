@@ -21,6 +21,7 @@ Rust core, with a React interface in a webview.
 | `crates/oikonomia-core` | Vault, schema and migrations, ledger, reports, CSV, documents and OCR, UI preferences. No network crates (`scripts/assert-core-offline.sh`). |
 | `crates/oikonomia-update` | The update client: signed feed, host allow-list, verified download. The only crate that talks to the network. |
 | `crates/macos-dock-icon` | Sets the Dock icon for dev mode (`make app`). |
+| `crates/appindicator-probe` | Checks that the Linux tray library loads before the tray is created; without it the tray library panics. |
 | `apps/desktop/src-tauri` | The Tauri shell: IPC commands, app state, tray and quick-add window, idle auto-lock, capabilities, bundle config, OCR models. |
 | `web` | The React, Vite and Tailwind interface. |
 | `docs` | This overview, the release runbook, brand assets. |
