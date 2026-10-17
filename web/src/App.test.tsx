@@ -377,6 +377,14 @@ describe('App top bar and Quick add', () => {
 
     expect(await screen.findByRole('button', { name: 'Quick add' })).toBeDisabled()
   })
+
+  test('Quick add fills the sidebar width, so a long label truncates with a tooltip', async () => {
+    render(<App />)
+
+    const button = await screen.findByRole('button', { name: 'Quick add' })
+    expect(button.className).toMatch(/w-full/)
+    expect(within(button).getByTitle('Quick add').className).toMatch(/truncate/)
+  })
 })
 
 describe('App after archiving the current book', () => {

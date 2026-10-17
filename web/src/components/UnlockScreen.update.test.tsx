@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import '@testing-library/jest-dom/vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
@@ -410,6 +410,16 @@ describe('download bars and cancel', () => {
     expect(screen.getByRole('button', { name: 'Installieren und neu starten' })).toHaveStyle({
       width: '208px',
     })
+  })
+
+  test('the fixed-width actions and the full-width submit truncate with a tooltip', () => {
+    window.history.replaceState({}, '', '/?unlockUpdate=available')
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+
+    for (const name of ['Later', 'Install and restart', 'Unlock']) {
+      const label = within(screen.getByRole('button', { name })).getByTitle(name)
+      expect(label.className).toMatch(/truncate/)
+    }
   })
 })
 

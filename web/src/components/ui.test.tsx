@@ -6,7 +6,20 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { useState } from 'react'
 import userEvent from '@testing-library/user-event'
 
-import { AmountPill, Button, ErrorBanner, Field, IconBadge, Input, MetricCard, MoneyPill, Notice, Segmented, Select } from './ui'
+import {
+  AmountPill,
+  Button,
+  ErrorBanner,
+  Field,
+  IconBadge,
+  Input,
+  MetricCard,
+  MoneyPill,
+  Notice,
+  Segmented,
+  Select,
+  TruncatedLabel,
+} from './ui'
 
 afterEach(() => {
   cleanup()
@@ -143,6 +156,26 @@ describe('Button', () => {
   test('defaults to primary variant through data-variant attribute', () => {
     render(<Button>Save entry</Button>)
     expect(screen.getByRole('button', { name: 'Save entry' })).toHaveAttribute('data-variant', 'primary')
+  })
+
+  // jsdom does no layout, so the classes are the only observable sign here.
+  test('keeps its label on one line', () => {
+    render(<Button>Γρήγορη καταχώριση</Button>)
+
+    expect(screen.getByRole('button', { name: 'Γρήγορη καταχώριση' }).className).toMatch(/whitespace-nowrap/)
+  })
+
+  test('a truncated label keeps the button name and shows the full label on hover', () => {
+    render(
+      <Button className="w-full">
+        <TruncatedLabel text="Verschlüsselten Tresor anlegen" />
+      </Button>,
+    )
+
+    const label = screen.getByTitle('Verschlüsselten Tresor anlegen')
+    expect(label.className).toMatch(/truncate/)
+    expect(label.className).toMatch(/min-w-0/)
+    expect(screen.getByRole('button', { name: 'Verschlüsselten Tresor anlegen' })).toContainElement(label)
   })
 })
 
