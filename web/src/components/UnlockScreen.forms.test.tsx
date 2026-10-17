@@ -119,6 +119,37 @@ describe('UnlockScreen form errors', () => {
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
+  test('a refused short password stays while only Confirm is edited', async () => {
+    vi.mocked(vaultInit).mockRejectedValue({
+      code: 'password_too_short',
+      message: 'too short',
+      params: { min: '12' },
+    })
+    render(<UnlockScreen status="uninitialized" onUnlocked={() => {}} />)
+    await userEvent.type(screen.getByLabelText('Password'), 'short-pass')
+    await userEvent.type(screen.getByLabelText('Confirm password'), 'short-pass')
+    await userEvent.click(screen.getByRole('button', { name: 'Create encrypted vault' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('too short')
+
+    await userEvent.type(screen.getByLabelText('Confirm password'), 'x')
+
+    expect(screen.getByRole('alert')).toHaveTextContent('too short')
+  })
+
+  test('an unlock failure the password cannot fix stays while it is retyped', async () => {
+    vi.mocked(vaultUnlock).mockRejectedValue({ code: 'vault_too_new', message: '' })
+    render(<UnlockScreen status="locked" onUnlocked={() => {}} />)
+    await userEvent.type(screen.getByLabelText('Password'), 'secret')
+    await userEvent.click(screen.getByRole('button', { name: 'Unlock' }))
+    const alert = await screen.findByRole('alert')
+    const sentence = alert.textContent
+
+    await userEvent.type(screen.getByLabelText('Password'), 'x')
+
+    expect(screen.getByRole('alert')).toHaveTextContent(sentence ?? '')
+    expect(sentence).not.toBe('')
+  })
+
   test('a restore error stays while the password is typed', async () => {
     vi.mocked(vaultPickBackup).mockRejectedValue({ code: 'backup_invalid', message: '' })
     render(<UnlockScreen status="locked" onUnlocked={() => {}} />)

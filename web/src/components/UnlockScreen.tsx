@@ -22,7 +22,7 @@ import {
 } from '../lib/tauri'
 import { asCommandError, commandErrorMessage } from '../lib/commandError'
 import { restoreCommandError, restoreConfirm } from '../lib/vaultBackupUi'
-import { t as translate } from '../lib/i18n'
+import { t as translate, type MessageKey } from '../lib/i18n'
 import { useI18n } from '../lib/I18nProvider'
 import { LanguagePill } from './LanguagePill'
 import { UnlockUpdateDialog } from './UnlockUpdateDialog'
@@ -61,11 +61,27 @@ type PasswordField = 'password' | 'confirm'
  * `fields` are the inputs it is about; editing one of them clears it.
  */
 type UnlockError =
-  | { kind: 'copy'; key: string; fields: readonly PasswordField[] }
+  | { kind: 'copy'; key: MessageKey; fields: readonly PasswordField[] }
   | { kind: 'submit'; error: CommandError; fields: readonly PasswordField[] }
   | { kind: 'restore'; error: unknown; fields: readonly PasswordField[] }
 
-/** The banner's sentence for `error`, in the current language. */
+/**
+ * Codes that a new password entry can fix. Any other failure (a vault too new
+ * to open, a disk error) is the only explanation the person gets, so typing
+ * must not hide it.
+ */
+const PASSWORD_CODES: ReadonlySet<string> = new Set(['invalid_password', 'password_too_short'])
+
+function submitFailure(error: CommandError): UnlockError {
+  const fields: readonly PasswordField[] = PASSWORD_CODES.has(error.code) ? ['password'] : []
+  return { kind: 'submit', error, fields }
+}
+
+/**
+ * The banner's sentence for `error`, in the current language. Module-level `t`
+ * because this runs outside the component; the caller re-runs it on a language
+ * change.
+ */
 function unlockErrorText(error: UnlockError): string {
   switch (error.kind) {
     case 'copy':
@@ -153,8 +169,8 @@ export function UnlockScreen({
     dialogWasOpen.current = dialogOpen
   }, [dialogOpen])
 
-  // Worded on a language switch, not on every keystroke: a vague command error
-  // is logged each time it is worded.
+  // Worded when the error or the language changes, not on every keystroke: a
+  // vague command error is logged each time it is worded.
   const errorText = useMemo(
     () => (error ? unlockErrorText(error) : null),
     // The wording reads the current language from the catalog, not from a
@@ -212,7 +228,7 @@ export function UnlockScreen({
     } catch (err) {
       // A rejection can be anything, including nothing.
       const cmd = asCommandError(err)
-      rejectInput({ kind: 'submit', error: cmd, fields: ['password'] }, 'password')
+      rejectInput(submitFailure(cmd), 'password')
     } finally {
       setBusy(false)
       // A wrong unlock password is retyped; a refused new vault keeps both
