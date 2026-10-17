@@ -16,7 +16,7 @@ thiserror = { workspace = true }
 # probe opens it the same way (`RTLD_LAZY | RTLD_LOCAL`). It is already in the
 # lock file, so no crate is added.
 [target.'cfg(target_os = "linux")'.dependencies]
-libloading = "=0.7.4"
+libloading = "=0.9.0"
 
 # The workspace lint set, copied because a crate cannot inherit it and change
 # one level: the workspace forbids `unsafe` code, and this crate holds one
