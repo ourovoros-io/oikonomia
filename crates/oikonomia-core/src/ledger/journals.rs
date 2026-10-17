@@ -18,7 +18,9 @@
 //! the UI holds no accounting rule. What needs the database is checked here:
 //! that each account exists, has a type its part accepts, belongs to the
 //! entry's entity, is not archived, and is not the account on the other
-//! side.
+//! side. A simple entry also stores its kind, because a bill paid at once has
+//! the lines of an expense; the views report what an entry is listed as in
+//! [`PostedEntryView::listed_kind`].
 //!
 //! # Entries are not edited
 //!
@@ -75,7 +77,8 @@ use crate::ledger::balance::{
     ACTIVE_ENTRY_PREDICATE, account_balance_as_of, add_minor, normal_balance,
 };
 use crate::ledger::entities::ensure_writable_entity;
-use crate::ledger::simple_entry::{RoleAccount, SimpleEntryAccounts};
+use crate::ledger::entry_kind::{KindFallback, ListedEntryKind};
+use crate::ledger::simple_entry::{RoleAccount, SimpleEntryAccounts, SimpleEntryKind};
 use crate::money::Money;
 use crate::prefs::Locale;
 use crate::text::{opening_balance_description, void_description, void_memo};
@@ -159,6 +162,10 @@ pub struct PostedEntryView {
     /// True if this entry is out of the active books: it has been voided, or
     /// it is the reversing entry that a void posted.
     pub is_voided: bool,
+    /// What the entry is listed as: the kind it was posted as, or for an
+    /// entry that stores none, the kind its lines suggest
+    /// ([`ListedEntryKind`] has the rules).
+    pub listed_kind: ListedEntryKind,
 }
 
 /// One line of [`account_register`]: a posting to the account, with the
@@ -257,12 +264,26 @@ pub fn list_entries(
     let headers = load_listed_headers(conn, &listed)?;
     let mut lines_by_entry = load_listed_lines(conn, &listed)?;
 
+    // Loaded once for the whole list, and only when an entry needs it.
+    let fallback = if headers.iter().any(|header| header.kind.is_none()) {
+        KindFallback::load(conn, entity_id)?
+    } else {
+        KindFallback::default()
+    };
+
     Ok(headers
         .into_iter()
-        .map(|(entry, is_voided)| PostedEntryView {
-            lines: lines_by_entry.remove(&entry.id).unwrap_or_default(),
-            entry,
-            is_voided,
+        .map(|header| {
+            let lines = lines_by_entry.remove(&header.entry.id).unwrap_or_default();
+            let listed_kind = header
+                .kind
+                .map_or_else(|| fallback.classify(&lines), ListedEntryKind::from);
+            PostedEntryView {
+                entry: header.entry,
+                lines,
+                is_voided: header.is_voided,
+                listed_kind,
+            }
         })
         .collect())
 }
@@ -276,35 +297,44 @@ pub fn list_entries(
 ///   does not parse.
 /// - [`Error::Database`] on database errors.
 pub fn get_entry(conn: &Connection, id: JournalEntryId) -> Result<PostedEntryView> {
-    let (entry, has_void_link) = conn
+    const OPERATION: &str = "read journal entry";
+
+    let (entry, has_void_link, kind) = conn
         .query_row(
             "
             SELECT id, entity_id, entry_date, description, reference, status, hidden,
-                   voided_by_entry_id
+                   voided_by_entry_id, kind
             FROM journal_entries WHERE id = ?1
             ",
             [id.to_string()],
             |row| {
                 let voided_by: Option<String> = row.get(7)?;
                 Ok((
-                    map_entry_row("read journal entry", row),
+                    map_entry_row(OPERATION, row),
                     voided_by.is_some(),
+                    stored_kind(OPERATION, row, 8),
                 ))
             },
         )
         .map_err(|err| match err {
             rusqlite::Error::QueryReturnedNoRows => Error::NotFound(Resource::JournalEntry),
-            other => Error::database("read journal entry", other),
+            other => Error::database(OPERATION, other),
         })?;
     let entry = entry?;
+    let kind = kind?;
 
     let is_voided = has_void_link || entry_is_void_reverse(conn, entry.id)?;
     let lines = load_lines(conn, entry.id)?;
+    let listed_kind = match kind {
+        Some(kind) => ListedEntryKind::from(kind),
+        None => KindFallback::load(conn, entry.entity_id)?.classify(&lines),
+    };
 
     Ok(PostedEntryView {
         entry,
         lines,
         is_voided,
+        listed_kind,
     })
 }
 
@@ -362,7 +392,7 @@ pub fn post_entry(conn: &Connection, input: &PostJournal) -> Result<PostedEntryV
     let tx = conn
         .unchecked_transaction()
         .database("begin journal entry post")?;
-    let view = post_entry_in_tx(&tx, input, false, ArchivedAccounts::Refuse)?;
+    let view = post_entry_in_tx(&tx, input, false, ArchivedAccounts::Refuse, None)?;
     tx.commit().database("commit journal entry post")?;
     Ok(view)
 }
@@ -690,6 +720,7 @@ fn post_simple_entry_in_tx(
         },
         hidden,
         ArchivedAccounts::Refuse,
+        Some(input.accounts.kind()),
     )
 }
 
@@ -795,29 +826,67 @@ fn like_pattern(text: &str) -> String {
     format!("%{escaped}%")
 }
 
-/// Loads the entries [`list_entries`] returns, newest first, each with
-/// whether it is out of the active books.
+/// One header row of [`list_entries`], before its lines are attached.
+struct ListedHeader {
+    /// The entry itself.
+    entry: JournalEntry,
+    /// Whether the entry is out of the active books.
+    is_voided: bool,
+    /// The simple-entry kind the entry was posted as, if it stores one.
+    kind: Option<SimpleEntryKind>,
+}
+
+/// Loads the entries [`list_entries`] returns, newest first.
 ///
 /// # Errors
 ///
-/// - [`Error::VaultCorrupt`] for a stored id or date that does not parse.
+/// - [`Error::VaultCorrupt`] for a stored id, date or kind that does not
+///   parse.
 /// - [`Error::Database`] on database errors.
-fn load_listed_headers(
-    conn: &Connection,
-    listed: &ListedEntries,
-) -> Result<Vec<(JournalEntry, bool)>> {
-    let mut stmt = conn
-        .prepare(&listed_headers_sql())
-        .database("list journal entries")?;
+fn load_listed_headers(conn: &Connection, listed: &ListedEntries) -> Result<Vec<ListedHeader>> {
+    const OPERATION: &str = "list journal entries";
+
+    let mut stmt = conn.prepare(&listed_headers_sql()).database(OPERATION)?;
 
     let rows = stmt
         .query_map(listed.bound(), |row| {
             let is_voided: i64 = row.get(8)?;
-            Ok(map_entry_row("list journal entries", row).map(|entry| (entry, is_voided != 0)))
+            Ok(map_entry_row(OPERATION, row).and_then(|entry| {
+                Ok(ListedHeader {
+                    entry,
+                    is_voided: is_voided != 0,
+                    kind: stored_kind(OPERATION, row, 9)?,
+                })
+            }))
         })
-        .database("list journal entries")?;
+        .database(OPERATION)?;
 
-    collect_rows("list journal entries", rows)
+    collect_rows(OPERATION, rows)
+}
+
+/// Reads the `journal_entries.kind` column at `index`.
+///
+/// # Errors
+///
+/// [`Error::VaultCorrupt`] naming the column when it holds text that is not a
+/// kind's identifier, or a value that is not text.
+fn stored_kind(
+    operation: &'static str,
+    row: &rusqlite::Row<'_>,
+    index: usize,
+) -> Result<Option<SimpleEntryKind>> {
+    // The schema's `CHECK` allows only the four identifiers, so other text
+    // was not written by the application.
+    read_column::<Option<String>>(operation, row, index)?
+        .map(|text| {
+            SimpleEntryKind::from_identifier(&text).ok_or_else(|| {
+                corrupt_column(
+                    "journal_entries.kind",
+                    format_args!("unknown entry kind: {text}"),
+                )
+            })
+        })
+        .transpose()
 }
 
 /// The query of [`load_listed_headers`]: the entries
@@ -836,7 +905,8 @@ fn listed_headers_sql() -> String {
                    OR EXISTS (
                        SELECT 1 FROM journal_entries voider
                        WHERE voider.voided_by_entry_id = je.id
-                   ) AS is_voided
+                   ) AS is_voided,
+               je.kind
         FROM journal_entries je
         WHERE {LISTED_ENTRIES_PREDICATE}
         ORDER BY je.entry_date DESC, je.created_at DESC, je.rowid DESC
@@ -969,6 +1039,8 @@ enum ArchivedAccounts {
 /// Callers own the transaction: [`post_entry`] and [`void_entry`] wrap this so
 /// a failure mid-insert can never leave a partial posted entry behind.
 /// `hidden` is for [`void_entry`]: a reverse of a hidden original stays hidden.
+/// `kind` is the simple-entry kind to store, `None` for every entry that was
+/// not posted as one.
 ///
 /// # Errors
 ///
@@ -979,6 +1051,7 @@ fn post_entry_in_tx(
     input: &PostJournal,
     hidden: bool,
     archived: ArchivedAccounts,
+    kind: Option<SimpleEntryKind>,
 ) -> Result<PostedEntryView> {
     // First, so that an archived entity is refused whatever else is wrong
     // with the entry, and by every operation that posts one.
@@ -1022,8 +1095,8 @@ fn post_entry_in_tx(
         "
         INSERT INTO journal_entries (
             id, entity_id, entry_date, description, reference,
-            status, created_at, posted_at, voided_by_entry_id, hidden
-        ) VALUES (?1, ?2, ?3, ?4, ?5, 'posted', ?6, ?6, NULL, ?7)
+            status, created_at, posted_at, voided_by_entry_id, hidden, kind
+        ) VALUES (?1, ?2, ?3, ?4, ?5, 'posted', ?6, ?6, NULL, ?7, ?8)
         ",
         rusqlite::params![
             entry_id.to_string(),
@@ -1033,6 +1106,7 @@ fn post_entry_in_tx(
             reference,
             now,
             i64::from(hidden),
+            kind.map(SimpleEntryKind::identifier),
         ],
     )
     .database("insert journal entry")?;
@@ -1182,11 +1256,14 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
         reference: view.entry.reference.clone(),
         lines: reverse_lines,
     };
+    // The reversal stores no kind: it is not an entry the user made, and the
+    // list shows it only as part of a voided pair.
     let reverse = post_entry_in_tx(
         conn,
         &reverse_input,
         view.entry.hidden,
         ArchivedAccounts::Accept,
+        None,
     )?;
 
     conn.execute(

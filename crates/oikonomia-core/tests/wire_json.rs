@@ -25,9 +25,10 @@ use oikonomia_core::documents::{AnalyzerStatus, DocumentMeta, DocumentSuggestion
 use oikonomia_core::domain::{Account, Entity, JournalEntry, JournalLine};
 use oikonomia_core::ledger::{
     BalanceSheet, CashFlowSeries, CreateAccount, CreateEntity, CreateRecurringTemplateRequest,
-    DashboardSummary, EntryHistoryItem, JournalLineRequest, PnL, PostJournalRequest,
-    PostSimpleEntryRequest, PostedEntryView, RecurringPostResult, RecurringTemplateView,
-    RegisterLine, TrialBalance, UpdateAccount, UpdateRecurringTemplateRequest, VoidResult,
+    DashboardSummary, EntryHistoryItem, JournalLineRequest, ListedEntryKind, PnL,
+    PostJournalRequest, PostSimpleEntryRequest, PostedEntryView, RecurringPostResult,
+    RecurringTemplateView, RegisterLine, TrialBalance, UpdateAccount,
+    UpdateRecurringTemplateRequest, VoidResult,
 };
 use oikonomia_core::prefs::{UiPrefs, load_ui_prefs_view, ui_prefs_path};
 use serde::Serialize;
@@ -148,8 +149,17 @@ fn posted_entry_view() {
         r#""amount_minor":0},"memo":null},{"id":"55555555-5555-4555-8555-555555555555","#,
         r#""entry_id":"33333333-3333-4333-8333-333333333333","account_id":"#,
         r#""66666666-6666-4666-8666-666666666666","debit":{"amount_minor":0},"credit":{"#,
-        r#""amount_minor":4500},"memo":null}],"is_voided":false}"#,
+        r#""amount_minor":4500},"memo":null}],"is_voided":false,"listed_kind":"expense"}"#,
     ));
+}
+
+/// The UI words each of these codes, so a renamed one would show a missing
+/// translation key.
+#[test]
+fn listed_entry_kind_of_each_code() {
+    for code in ["expense", "income", "bill", "transfer", "other"] {
+        assert_json_is_pinned::<ListedEntryKind>(&format!(r#""{code}""#));
+    }
 }
 
 #[test]
@@ -300,7 +310,8 @@ fn recurring_post_result() {
         r#"{"entry":{"entry":{"id":"33333333-3333-4333-8333-333333333333","entity_id":"#,
         r#""11111111-1111-4111-8111-111111111111","entry_date":"2026-08-10","description":"#,
         r#""Power","reference":null,"status":"posted","hidden":false},"lines":[],"is_voided":"#,
-        r#"false},"template":{"id":"88888888-8888-4888-8888-888888888888","entity_id":"#,
+        r#"false,"listed_kind":"bill"},"template":{"id":"88888888-8888-4888-8888-888888888888","#,
+        r#""entity_id":"#,
         r#""11111111-1111-4111-8111-111111111111","name":"Power","kind":"bill","bill_status":"#,
         r#""unpaid","amount_minor":9900,"cadence":"monthly","day_of_month":10,"#,
         r#""category_account_id":"22222222-2222-4222-8222-222222222222","wallet_account_id":"#,

@@ -46,7 +46,7 @@ use rusqlite::{Connection, Transaction};
 use std::collections::HashSet;
 
 /// The schema version [`migrate`] brings a vault to.
-pub const CURRENT_SCHEMA_VERSION: i64 = 9;
+pub const CURRENT_SCHEMA_VERSION: i64 = 10;
 
 /// One schema change, made through the transaction the runner opened for it.
 type Migration = fn(&Transaction<'_>) -> Result<()>;
@@ -64,6 +64,7 @@ const MIGRATIONS: &[(i64, Migration)] = &[
     (7, migrate_v7),
     (8, migrate_v8),
     (9, migrate_v9),
+    (10, migrate_v10),
 ];
 
 /// Applies the migrations a vault has not run yet.
@@ -443,6 +444,49 @@ fn migrate_v9(tx: &Transaction<'_>) -> Result<()> {
         ",
     )
     .database("link replacements to the entries they replace")
+}
+
+/// v10: `kind`, the simple-entry kind an entry was posted as.
+///
+/// A bill paid at once posts the same lines as an expense, so the lines alone
+/// cannot tell the entry list which one the user entered. The column holds
+/// [`crate::ledger::SimpleEntryKind::identifier`] for every entry posted
+/// through the simple entry form, a correction, a recurring template, a CSV
+/// import or a document. It stays NULL for a journal entry posted line by
+/// line, for the reversing entry of a void, for an opening balance adjustment,
+/// and for every entry posted before this step; the entry list classifies
+/// those from their lines ([`crate::ledger::ListedEntryKind`]).
+///
+/// The `CHECK` holds the column to those four codes. `SQLite` allows a `CHECK`
+/// on an added column and tests it against the existing rows
+/// (<https://www.sqlite.org/lang_altertable.html#alter_table_add_column>);
+/// they are all NULL, which passes.
+fn migrate_v10(tx: &Transaction<'_>) -> Result<()> {
+    // `ADD COLUMN` has no `IF NOT EXISTS`, and the older migration tests take a
+    // current vault back to an earlier version without dropping this column.
+    let has_column: i64 = tx
+        .query_row(
+            "
+            SELECT COUNT(1) FROM pragma_table_info('journal_entries')
+            WHERE name = 'kind'
+            ",
+            [],
+            |row| row.get(0),
+        )
+        .database("look for the kind column")?;
+    if has_column > 0 {
+        return Ok(());
+    }
+
+    tx.execute_batch(
+        "
+        ALTER TABLE journal_entries
+            ADD COLUMN kind TEXT CHECK (
+                kind IS NULL OR kind IN ('expense', 'income', 'bill', 'transfer')
+            );
+        ",
+    )
+    .database("add the kind column to journal entries")
 }
 
 /// Renames documents so that no two in one book share a filename.
