@@ -217,10 +217,51 @@ export function TransactionsPage({
     return map
   }, [docs])
 
+  // An entry opened from a link in the detail dialog may be outside the
+  // filtered list, so it is read on its own.
+  const [linkedView, setLinkedView] = useState<PostedEntryView | null>(null)
   const detailView = useMemo(
-    () => visibleEntries.find((e) => e.entry.id === detailId) ?? null,
-    [visibleEntries, detailId],
+    () =>
+      visibleEntries.find((e) => e.entry.id === detailId) ??
+      (linkedView?.entry.id === detailId ? linkedView : null),
+    [visibleEntries, detailId, linkedView],
   )
+
+  // Bumped when the dialog closes, so a read that lands after it is dropped.
+  const linkRequestRef = useRef(0)
+
+  /** Shows `id` in the detail dialog, read fresh from core. */
+  async function openLinkedEntry(id: string) {
+    const request = ++linkRequestRef.current
+    setError(null)
+    try {
+      const view = await api.entryGet(id)
+      if (request !== linkRequestRef.current) return
+      setLinkedView(view)
+      setDetailId(id)
+    } catch (err) {
+      if (request === linkRequestRef.current) setError(commandFailure(err, 'entry.openFailed'))
+    }
+  }
+
+  function closeDetail() {
+    linkRequestRef.current += 1
+    setLinkedView(null)
+    setDetailId(null)
+  }
+
+  /** After a change in the detail dialog: the list, and the linked entry if that is what it shows. */
+  async function reloadDetail() {
+    await reload()
+    if (!linkedView || detailView !== linkedView) return
+    // The change itself was saved, so a failed re-read is its own error and
+    // must not reach the dialog as the change failing.
+    try {
+      setLinkedView(await api.entryGet(linkedView.entry.id))
+    } catch (err) {
+      setError(commandFailure(err, 'entry.openFailed'))
+    }
+  }
 
   /** Search and account narrow the list and leave the summary whole; the dates narrow both. */
   const listOnlyFilters = Boolean(debouncedSearch.trim() || accountFilter)
@@ -792,7 +833,7 @@ export function TransactionsPage({
     setPendingAnalysis(null)
     setScanNotes(null)
     setEditId(view.entry.id)
-    setDetailId(null)
+    closeDetail()
     setShowForm(true)
   }
 
@@ -1277,11 +1318,12 @@ export function TransactionsPage({
         // Escape to the top-most dialog only; this guard is defense in depth
         // so the detail modal can never close while the viewer sits above it.
         onClose={() => {
-          if (!viewerDocId) setDetailId(null)
+          if (!viewerDocId) closeDetail()
         }}
         onEdit={detailView?.simple_form ? () => startEdit(detailView) : null}
         onView={(id) => setViewerDocId(id)}
-        onChanged={reload}
+        onOpenEntry={(id) => void openLinkedEntry(id)}
+        onChanged={reloadDetail}
         onError={(msg) => setError(msg)}
         error={openDialog === 'detail' ? error : null}
       />
