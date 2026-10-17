@@ -43,7 +43,7 @@ export function DateInput({
   // State, not a ref: the calendar is drawn from the field's element.
   const [field, setField] = useState<HTMLDivElement | null>(null)
   const messageId = useId()
-  const [shown, setShown] = useState({ value, locale })
+  const [synced, setSynced] = useState({ value, locale })
 
   // The parent commits values only through onChange, so an external value
   // change (prefill, reset) can safely overwrite the draft text. A language
@@ -51,14 +51,14 @@ export function DateInput({
   // lost that way is acceptable, since the language changes from Settings or
   // at startup, not while someone is typing a date. Adjusted while rendering,
   // so no frame shows the old text.
-  if (shown.value !== value || shown.locale !== locale) {
-    setShown({ value, locale })
+  if (synced.value !== value || synced.locale !== locale) {
+    setSynced({ value, locale })
     setText(value ? formatDate(value, locale) : '')
     setInvalid(false)
     setView(viewFromIso(value))
   }
 
-  // Disabling the field closes its calendar for good, not until it is enabled again.
+  // Disabling closes the calendar; enabling again leaves it closed.
   if (disabled && open) setOpen(false)
 
   const closeCalendar = useCallback(() => setOpen(false), [])

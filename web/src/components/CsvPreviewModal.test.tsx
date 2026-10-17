@@ -231,6 +231,31 @@ describe('CsvPreviewModal category column', () => {
     expect(screen.queryByRole('combobox', { name: 'Category for row 4' })).toBeNull()
   })
 
+  test('a re-render with the same preview keeps the picks', () => {
+    const preview = { source: 'bank.csv', headers: ['Date', 'Description', 'Amount'], rows: mixedRows }
+    // The parent keeps one identity for its account lists, as TransactionsPage does.
+    const wallets: Account[] = []
+    const modal = (busy: boolean) => (
+      <CsvPreviewModal
+        open
+        preview={preview}
+        currency={{ code: 'EUR', decimals: 2 }}
+        walletAccounts={wallets}
+        expenseAccounts={expenseAccounts}
+        incomeAccounts={incomeAccounts}
+        busy={busy}
+        onClose={() => {}}
+        onConfirm={() => {}}
+      />
+    )
+    const { rerender } = render(modal(false))
+    fireEvent.change(rowCategory(2), { target: { value: 'exp2' } })
+
+    rerender(modal(true))
+
+    expect(rowCategory(2)).toHaveDisplayValue('Rent')
+  })
+
   test('apply to selected shows in the column, for the matching kind only', () => {
     renderCategoryPreview(mixedRows)
 

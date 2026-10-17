@@ -141,7 +141,8 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
   const [registerAccount, setRegisterAccount] = useState<Account | null>(null)
   const [registerLines, setRegisterLines] = useState<RegisterLine[]>([])
   const [registerError, setRegisterError] = useState<string | null>(null)
-  const [registerBusy, setRegisterBusy] = useState(false)
+  // The account whose register last answered, read or failed.
+  const [registerLoadedId, setRegisterLoadedId] = useState<string | null>(null)
 
   async function reload() {
     if (!entity) return
@@ -268,10 +269,12 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
     setRegisterAccount(account)
     setRegisterLines([])
     setRegisterError(null)
-    setRegisterBusy(true)
   }
 
   const registerId = registerAccount?.id
+  // Busy until the register of the open account has answered: derived, so no
+  // path can leave it set.
+  const registerBusy = registerId !== undefined && registerLoadedId !== registerId
   useEffect(() => {
     if (!registerId) return
     let cancelled = false
@@ -284,10 +287,12 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
         if (!cancelled) setRegisterError(commandErrorMessage(err))
       })
       .finally(() => {
-        if (!cancelled) setRegisterBusy(false)
+        if (!cancelled) setRegisterLoadedId(registerId)
       })
     return () => {
       cancelled = true
+      // Opening the same account again reads its register afresh, busy meanwhile.
+      setRegisterLoadedId(null)
     }
   }, [registerId])
 

@@ -176,7 +176,7 @@ describe('DateInput', () => {
     expect(toggle).toHaveFocus()
   })
 
-  test('a new value from the parent replaces the draft in the same render', async () => {
+  test('a new value from the parent replaces the draft', async () => {
     const { rerender } = render(
       <DateInput value="2026-10-08" onChange={vi.fn()} aria-label="Date" />,
     )

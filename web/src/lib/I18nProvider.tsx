@@ -185,8 +185,9 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>
 }
 
-// The hook reads the context only this file can see; moving it out would
-// export the context instead. Editing it reloads the page, not a component.
+// This rule only keeps fast refresh in development: with the hook beside the
+// provider, editing this file reloads the page instead. Splitting the file
+// for that is not worth moving the provider every page imports from.
 // eslint-disable-next-line react/only-export-components
 export function useI18n(): I18nContextValue {
   const ctx = useContext(I18nContext)
