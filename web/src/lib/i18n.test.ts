@@ -3,7 +3,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   LOCALE_STORAGE_KEY,
-  applyLocale,
   flattenMessages,
   getLocale,
   parseLocale,
@@ -106,7 +105,7 @@ describe('Writer el catalog', () => {
     expect(flat['tx.form.hidden.label']).toBe('Απόκρυψη')
     expect(flat['tx.form.hidden.hint']).toBe('Απόκρυψη από την εξαγωγή')
     expect(flat['tx.list.meta.counts']).toBe('{posted} καταχωρισμένα · {hidden} κρυφά')
-    expect(flat['tx.export.whisper']).toBe('Η εξαγωγή παραλείπει τις κρυφές γραμμές. Οι διαγραμμένες εγγραφές περιλαμβάνονται, με την τιμή «voided» στη στήλη «status».')
+    expect(flat['tx.export.whisper']).toBe('Η εξαγωγή γράφει ολόκληρο το βιβλίο, ανεξάρτητα από τα φίλτρα, και παραλείπει τις κρυφές γραμμές. Οι διαγραμμένες εγγραφές περιλαμβάνονται, με την τιμή «voided» στη στήλη «status».')
     expect(flat['quickAdd.kind.billShort']).toBe('Τιμ.')
     expect(flat['quickAdd.kind.transferShort']).toBe('Μεταφ.')
     expect(flat['settings.language.title']).toBe('Γλώσσα')
@@ -148,7 +147,7 @@ describe('Writer el catalog', () => {
     expect(t('tx.hidden.badge')).toBe('Κρυφή')
     expect(t('tx.form.hidden.label')).toBe('Απόκρυψη')
     expect(t('tx.form.hidden.hint')).toBe('Απόκρυψη από την εξαγωγή')
-    expect(t('tx.export.whisper')).toBe('Η εξαγωγή παραλείπει τις κρυφές γραμμές. Οι διαγραμμένες εγγραφές περιλαμβάνονται, με την τιμή «voided» στη στήλη «status».')
+    expect(t('tx.export.whisper')).toBe('Η εξαγωγή γράφει ολόκληρο το βιβλίο, ανεξάρτητα από τα φίλτρα, και παραλείπει τις κρυφές γραμμές. Οι διαγραμμένες εγγραφές περιλαμβάνονται, με την τιμή «voided» στη στήλη «status».')
     expect(t('tx.csv.import')).toBe('Εισαγωγή CSV')
     expect(t('tx.csv.kind.expense')).toBe('Έξοδα')
   })

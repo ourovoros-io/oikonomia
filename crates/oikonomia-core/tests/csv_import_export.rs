@@ -13,8 +13,8 @@ use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, validate_lines_
 use oikonomia_core::error::Error;
 use oikonomia_core::error::ValidationError;
 use oikonomia_core::ledger::{
-    EntryFilter, PostSimpleEntryRequest, SimpleEntryKind, list_entries, post_simple_entry,
-    set_entry_hidden, void_entry,
+    EntryFilter, PostSimpleEntryRequest, SimpleEntryKind, archive_account, list_entries,
+    post_simple_entry, set_entry_hidden, void_entry,
 };
 use oikonomia_core::prefs::Locale;
 use oikonomia_core::ui_text::{UiText, UiTextCode};
@@ -555,23 +555,35 @@ fn a_row_is_checked_for_its_date_then_as_a_duplicate_then_for_the_rest() {
         post_import_rows(conn, std::slice::from_ref(&without_accounts), false).expect("skip");
     assert_eq!(skipped.skipped_duplicate_count, 1);
 
-    // A row that is to be posted reports its amount before its accounts.
+    // A row that is to be posted is checked for its category first, with
+    // the whole batch, then for its amount, then for its other accounts.
     let refused = |row: PostSimpleEntryRequest| {
         post_import_rows(conn, &[row], true)
             .map(|result| result.posted.len())
             .expect_err("refused")
     };
-    assert!(matches!(
-        refused(without_accounts.clone()),
-        Error::Validation(ValidationError::AccountRequired { .. })
-    ));
     assert_eq!(
         refused(PostSimpleEntryRequest {
             amount_minor: 0,
             ..without_accounts.clone()
         }),
+        Error::Validation(ValidationError::ImportCategoryRequired { count: 1 })
+    );
+    let without_wallet = PostSimpleEntryRequest {
+        wallet_account_id: None,
+        ..complete.clone()
+    };
+    assert_eq!(
+        refused(PostSimpleEntryRequest {
+            amount_minor: 0,
+            ..without_wallet.clone()
+        }),
         Error::Validation(ValidationError::AmountNotPositive)
     );
+    assert!(matches!(
+        refused(without_wallet),
+        Error::Validation(ValidationError::AccountRequired { .. })
+    ));
 
     // The date comes before the duplicate rule, so it is reported even for a
     // row that would have been skipped.
@@ -587,6 +599,98 @@ fn a_row_is_checked_for_its_date_then_as_a_duplicate_then_for_the_rest() {
         Err(Error::Validation(ValidationError::InvalidDate { .. }))
     ));
     assert_eq!(count_entries(conn, entity_id), 1);
+}
+
+/// The suggested expense and income rows of a two-row statement.
+fn grocery_and_salary_rows(
+    conn: &Connection,
+    entity_id: EntityId,
+    acc: &Accounts,
+) -> Vec<PostSimpleEntryRequest> {
+    let csv = "Date,Description,Amount\n2026-03-15,Groceries,-25.00\n2026-03-16,Salary,1000.00\n";
+    preview_bank_csv(conn, entity_id, roles(acc), csv, None)
+        .expect("preview")
+        .rows
+        .into_iter()
+        .map(|row| row.suggested.expect("suggested"))
+        .collect()
+}
+
+/// Posts `rows` and returns the error, checking that nothing was posted.
+fn refused_import(
+    conn: &Connection,
+    entity_id: EntityId,
+    rows: &[PostSimpleEntryRequest],
+) -> Error {
+    let error = post_import_rows(conn, rows, false)
+        .map(|result| result.posted.len())
+        .expect_err("refused");
+    assert_eq!(count_entries(conn, entity_id), 0);
+    error
+}
+
+#[test]
+fn rows_without_a_listed_category_are_counted_and_nothing_is_posted() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, acc) = entity_with_accounts(conn);
+    let rows = grocery_and_salary_rows(conn, entity_id, &acc);
+    let [grocery, salary] = [rows[0].clone(), rows[1].clone()];
+
+    let missing = PostSimpleEntryRequest {
+        category_account_id: None,
+        ..grocery.clone()
+    };
+    // An income account on an expense row, and the other way round.
+    let swapped = [
+        PostSimpleEntryRequest {
+            category_account_id: Some(acc.salary),
+            ..grocery.clone()
+        },
+        PostSimpleEntryRequest {
+            category_account_id: Some(acc.food),
+            ..salary.clone()
+        },
+    ];
+
+    assert_eq!(
+        refused_import(conn, entity_id, &[missing, salary.clone()]),
+        Error::Validation(ValidationError::ImportCategoryRequired { count: 1 })
+    );
+    assert_eq!(
+        refused_import(conn, entity_id, &swapped),
+        Error::Validation(ValidationError::ImportCategoryRequired { count: 2 })
+    );
+}
+
+#[test]
+fn an_archived_or_foreign_category_is_not_listed() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let (entity_id, acc) = entity_with_accounts(conn);
+    let grocery = grocery_and_salary_rows(conn, entity_id, &acc).swap_remove(0);
+    let other_book = common::book(conn, "Other books", ChartTemplate::Personal);
+    let foreign = PostSimpleEntryRequest {
+        category_account_id: Some(common::account(conn, other_book, "5100")),
+        ..grocery.clone()
+    };
+    let unknown = PostSimpleEntryRequest {
+        category_account_id: Some(AccountId::generate()),
+        // Another text, so the batch does not skip it as a repeat of the first.
+        description: "Bakery".into(),
+        ..grocery.clone()
+    };
+
+    assert_eq!(
+        refused_import(conn, entity_id, &[foreign, unknown]),
+        Error::Validation(ValidationError::ImportCategoryRequired { count: 2 })
+    );
+
+    archive_account(conn, acc.food).expect("archive");
+    assert_eq!(
+        refused_import(conn, entity_id, &[grocery]),
+        Error::Validation(ValidationError::ImportCategoryRequired { count: 1 })
+    );
 }
 
 #[test]

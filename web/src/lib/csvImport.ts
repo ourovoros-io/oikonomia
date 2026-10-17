@@ -271,6 +271,26 @@ export function rowCategoryOptions<A extends AccountLike>(
 }
 
 /**
+ * Whether an expense or income row has no category its list offers: none
+ * chosen, or one that is archived or of the other kind. Core refuses to
+ * import such a row (`import_category_required`); this lets the preview say
+ * so before the user tries.
+ */
+export function rowNeedsCategory<A extends AccountLike>(
+  suggested: Pick<SimpleEntryInput, 'kind' | 'category_account_id'> | null,
+  lists: { expense: readonly A[]; income: readonly A[] },
+): boolean {
+  if (suggested?.kind !== 'expense' && suggested?.kind !== 'income') return false
+  const options = rowCategoryOptions(suggested.kind, lists)
+  return !options.some((account) => account.id === suggested.category_account_id)
+}
+
+/** The sentence that keeps Import disabled while `n` selected rows need a category. */
+export function needsCategoryMessage(n: number): string {
+  return t(n === 1 ? 'tx.csv.needsCategoryOne' : 'tx.csv.needsCategoryMany', { n })
+}
+
+/**
  * The wallet and category the bulk selectors open on: the accounts the
  * preview rows will post to, so a selector does not show one account while
  * the rows go to another. Falls back to the first listed account when no row

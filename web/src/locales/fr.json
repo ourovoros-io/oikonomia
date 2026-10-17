@@ -365,6 +365,7 @@
       "restoreError": "Impossible de restaurer le livre.",
       "restoreNameTaken": "Un autre livre s’appelle désormais « {name} ». Archivez ou supprimez cet autre livre avant de restaurer celui-ci.",
       "created": "Livre {name} créé.",
+      "restored": "Livre {name} restauré.",
       "rename": {
         "title": "Renommer le livre",
         "aria": "Renommer {name}"
@@ -550,7 +551,8 @@
   },
   "entry": {
     "kind": {
-      "other": "Solde d’ouverture"
+      "openingBalance": "Solde d’ouverture",
+      "other": "Écriture de journal"
     }
   },
   "common": {
@@ -902,7 +904,7 @@
       "badge": "Masquée"
     },
     "export": {
-      "whisper": "L’export laisse de côté les lignes masquées. Les écritures supprimées sont incluses, avec la valeur « voided » dans la colonne « status »."
+      "whisper": "L’export écrit tout le livre, quels que soient les filtres, et laisse de côté les lignes masquées. Les écritures supprimées sont incluses, avec la valeur « voided » dans la colonne « status »."
     },
     "void": {
       "title": "Supprimer l’écriture ?",
@@ -912,6 +914,7 @@
     },
     "list": {
       "title": "Toutes les écritures",
+      "matchingTitle": "Écritures correspondantes",
       "new": "Nouvelle écriture",
       "meta": {
         "counts": "{posted} enregistrées · {hidden} masquées"
@@ -974,6 +977,9 @@
       "selectRow": "Sélectionner la ligne {n}",
       "rowCategory": "Catégorie de la ligne {n}",
       "chooseCategory": "Choisir une catégorie",
+      "needsCategory": "Catégorie manquante",
+      "needsCategoryOne": "Choisissez une catégorie pour 1 ligne sélectionnée avant d’importer.",
+      "needsCategoryMany": "Choisissez une catégorie pour {n} lignes sélectionnées avant d’importer.",
       "col": {
         "date": "Date",
         "description": "Description",
@@ -1123,6 +1129,7 @@
     "accountRequired": "Choisissez un compte pour « {role} ».",
     "accountRequiredGeneric": "Choisissez un compte pour chaque champ que requiert l’écriture.",
     "accountWrongType": "Le compte {code} ne peut pas être utilisé pour « {role} ». Choisissez un autre compte.",
+    "importCategoryRequired": "Certaines lignes à importer n’ont pas de catégorie ({count}). Choisissez une catégorie pour chacune avant d’importer.",
     "accountWrongTypeGeneric": "Le type du compte {code} ne convient pas à cette écriture. Choisissez un autre compte.",
     "sameAccount": "Une écriture nécessite deux comptes différents. Changez l’un des deux.",
     "amountNotPositive": "Le montant doit être supérieur à zéro.",

@@ -109,11 +109,11 @@ function canSetBalance(account: Account): boolean {
 }
 
 /**
- * The row's Set balance button keeps its label on one line: the button is a
- * fixed height, so a wrapped Greek label would spill out of it. The minimum is
- * the old fixed width, which the English label fits.
+ * The row's Set balance button grows with its one-line label instead of
+ * shrinking under it. The minimum is the old fixed width, which the English
+ * label fits.
  */
-const SET_BALANCE_CLASS = 'min-w-32 shrink-0 whitespace-nowrap'
+const SET_BALANCE_CLASS = 'min-w-32 shrink-0'
 
 export function AccountsPage({ entity, onCreateBook }: Props) {
   const { t } = useI18n()
@@ -130,11 +130,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
   const [formError, setFormError] = useState<string | null>(null)
   const [code, setCode] = useState('')
   const [name, setName] = useState('')
-  // The Type pick belongs to the book it was made in: another book starts
-  // from the default again instead of inheriting it.
-  const [typePick, setTypePick] = useState<{ bookId: string; type: AccountType } | null>(null)
-  const accountType: AccountType =
-    typePick && typePick.bookId === entity?.id ? typePick.type : 'expense'
+  const [accountType, setAccountType] = useState<AccountType>('expense')
   const [busy, setBusy] = useState(false)
   const [balanceAccount, setBalanceAccount] = useState<Account | null>(null)
   const [balanceAmount, setBalanceAmount] = useState('')
@@ -160,10 +156,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
   }
 
   useEffect(() => {
-    if (!entity) {
-      setAccounts([])
-      return
-    }
+    if (!entity) return
     void reload().catch((err) => setError(commandErrorMessage(err)))
   }, [entity?.id])
 
@@ -500,9 +493,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
             <Field label={t('acct.type')}>
               <Select
                 value={accountType}
-                onChange={(e) => {
-                  if (entity) setTypePick({ bookId: entity.id, type: e.target.value as AccountType })
-                }}
+                onChange={(e) => setAccountType(e.target.value as AccountType)}
               >
                 {TYPES.map((opt) => (
                   <option key={opt.id} value={opt.id}>

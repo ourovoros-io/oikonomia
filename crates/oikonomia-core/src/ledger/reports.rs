@@ -49,9 +49,9 @@ use crate::db::{collect_rows, read_column};
 use crate::domain::{AccountType, CurrencyCode, EntityId};
 use crate::error::{DatabaseContext, Error, Result, ValidationError};
 use crate::ledger::balance::{
-    ACTIVE_ENTRY_PREDICATE, add_minor, count_hidden_entries_as_of, count_hidden_pnl_entries,
-    normal_balance, parse_account_type, subtract_minor, sum_minor, sum_type_as_of,
-    sum_type_in_range,
+    ACTIVE_ENTRY_PREDICATE, add_minor, count_hidden_dashboard_entries, count_hidden_entries_as_of,
+    count_hidden_pnl_entries, normal_balance, parse_account_type, subtract_minor, sum_minor,
+    sum_type_as_of, sum_type_in_range,
 };
 use crate::ledger::calendar::{add_months, months_between};
 use crate::ledger::entities::get_entity;
@@ -215,8 +215,10 @@ pub struct DashboardSummary {
     /// previous net's size; `None` when the previous net is zero, when there
     /// is no previous window, or when the change does not fit in `i64`.
     pub net_vs_previous_bps: Option<i64>,
-    /// Hidden entries in the window that the income and expense figures
-    /// count, which an export leaves out.
+    /// Hidden entries behind `cash_like_assets`, `income` and `expenses`,
+    /// which an export leaves out: those in the window on an income or
+    /// expense account, and those through the `assets_as_of` date on an asset
+    /// account, each counted once.
     pub hidden_entry_count: usize,
 }
 
@@ -462,7 +464,13 @@ pub fn dashboard_summary(
         spend_ratio_bps,
         top_expense: top_expense(conn, entity_id, from, to, expenses)?,
         net_vs_previous_bps,
-        hidden_entry_count: count_hidden_pnl_entries(conn, entity_id, Some(from), Some(to))?,
+        hidden_entry_count: count_hidden_dashboard_entries(
+            conn,
+            entity_id,
+            from,
+            to,
+            assets_as_of,
+        )?,
     })
 }
 

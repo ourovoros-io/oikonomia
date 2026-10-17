@@ -295,6 +295,46 @@ fn the_balance_sheet_counts_a_hidden_transfer_and_the_pnl_does_not() {
     );
 }
 
+/// The dashboard's note covers its assets figure as well as its net: a hidden
+/// entry on an asset account through the assets date counts, once even when
+/// it also moves the net, and one that reaches neither figure does not. The
+/// assets date sits inside the window, as it does when the window is this
+/// month and the assets are today's.
+#[test]
+fn the_dashboard_counts_hidden_entries_behind_its_assets_figure() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = create_book(conn, "Personal", ChartTemplate::Personal);
+    let savings = common::account(conn, book.entity_id, "1020");
+    let hidden_two_line = |date, sides| {
+        let view = common::post_two_line(conn, book.entity_id, date, sides, 900);
+        set_entry_hidden(conn, view.entry.id, true).expect("hide");
+    };
+
+    hidden_transfer(conn, &book, savings, "2026-02-10");
+    hidden_transfer(conn, &book, savings, "2026-03-05");
+    hidden_transfer(conn, &book, savings, "2026-03-20");
+    let voided = hidden_transfer(conn, &book, savings, "2026-03-06");
+    void_entry(conn, voided, Locale::En).expect("void");
+    hidden_two_line("2026-03-07", ("2000", "2100"));
+    hidden_two_line("2026-03-08", ("3100", "2000"));
+    hidden_two_line("2026-03-20", ("5100", "2000"));
+    let paid = post_simple_entry(conn, &expense(&book, "2026-03-09", "Both", 300)).expect("post");
+    set_entry_hidden(conn, paid.entry.id, true).expect("hide");
+
+    let (march_1, march_31) = (common::date("2026-03-01"), common::date("2026-03-31"));
+    let today = common::date("2026-03-15");
+    let summary =
+        dashboard_summary(conn, book.entity_id, march_1, march_31, today).expect("dashboard");
+
+    assert_eq!(
+        summary.hidden_entry_count, 4,
+        "the February and early March transfers, the expense paid from the wallet once, and \
+         the card expense after today but in the window; not the transfer after today, the \
+         voided one, or the two that touch no asset, income or expense account"
+    );
+}
+
 #[test]
 fn voiding_hidden_entry_omits_original_and_reverse_from_export() {
     let (_dir, vault) = common::vault();

@@ -278,6 +278,19 @@ export function CollapsibleSection({
   )
 }
 
+/**
+ * The label of a Button given a fixed width. The Button never wraps its label
+ * (its height is fixed), so a translation too long for the width ends in an
+ * ellipsis, and the full label shows on hover.
+ */
+export function TruncatedLabel({ text }: { text: string }) {
+  return (
+    <span className="truncate" title={text}>
+      {text}
+    </span>
+  )
+}
+
 export function Button({
   variant = 'primary',
   size = 'md',
@@ -317,8 +330,10 @@ export function Button({
   return (
     <button
       type="button"
+      // Never wraps: the heights are fixed, so a wrapped label would spill out
+      // of the button. A fixed-width call site uses TruncatedLabel instead.
       className={cn(
-        'inline-flex items-center justify-center rounded-[var(--radius-control)] font-medium transition disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none disabled:brightness-100',
+        'inline-flex items-center justify-center rounded-[var(--radius-control)] font-medium whitespace-nowrap transition disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none disabled:brightness-100',
         styles[variant],
         sizes[size],
         className,

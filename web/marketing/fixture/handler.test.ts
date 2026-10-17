@@ -12,6 +12,19 @@ describe('marketing IPC handler', () => {
     expect(h('settings_resolve_locale', { systemLanguages: ['fr-FR'] })).toBe('el')
   })
 
+  test('a UI language without a demo ledger shows it over the English ledger', () => {
+    const h = createHandler('en', 'de')
+
+    expect(h('settings_get_locale')).toBe('de')
+    expect(h('settings_resolve_locale', { systemLanguages: ['en-US'] })).toBe('de')
+    expect((h('settings_get_ui_prefs') as { locale: string }).locale).toBe('de')
+    expect(h('entity_list')).toEqual(createHandler('en')('entity_list'))
+  })
+
+  test('answers the archived books Settings lists', () => {
+    expect(createHandler('en')('entity_list_archived')).toEqual([])
+  })
+
   test('answers dashboard reads with consistent data', () => {
     const h = createHandler('en')
     const summary = h('dashboard_summary_cmd', {

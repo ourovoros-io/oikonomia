@@ -158,7 +158,6 @@ export function TransactionsPage({
   const [series, setSeries] = useState<CashFlowSeries | null>(null)
   const [seriesError, setSeriesError] = useState<CommandError | null>(null)
   const summaryHeadingId = useId()
-  const prevEntityId = useRef<string | null>(null)
   const busyRef = useRef(false)
   const csvBusyRef = useRef(false)
   const seriesRequestRef = useRef(0)
@@ -201,6 +200,8 @@ export function TransactionsPage({
   /** Search and account narrow the list and leave the summary whole; the dates narrow both. */
   const listOnlyFilters = Boolean(debouncedSearch.trim() || accountFilter)
   const filtersNarrowList = listOnlyFilters || Boolean(fromDate || toDate)
+  // The counts follow the narrowed list, so the title must not claim it is all of it.
+  const listTitle = filtersNarrowList ? t('tx.list.matchingTitle') : t('tx.allEntries')
   // The summary already reports an inverted window through its error from
   // Rust; the list only needs to know it holds nothing. ISO dates order as
   // strings.
@@ -458,39 +459,10 @@ export function TransactionsPage({
     setShowForm(true)
   }
 
+  // App keys this page by book, so another book or no book at all remounts it
+  // with fresh state: nothing here resets for a book change.
   useEffect(() => {
-    if (!entity) {
-      setEntries([])
-      setAccounts([])
-      setDefaults(null)
-      setDocs([])
-      prevEntityId.current = null
-      // A list still in flight belongs to the book that went away.
-      listRequestRef.current += 1
-      return
-    }
-    if (prevEntityId.current !== entity.id) {
-      prevEntityId.current = entity.id
-      setDetailId(null)
-      setViewerDocId(null)
-      setCsvStep('closed')
-      setCsvPreview(null)
-      setCsvRoles(null)
-      // Clear the un-debounced fragment too, so it cannot filter the new
-      // book 300 ms later.
-      setSearch('')
-      setDebouncedSearch('')
-      // Both effects run again on these, for the new book.
-      setFromDate('')
-      setToDate('')
-      // Gate the early return on tracked deps only: resetting `search`
-      // alone changes no dependency, and returning then would skip the
-      // reload and leave the old book's entries on screen.
-      if (debouncedSearch || accountFilter || fromDate || toDate) {
-        setAccountFilter('')
-        return
-      }
-    }
+    if (!entity) return
     void loadList().catch((err) => setError(commandErrorMessage(err)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity?.id, debouncedSearch, accountFilter, fromDate, toDate])
@@ -1246,7 +1218,7 @@ export function TransactionsPage({
       {visibleEntries.length === 0 && filtersNarrowList ? (
         // The header buttons stay: Recurring, Import and Export do not depend on the filters.
         <Panel
-          title={t('tx.allEntries')}
+          title={listTitle}
           description={`${t('tx.list.meta.counts', { posted: postedCount, hidden: hiddenCount })} · ${ccy}`}
           whisper={t('tx.export.whisper')}
           actions={csvActions}
@@ -1266,7 +1238,7 @@ export function TransactionsPage({
         />
       ) : (
         <Panel
-          title={t('tx.allEntries')}
+          title={listTitle}
           description={`${t('tx.list.meta.counts', { posted: postedCount, hidden: hiddenCount })} · ${ccy}`}
           whisper={t('tx.export.whisper')}
           actions={csvActions}

@@ -72,7 +72,13 @@ export type JournalEntry = {
  * What core lists an entry as (`ListedEntryKind`): the kind it was posted as,
  * or for an entry without one, the kind its lines suggest. A code; the UI words it.
  */
-export type ListedEntryKind = 'expense' | 'income' | 'bill' | 'transfer' | 'other'
+export type ListedEntryKind =
+  | 'expense'
+  | 'income'
+  | 'bill'
+  | 'transfer'
+  | 'opening_balance'
+  | 'other'
 
 export type PostedEntryView = {
   entry: JournalEntry

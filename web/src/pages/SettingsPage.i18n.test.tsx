@@ -50,7 +50,7 @@ describe('SettingsPage i18n', () => {
       <SettingsPage
         entities={[]}
         onEntitiesChange={async () => {}}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -81,7 +81,7 @@ describe('SettingsPage i18n', () => {
         <SettingsPage
           entities={[]}
           onEntitiesChange={async () => {}}
-          onEntityCreated={async () => {}}
+          onEntityAdded={async () => {}}
           onSelectEntity={() => {}}
         />
       </I18nProvider>,
@@ -112,7 +112,7 @@ describe('SettingsPage i18n', () => {
         <SettingsPage
           entities={[]}
           onEntitiesChange={async () => {}}
-          onEntityCreated={async () => {}}
+          onEntityAdded={async () => {}}
           onSelectEntity={() => {}}
         />
       </I18nProvider>,
