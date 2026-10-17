@@ -56,6 +56,9 @@ const TRAY_ICON_DIR: &str = "tray";
 /// windows apart by it.
 const QUICK_ADD_LABEL: &str = "quick-add";
 
+/// The window label of the main window, from `tauri.conf.json`.
+pub(crate) const MAIN_WINDOW_LABEL: &str = "main";
+
 // Sizes of the quick-add window in logical pixels. The frontend resizes the
 // window between them at runtime with its own copies, the `QUICK_ADD_*`
 // constants in `web/src/lib/quickAddWindow.ts`; the test
@@ -253,7 +256,7 @@ pub(crate) fn show_main_window(app: &AppHandle) {
         return;
     }
 
-    let Some(window) = app.get_webview_window("main") else {
+    let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
         return;
     };
 
@@ -524,9 +527,12 @@ impl TrayStatus {
 /// Creates the tray icon and records whether it exists as the managed
 /// [`TrayStatus`].
 ///
-/// A tray that cannot be created does not stop the start. It fails on
-/// desktops with no usable session bus, and the main window does not need
-/// it.
+/// A tray that cannot be created does not stop the start: the main window
+/// does not need it. Creating it returns an error when its menu or icon
+/// cannot be made or, on Linux, its icon file cannot be written. A system
+/// without the appindicator library is not covered: tray-icon panics then
+/// (libappindicator-sys), and the start still fails
+/// (<https://github.com/ourovoros-io/oikonomia/issues/206>).
 pub(crate) fn install(app: &tauri::App, locale: Locale) {
     app.manage(TrayStatus::after(init(app, locale)));
 }
@@ -538,11 +544,14 @@ pub(crate) fn install(app: &tauri::App, locale: Locale) {
 /// Linux this asks the session bus each time it is called
 /// (`status_notifier`); call it only when the answer is needed.
 pub(crate) fn is_usable(app: &AppHandle) -> bool {
-    let created = app
-        .try_state::<TrayStatus>()
-        .is_some_and(|status| *status == TrayStatus::Created);
+    let status = app.try_state::<TrayStatus>().map(|status| *status);
+    usable(status, desktop_shows_tray)
+}
 
-    created && desktop_shows_tray()
+/// Returns whether a tray with `status`, `None` when none was installed, is
+/// usable. `desktop_shows_tray` is called only for a tray that was created.
+fn usable(status: Option<TrayStatus>, desktop_shows_tray: impl FnOnce() -> bool) -> bool {
+    status == Some(TrayStatus::Created) && desktop_shows_tray()
 }
 
 /// Returns whether the desktop shows the tray icon: on Linux, whether a
@@ -658,6 +667,26 @@ mod tests {
             TrayStatus::Missing
         );
         assert_eq!(TrayStatus::after(Ok(())), TrayStatus::Created);
+    }
+
+    #[test]
+    fn only_a_created_tray_the_desktop_shows_is_usable() {
+        assert!(usable(Some(TrayStatus::Created), || true));
+        assert!(!usable(Some(TrayStatus::Created), || false));
+    }
+
+    #[test]
+    fn a_missing_or_never_installed_tray_is_not_usable_and_the_desktop_is_not_asked() {
+        for status in [None, Some(TrayStatus::Missing)] {
+            let asked = std::cell::Cell::new(false);
+            let is_usable = usable(status, || {
+                asked.set(true);
+                true
+            });
+
+            assert!(!is_usable, "{status:?}");
+            assert!(!asked.get(), "{status:?}");
+        }
     }
 
     /// Returns the number in the web source's `export const <name> = <number>`

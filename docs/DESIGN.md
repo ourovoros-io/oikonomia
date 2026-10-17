@@ -206,7 +206,7 @@ each lives in one place:
   (`CloseAction` in `lib.rs`), except on macOS, where the Dock brings it back.
 - **Tray.** Linux trays report no clicks, so "Quick add" is a menu item there
   (`tray.rs`). The quick-add window is placed inside the monitor's work area.
-  A tray that cannot be created is logged and the app starts without one. On
+  A tray that fails with an error is logged and the app starts without one. On
   Linux the tray counts as usable only while a StatusNotifier host is
   registered on the session bus, asked at close time
   (`tray/status_notifier.rs`); the icon file goes to the app's cache

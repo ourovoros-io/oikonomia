@@ -331,9 +331,6 @@ fn ipc_commands() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
     ]
 }
 
-/// The label of the main window, from `tauri.conf.json`.
-const MAIN_WINDOW_LABEL: &str = "main";
-
 /// What a close request does to a window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CloseAction {
@@ -357,7 +354,7 @@ impl CloseAction {
     /// `tray_usable` is called only when the answer decides the action,
     /// because on Linux it asks the session bus ([`tray::is_usable`]).
     fn for_window(label: &str, dock_reopens: bool, tray_usable: impl FnOnce() -> bool) -> Self {
-        if label != MAIN_WINDOW_LABEL || dock_reopens || tray_usable() {
+        if label != tray::MAIN_WINDOW_LABEL || dock_reopens || tray_usable() {
             Self::Hide
         } else {
             Self::Quit
@@ -374,9 +371,8 @@ fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
         api.prevent_close();
 
         let app = window.app_handle();
-        let action = CloseAction::for_window(window.label(), cfg!(target_os = "macos"), || {
-            tray::is_usable(app)
-        });
+        let dock_reopens = cfg!(target_os = "macos");
+        let action = CloseAction::for_window(window.label(), dock_reopens, || tray::is_usable(app));
 
         match action {
             CloseAction::Hide => {
@@ -390,6 +386,7 @@ fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
 
     record_native_drops(window, event);
 }
+
 /// Grants the paths of files the user dropped on a window as documents, so
 /// that the two commands that read a dropped document accept them. A drop
 /// grants nothing else: a dropped file is not accepted as a backup to
@@ -412,7 +409,7 @@ mod tests {
     #[test]
     fn closing_the_main_window_hides_it_while_the_tray_is_usable() {
         assert_eq!(
-            CloseAction::for_window("main", false, || true),
+            CloseAction::for_window(tray::MAIN_WINDOW_LABEL, false, || true),
             CloseAction::Hide
         );
     }
@@ -420,7 +417,7 @@ mod tests {
     #[test]
     fn closing_the_main_window_quits_without_a_usable_tray() {
         assert_eq!(
-            CloseAction::for_window("main", false, || false),
+            CloseAction::for_window(tray::MAIN_WINDOW_LABEL, false, || false),
             CloseAction::Quit
         );
     }
@@ -428,7 +425,7 @@ mod tests {
     #[test]
     fn closing_the_main_window_hides_it_where_the_dock_reopens_it() {
         let asked = Cell::new(false);
-        let action = CloseAction::for_window("main", true, || {
+        let action = CloseAction::for_window(tray::MAIN_WINDOW_LABEL, true, || {
             asked.set(true);
             false
         });
