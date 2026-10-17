@@ -902,7 +902,7 @@
       "badge": "Masquée"
     },
     "export": {
-      "whisper": "L’export écrit tout le livre, pas seulement les écritures affichées, et laisse de côté les lignes masquées. Les écritures supprimées sont incluses, avec la valeur « voided » dans la colonne « status »."
+      "whisper": "L’export écrit tout le livre, quels que soient les filtres, et laisse de côté les lignes masquées. Les écritures supprimées sont incluses, avec la valeur « voided » dans la colonne « status »."
     },
     "void": {
       "title": "Supprimer l’écriture ?",

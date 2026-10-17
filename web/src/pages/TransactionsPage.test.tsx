@@ -577,7 +577,7 @@ describe('TransactionsPage hidden paint', () => {
     vi.mocked(api.entryList).mockResolvedValue([postedEntry, hiddenEntry])
     await renderReady()
     expect(screen.getByText('1 posted · 1 hidden · EUR')).toBeTruthy()
-    expect(screen.getByText('Export writes the whole book, not only the entries shown, and omits hidden rows. Deleted entries are included, with “voided” in the “status” column.')).toBeTruthy()
+    expect(screen.getByText('Export writes the whole book, whatever the filters, and omits hidden rows. Deleted entries are included, with “voided” in the “status” column.')).toBeTruthy()
     expect(screen.getByText('Hidden')).toBeTruthy()
     expect(screen.getByText('ATM cash')).toBeTruthy()
     expect(screen.queryByRole('checkbox', { name: /include hidden/i })).toBeNull()
@@ -593,7 +593,7 @@ describe('TransactionsPage hidden paint', () => {
       expect(screen.getByText('Κρυφή')).toBeTruthy()
     })
     expect(screen.getByText('0 καταχωρισμένα · 1 κρυφά · EUR')).toBeTruthy()
-    expect(screen.getByText('Η εξαγωγή γράφει ολόκληρο το βιβλίο, όχι μόνο τις καταχωρίσεις που εμφανίζονται, και παραλείπει τις κρυφές γραμμές. Οι διαγραμμένες εγγραφές περιλαμβάνονται, με την τιμή «voided» στη στήλη «status».')).toBeTruthy()
+    expect(screen.getByText('Η εξαγωγή γράφει ολόκληρο το βιβλίο, ανεξάρτητα από τα φίλτρα, και παραλείπει τις κρυφές γραμμές. Οι διαγραμμένες εγγραφές περιλαμβάνονται, με την τιμή «voided» στη στήλη «status».')).toBeTruthy()
   })
 
   test('detail Hide checkbox calls entry_set_hidden', async () => {
@@ -1614,7 +1614,7 @@ describe('TransactionsPage list header', () => {
     })
     expect(
       screen.getByText(
-        'Export writes the whole book, not only the entries shown, and omits hidden rows. Deleted entries are included, with “voided” in the “status” column.',
+        'Export writes the whole book, whatever the filters, and omits hidden rows. Deleted entries are included, with “voided” in the “status” column.',
       ),
     ).toBeTruthy()
   })
