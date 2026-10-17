@@ -194,9 +194,6 @@ export function SettingsPage({
     error: UiError
     field: 'current' | 'new' | 'confirm' | null
   } | null>(null)
-  function setPageError(next: UiError | null) {
-    setError(next)
-  }
   const [backupBusy, setBackupBusy] = useState(false)
   const [restoreOpen, setRestoreOpen] = useState(false)
   const [restoreBusy, setRestoreBusy] = useState(false)
@@ -298,11 +295,11 @@ export function SettingsPage({
   async function onCreate(ev: FormEvent) {
     ev.preventDefault()
     if (!name.trim()) {
-      setPageError(copyError('error.nameRequired'))
+      setError(copyError('error.nameRequired'))
       return
     }
     setBusy(true)
-    setPageError(null)
+    setError(null)
     try {
       const entity = await api.entityCreate({
         name,
@@ -323,7 +320,7 @@ export function SettingsPage({
       setAddedBookId(entity.id)
       setAddedNotice({ key: 'settings.entities.created', name: entity.name })
     } catch (err) {
-      setPageError(commandFailure(err))
+      setError(commandFailure(err))
     } finally {
       setBusy(false)
     }
@@ -332,13 +329,13 @@ export function SettingsPage({
   async function confirmDelete() {
     if (!pendingDelete) return
     setDeleteBusy(true)
-    setPageError(null)
+    setError(null)
     try {
       await api.entityDelete(pendingDelete.id)
       setPendingDelete(null)
       await onEntitiesChange()
     } catch (err) {
-      setPageError(commandFailure(err, 'settings.deleteFailed'))
+      setError(commandFailure(err, 'settings.deleteFailed'))
     } finally {
       setDeleteBusy(false)
     }
@@ -350,13 +347,13 @@ export function SettingsPage({
   async function confirmArchive() {
     if (!pendingArchive) return
     setArchiveBusy(true)
-    setPageError(null)
+    setError(null)
     setNoticeKey(null)
     try {
       await api.entityArchive(pendingArchive.id)
       await onEntitiesChange()
     } catch (err) {
-      setPageError(commandFailure(err, 'settings.entities.archiveError'))
+      setError(commandFailure(err, 'settings.entities.archiveError'))
     } finally {
       // Closed on failure too, so the error is not behind the dialog.
       setPendingArchive(null)
@@ -367,7 +364,7 @@ export function SettingsPage({
 
   async function onRestore(book: Entity) {
     setRestoringId(book.id)
-    setPageError(null)
+    setError(null)
     setNoticeKey(null)
     try {
       await api.entityUnarchive(book.id)
@@ -380,7 +377,7 @@ export function SettingsPage({
       const cmd = asCommandError(err)
       // The general sentence for a taken name says to choose another, which
       // an archived book cannot do: it is read-only.
-      setPageError(
+      setError(
         cmd.code === 'name_taken'
           ? copyError('settings.entities.restoreNameTaken', { name: book.name })
           : commandFailure(cmd, 'settings.entities.restoreError'),
@@ -393,14 +390,14 @@ export function SettingsPage({
 
   async function onResetPrefs() {
     setPrefsResetBusy(true)
-    setPageError(null)
+    setError(null)
     setNoticeKey(null)
     try {
       const prefs = await api.resetUiPrefs()
       setPrefsUnreadable(prefs.unreadable)
       if (!prefs.unreadable) setNoticeKey('settings.prefs.resetDone')
     } catch (err) {
-      setPageError(commandFailure(err, 'settings.prefs.resetFailed'))
+      setError(commandFailure(err, 'settings.prefs.resetFailed'))
     } finally {
       setPrefsResetBusy(false)
     }
@@ -408,11 +405,11 @@ export function SettingsPage({
 
   async function saveLock(mins: number) {
     if (!Number.isFinite(mins) || mins < 1) {
-      setPageError(copyError('settings.lockTimeoutMin'))
+      setError(copyError('settings.lockTimeoutMin'))
       return
     }
     setLockBusy(true)
-    setPageError(null)
+    setError(null)
     try {
       const secs = Math.round(mins * 60)
       await api.setLockTimeout(secs)
@@ -420,7 +417,7 @@ export function SettingsPage({
       setNoticeKey('settings.lock.saved')
       onLockTimeoutChange?.(secs)
     } catch (err) {
-      setPageError(commandFailure(err))
+      setError(commandFailure(err))
     } finally {
       setLockBusy(false)
     }
@@ -479,19 +476,19 @@ export function SettingsPage({
     } catch {
       // No associated mail client, or the OS refused. The address is on
       // screen already, so the fallback copy just points at it.
-      setPageError(copyError('settings.support.openFailed', { email: appInfo.support_email }))
+      setError(copyError('settings.support.openFailed', { email: appInfo.support_email }))
     }
   }
 
   async function onBackup() {
     if (!backupEnabled) return
-    setPageError(null)
+    setError(null)
     setNoticeKey(null)
     setBackupBusy(true)
     try {
       await vaultBackup()
     } catch (err) {
-      setPageError(backupFailure(err))
+      setError(backupFailure(err))
     } finally {
       setBackupBusy(false)
     }
@@ -499,7 +496,7 @@ export function SettingsPage({
 
   async function beginRestore() {
     if (restoreBusy || restorePicking || restoreOpen) return
-    setPageError(null)
+    setError(null)
     setRestorePicking(true)
     try {
       const path = await vaultPickBackup()
@@ -507,7 +504,7 @@ export function SettingsPage({
       setRestorePath(path)
       setRestoreOpen(true)
     } catch (err) {
-      setPageError(restoreFailure(err))
+      setError(restoreFailure(err))
     } finally {
       setRestorePicking(false)
     }
@@ -516,7 +513,7 @@ export function SettingsPage({
   async function confirmRestore() {
     if (!restorePath) return
     setRestoreBusy(true)
-    setPageError(null)
+    setError(null)
     try {
       const result = await vaultRestore({ path: restorePath, replace: replaceConfirm.replace })
       if (result === null) {
@@ -527,7 +524,7 @@ export function SettingsPage({
       setRestoreOpen(false)
       setRestorePath(undefined)
     } catch (err) {
-      setPageError(restoreFailure(err))
+      setError(restoreFailure(err))
       setRestoreOpen(false)
       setRestorePath(undefined)
     } finally {
@@ -765,8 +762,8 @@ export function SettingsPage({
       >
         {backupBanner ? (
           <ErrorBanner
-            title={backupBanner.title}
-            error={backupBanner.body}
+            title={t(backupBanner.titleKey)}
+            error={copyError(backupBanner.bodyKey)}
             className="mb-4"
           />
         ) : null}

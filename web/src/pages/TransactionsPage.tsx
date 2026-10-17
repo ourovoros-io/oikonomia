@@ -64,6 +64,7 @@ import {
 import { cn } from '../lib/cn'
 import { asCommandError, commandErrorText, logHiddenCause } from '../lib/commandError'
 import { commandFailure, copyError, notesError } from '../lib/uiError'
+import type { MessageKey } from '../lib/i18n'
 import type { CommandError } from '../lib/tauri'
 import type { DocumentSuggestion } from '../lib/api'
 import { formatMoney as fmtMoney } from '../lib/money'
@@ -156,6 +157,7 @@ export function TransactionsPage({
     income_account_id: string | null
   } | null>(null)
   const [series, setSeries] = useState<CashFlowSeries | null>(null)
+  // Kept as the command error, not a UiError: the summary branches on its code.
   const [seriesError, setSeriesError] = useState<CommandError | null>(null)
   const summaryHeadingId = useId()
   const busyRef = useRef(false)
@@ -570,7 +572,7 @@ export function TransactionsPage({
   // What stops the form from posting, as a catalog key, and whether it is the
   // amount's fault. Native validation is off (its bubbles are English and
   // unstyled), so every required field is checked here.
-  function entryFormProblem(minor: number | null): { key: string; amount: boolean } | null {
+  function entryFormProblem(minor: number | null): { key: MessageKey; amount: boolean } | null {
     const amountKey = amountProblemKey(minor, 'tx.invalidAmount')
     if (amountKey) return { key: amountKey, amount: true }
     if (!description.trim()) return { key: 'form.fieldRequired', amount: false }

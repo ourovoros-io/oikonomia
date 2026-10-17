@@ -55,7 +55,7 @@ const fieldIcon = [
 type PasswordField = 'password' | 'confirm'
 
 /** The banner's error, and the inputs it is about: editing one of them clears it. */
-type UnlockError = { reason: UiError; fields: readonly PasswordField[] }
+type UnlockError = { error: UiError; fields: readonly PasswordField[] }
 
 /**
  * Codes that a new password entry can fix. Any other failure (a vault too new
@@ -64,19 +64,19 @@ type UnlockError = { reason: UiError; fields: readonly PasswordField[] }
  */
 const PASSWORD_CODES: ReadonlySet<string> = new Set(['invalid_password', 'password_too_short'])
 
-function submitFailure(error: CommandError): UnlockError {
-  const fields: readonly PasswordField[] = PASSWORD_CODES.has(error.code) ? ['password'] : []
-  const reason =
-    error.code === 'invalid_password'
+function submitError(failure: CommandError): UnlockError {
+  const fields: readonly PasswordField[] = PASSWORD_CODES.has(failure.code) ? ['password'] : []
+  const error =
+    failure.code === 'invalid_password'
       ? copyError('unlock.incorrectPassword')
-      : commandFailure(error, 'unlock.unlockFailed')
+      : commandFailure(failure, 'unlock.unlockFailed')
 
-  return { reason, fields }
+  return { error, fields }
 }
 
-function restoreProblem(err: unknown): UnlockError {
+function restoreError(err: unknown): UnlockError {
   // Not about the password fields, so typing in them leaves it up.
-  return { reason: restoreFailure(err), fields: [] }
+  return { error: restoreFailure(err), fields: [] }
 }
 
 export function UnlockScreen({
@@ -149,8 +149,8 @@ export function UnlockScreen({
   }, [dialogOpen])
 
   /** Marks the fields as wrong, shakes the card and puts the caret in `field`. */
-  function rejectInput(reason: UnlockError, field: PasswordField) {
-    setError(reason)
+  function rejectInput(rejection: UnlockError, field: PasswordField) {
+    setError(rejection)
     setPasswordInvalid(true)
     setShaking(true)
     const target = field === 'confirm' ? confirmRef.current : passwordRef.current
@@ -171,13 +171,13 @@ export function UnlockScreen({
     setPasswordInvalid(false)
 
     if (!password) {
-      rejectInput({ reason: copyError('form.passwordRequired'), fields: ['password'] }, 'password')
+      rejectInput({ error: copyError('form.passwordRequired'), fields: ['password'] }, 'password')
       return
     }
     if (isSetup && password !== confirm) {
       // Either entry may be the mistyped one.
       const mismatch: UnlockError = {
-        reason: copyError('unlock.passwordsMismatch'),
+        error: copyError('unlock.passwordsMismatch'),
         fields: ['password', 'confirm'],
       }
       rejectInput(mismatch, 'confirm')
@@ -196,7 +196,7 @@ export function UnlockScreen({
     } catch (err) {
       // A rejection can be anything, including nothing.
       const cmd = asCommandError(err)
-      rejectInput(submitFailure(cmd), 'password')
+      rejectInput(submitError(cmd), 'password')
     } finally {
       setBusy(false)
       // A wrong unlock password is retyped; a refused new vault keeps both
@@ -217,7 +217,7 @@ export function UnlockScreen({
       setRestorePath(path)
       setRestoreOpen(true)
     } catch (err) {
-      setError(restoreProblem(err))
+      setError(restoreError(err))
     } finally {
       setRestorePicking(false)
     }
@@ -240,7 +240,7 @@ export function UnlockScreen({
       setRestorePath(undefined)
       onUnlocked(next)
     } catch (err) {
-      setError(restoreProblem(err))
+      setError(restoreError(err))
       setRestoreOpen(false)
       setRestorePath(undefined)
     } finally {
@@ -357,7 +357,7 @@ export function UnlockScreen({
           <div className="absolute inset-x-0 top-full mt-3">
             <ErrorBanner
               id={errorId}
-              error={error?.reason ?? null}
+              error={error?.error ?? null}
               className="text-center"
               onDismiss={() => setError(null)}
             />

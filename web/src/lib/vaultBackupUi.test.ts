@@ -8,8 +8,7 @@ import {
   vaultBackupBanner,
 } from './vaultBackupUi'
 import { resetI18nForTests, t } from './i18n'
-import { copyError, uiErrorText } from './uiError'
-import en from '../locales/en.json' with { type: 'json' }
+import { uiErrorText } from './uiError'
 
 const backupText = (err: unknown) => uiErrorText(backupFailure(err))
 const restoreText = (err: unknown) => uiErrorText(restoreFailure(err))
@@ -44,18 +43,16 @@ describe('canBackupVault', () => {
 describe('vaultBackupBanner', () => {
   test('empty copy matches backup-03', () => {
     expect(vaultBackupBanner('empty')).toEqual({
-      title: t('settings.vaultBackup.emptyTitle'),
-      body: copyError('settings.vaultBackup.emptyBody'),
+      titleKey: 'settings.vaultBackup.emptyTitle',
+      bodyKey: 'settings.vaultBackup.emptyBody',
     })
-    expect(vaultBackupBanner('empty')?.title).toBe(en['settings.vaultBackup.emptyTitle'])
   })
 
   test('missing copy matches backup-04', () => {
     expect(vaultBackupBanner('missing')).toEqual({
-      title: t('settings.vaultBackup.missingTitle'),
-      body: copyError('settings.vaultBackup.missingBody'),
+      titleKey: 'settings.vaultBackup.missingTitle',
+      bodyKey: 'settings.vaultBackup.missingBody',
     })
-    expect(vaultBackupBanner('missing')?.title).toBe(en['settings.vaultBackup.missingTitle'])
   })
 
   test('ready has no banner', () => {

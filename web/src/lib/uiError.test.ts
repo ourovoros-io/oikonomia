@@ -43,6 +43,22 @@ describe('uiErrorText', () => {
   })
 })
 
+describe('notesError', () => {
+  test('logs a note it cannot word once, when built; wording it again never logs', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const error = notesError([{ code: 'brand_new' }], null, 'tx.couldNotReadDoc')
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(warn.mock.calls[0][0]).toContain('brand_new')
+
+    uiErrorText(error)
+    setLocale('fr')
+    uiErrorText(error)
+
+    expect(warn).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('commandFailure', () => {
   test('logs a hidden cause once, when caught; wording it again never logs', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)

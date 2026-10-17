@@ -23,14 +23,20 @@ vi.mock('../lib/api', async (importOriginal) => {
       getUiPrefs: vi.fn(async () => ({ locale: 'en', unreadable: false })),
       entityListArchived: vi.fn(),
       documentList: vi.fn(),
+      recurringList: vi.fn(),
+      accountList: vi.fn(async () => []),
+      accountDefaults: vi.fn(),
     },
   }
 })
 
 import { RenameDialog } from '../components/RenameDialog'
+import { ErrorBanner } from '../components/ui'
 import { api, type Entity } from '../lib/api'
 import { resetI18nForTests, setLocale, t } from '../lib/i18n'
+import { copyError } from '../lib/uiError'
 import { DocumentsPage } from './DocumentsPage'
+import { RecurringPage } from './RecurringPage'
 import { SettingsPage } from './SettingsPage'
 
 const entity: Entity = {
@@ -119,5 +125,49 @@ describe('a language switch re-words an error banner that is up', () => {
     expect(greek).not.toBe(english)
     expect(greek).toContain('Home')
     expect(screen.getByRole('alert')).toHaveTextContent(greek)
+  })
+
+  test('on Recurring, a page error routed through the dialog error hook', async () => {
+    vi.mocked(api.recurringList).mockRejectedValue({ code: 'vault_locked', message: 'locked' })
+    render(<RecurringPage entity={entity} onBack={() => {}} />)
+    const english = 'The vault is locked.'
+    expect(await screen.findByRole('alert')).toHaveTextContent(english)
+
+    switchToGreek()
+
+    const greek = t('error.vaultLocked')
+    expect(greek).not.toBe(english)
+    expect(screen.getByRole('alert')).toHaveTextContent(greek)
+  })
+})
+
+describe('a language switch and the banner position', () => {
+  afterEach(() => {
+    // jsdom has no scrollIntoView; each test installs its own spy.
+    Reflect.deleteProperty(Element.prototype, 'scrollIntoView')
+  })
+
+  test('re-wording a banner does not scroll it into view again', () => {
+    const scroll = vi.fn()
+    Element.prototype.scrollIntoView = scroll
+    const error = copyError('date.invalid')
+    render(<ErrorBanner error={error} />)
+    expect(scroll).toHaveBeenCalledTimes(1)
+
+    switchToGreek()
+
+    expect(screen.getByRole('alert')).toHaveTextContent(t('date.invalid'))
+    expect(scroll).toHaveBeenCalledTimes(1)
+  })
+
+  test('a new error after a language switch is still scrolled into view', () => {
+    const scroll = vi.fn()
+    Element.prototype.scrollIntoView = scroll
+    const { rerender } = render(<ErrorBanner error={copyError('date.invalid')} />)
+    switchToGreek()
+
+    rerender(<ErrorBanner error={copyError('tx.invalidAmount')} />)
+
+    expect(scroll).toHaveBeenCalledTimes(2)
   })
 })

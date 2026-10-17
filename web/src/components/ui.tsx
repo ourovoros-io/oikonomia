@@ -1,5 +1,5 @@
 import { ChevronDown, CircleAlert, Loader2, X } from 'lucide-react'
-import { Children, isValidElement, useEffect, useMemo, useRef, useState } from 'react'
+import { Children, isValidElement, useEffect, useRef, useState } from 'react'
 import type {
   ButtonHTMLAttributes,
   ComponentProps,
@@ -422,21 +422,19 @@ export function ErrorBanner({
 }) {
   const { t, locale } = useI18n()
   const ref = useRef<HTMLDivElement>(null)
-  // Worded once per error and language, not on every render of the page
-  // around it: wording analysis notes warns about codes it cannot word.
-  const message = useMemo(
-    () => (error ? uiErrorText(error) : null),
-    // The wording reads the current language from the catalog, not from a
-    // value this hook can see, so the language is listed by hand.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [error, locale],
-  )
+  const scrolledLocale = useRef(locale)
+  const message = error ? uiErrorText(error) : null
   const visible = Boolean(message || title)
 
   useEffect(() => {
+    // A language switch re-words the banner in place. It is not a new
+    // failure, so it must not pull the page away from the language control.
+    const reworded = scrolledLocale.current !== locale
+    scrolledLocale.current = locale
+
     // Undefined in jsdom.
-    if (visible) ref.current?.scrollIntoView?.({ block: 'nearest' })
-  }, [visible, message])
+    if (visible && !reworded) ref.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [visible, message, locale])
 
   if (!visible) return null
 

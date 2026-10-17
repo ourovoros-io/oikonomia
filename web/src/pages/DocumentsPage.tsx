@@ -116,7 +116,7 @@ export function DocumentsPage({ entity, onCreateBook }: Props) {
       <DocumentViewerModal
         documentId={viewerDocId}
         onClose={() => setViewerDocId(null)}
-        onError={(msg) => setError(msg)}
+        onError={setError}
       />
 
       {docs.length === 0 ? (

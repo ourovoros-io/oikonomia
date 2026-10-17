@@ -1,5 +1,5 @@
 import { asCommandError } from './commandError'
-import { t } from './i18n'
+import { t, type MessageKey } from './i18n'
 import { commandFailure, copyError, type UiError } from './uiError'
 
 export type VaultBackupAvailability = 'ready' | 'empty' | 'missing'
@@ -26,19 +26,19 @@ export function canBackupVault(availability: VaultBackupAvailability): boolean {
 }
 
 export function vaultBackupBanner(availability: VaultBackupAvailability): {
-  title: string
-  body: UiError
+  titleKey: MessageKey
+  bodyKey: MessageKey
 } | null {
   switch (availability) {
     case 'empty':
       return {
-        title: t('settings.vaultBackup.emptyTitle'),
-        body: copyError('settings.vaultBackup.emptyBody'),
+        titleKey: 'settings.vaultBackup.emptyTitle',
+        bodyKey: 'settings.vaultBackup.emptyBody',
       }
     case 'missing':
       return {
-        title: t('settings.vaultBackup.missingTitle'),
-        body: copyError('settings.vaultBackup.missingBody'),
+        titleKey: 'settings.vaultBackup.missingTitle',
+        bodyKey: 'settings.vaultBackup.missingBody',
       }
     case 'ready':
       return null
@@ -77,7 +77,7 @@ export function restoreConfirm(kind: RestoreConfirmKind): {
  * read as one about making a backup.
  * Takes `unknown` because a rejection can be anything, including nothing.
  */
-function vaultFailure(err: unknown, fallbackKey: string): UiError {
+function vaultFailure(err: unknown, fallbackKey: MessageKey): UiError {
   switch (asCommandError(err).code) {
     case 'vault_uninitialized':
       return copyError('settings.vaultBackup.errUninitialized')

@@ -1,4 +1,5 @@
 import type { AccountDefaults, SimpleEntryInput } from './api'
+import type { MessageKey } from './i18n'
 
 export type EntryKind = 'expense' | 'income' | 'bill' | 'transfer'
 export type BillStatusTray = 'paid' | 'unpaid'
@@ -126,7 +127,7 @@ export function validateTrayAccounts(args: {
   payableId: string
   fromId: string
   toId: string
-}): string | null {
+}): MessageKey | null {
   const { kind, billStatus, categoryId, walletId, payableId, fromId, toId } = args
   if (kind === 'expense' && (!categoryId || !walletId)) {
     return 'quickAdd.pickAccounts'
