@@ -198,9 +198,9 @@ export default function App() {
   }
 
   // Only a book the reloaded list holds is made current. After a failed reload
-  // the current book stays: choosing the new one would remember a book the
+  // the current book stays: choosing the added one would remember a book the
   // list does not hold, and the sidebar would quietly show another.
-  async function makeCreatedEntityCurrent(id: string) {
+  async function makeAddedEntityCurrent(id: string) {
     if (await reloadEntities()) selectEntity(id)
   }
 
@@ -514,7 +514,7 @@ export default function App() {
                       onEntitiesChange={async () => {
                         await reloadEntities()
                       }}
-                      onEntityCreated={makeCreatedEntityCurrent}
+                      onEntityAdded={makeAddedEntityCurrent}
                       onSelectEntity={(id) => {
                         selectEntity(id)
                         setActive('dashboard')

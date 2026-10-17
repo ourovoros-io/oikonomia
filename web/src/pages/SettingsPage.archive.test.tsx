@@ -65,20 +65,26 @@ beforeEach(() => {
   vi.mocked(api.entityDelete).mockReset().mockResolvedValue(undefined)
 })
 
-/** Renders Settings over `entities` with the books section open. */
-async function openBooks(entities: Entity[], onEntitiesChange = vi.fn(async () => {})) {
+/**
+ * Renders Settings over `entities` with the books section open, and returns
+ * the callbacks App would get: a plain reload, and a reload that makes a book
+ * current.
+ */
+async function openBooks(entities: Entity[]) {
+  const onEntitiesChange = vi.fn(async () => {})
+  const onEntityAdded = vi.fn(async (_id: string) => {})
   render(
     <SettingsPage
       entities={entities}
       onEntitiesChange={onEntitiesChange}
-      onEntityCreated={async () => {}}
+      onEntityAdded={onEntityAdded}
       onSelectEntity={() => {}}
     />,
   )
   const header = screen.getByRole('button', { name: /^books/i })
   // With no book the section starts open, and a click would fold it.
   if (header.getAttribute('aria-expanded') === 'false') await userEvent.click(header)
-  return onEntitiesChange
+  return { onEntitiesChange, onEntityAdded }
 }
 
 /** The region that lists the archived books; absent when there are none. */
@@ -115,7 +121,7 @@ describe('SettingsPage archiving a book', () => {
   })
 
   test('cancelling archives nothing and hands focus back to the button', async () => {
-    const onEntitiesChange = await openBooks([home, shop])
+    const { onEntitiesChange } = await openBooks([home, shop])
     const trigger = screen.getByRole('button', { name: 'Archive Home' })
     await userEvent.click(trigger)
 
@@ -143,7 +149,7 @@ describe('SettingsPage archiving a book', () => {
 
   test('confirming archives the book, reloads the books and lists it as archived', async () => {
     vi.mocked(api.entityListArchived).mockResolvedValueOnce([]).mockResolvedValue([home])
-    const onEntitiesChange = await openBooks([home, shop])
+    const { onEntitiesChange } = await openBooks([home, shop])
     expect(archivedRegion()).toBeNull()
 
     await userEvent.click(screen.getByRole('button', { name: 'Archive Home' }))
@@ -168,7 +174,7 @@ describe('SettingsPage archiving a book', () => {
       message: 'archive entity: disk I/O error',
       params: { operation: 'archive entity' },
     })
-    const onEntitiesChange = await openBooks([home])
+    const { onEntitiesChange } = await openBooks([home])
 
     await userEvent.click(screen.getByRole('button', { name: 'Archive Home' }))
     await userEvent.click(
@@ -229,7 +235,7 @@ describe('SettingsPage archived books', () => {
         entities={[]}
         vaultPresent={false}
         onEntitiesChange={async () => {}}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -252,16 +258,18 @@ describe('SettingsPage archived books', () => {
     expect(screen.queryByText(/disk I\/O/)).toBeNull()
   })
 
-  test('Restore un-archives the book and reloads both lists', async () => {
+  test('Restore un-archives the book, makes it current and reloads both lists', async () => {
     vi.mocked(api.entityListArchived).mockResolvedValueOnce([home]).mockResolvedValue([])
-    const onEntitiesChange = await openBooks([shop])
+    const { onEntitiesChange, onEntityAdded } = await openBooks([shop])
 
     await userEvent.click(await screen.findByRole('button', { name: 'Restore Home' }))
 
     await waitFor(() => expect(archivedRegion()).toBeNull())
     expect(api.entityUnarchive).toHaveBeenCalledTimes(1)
     expect(api.entityUnarchive).toHaveBeenCalledWith('e1')
-    expect(onEntitiesChange).toHaveBeenCalledTimes(1)
+    // The same path as a created book: App reloads and makes it current.
+    expect(onEntityAdded).toHaveBeenCalledExactlyOnceWith('e1')
+    expect(onEntitiesChange).not.toHaveBeenCalled()
     expect(api.entityListArchived).toHaveBeenCalledTimes(2)
     expect(screen.queryByRole('alert')).toBeNull()
   })
@@ -284,7 +292,7 @@ describe('SettingsPage archived books', () => {
       message: 'the name "Home" is already in use',
       params: { name: 'Home' },
     })
-    const onEntitiesChange = await openBooks([book('e9', 'home')])
+    const { onEntitiesChange, onEntityAdded } = await openBooks([book('e9', 'home')])
 
     await userEvent.click(await screen.findByRole('button', { name: 'Restore Home' }))
 
@@ -296,6 +304,7 @@ describe('SettingsPage archived books', () => {
     expect(screen.queryByText(/Choose a different name/)).toBeNull()
     expect(screen.queryByText(/is already in use$/)).toBeNull()
     expect(onEntitiesChange).not.toHaveBeenCalled()
+    expect(onEntityAdded).not.toHaveBeenCalled()
     expect(await screen.findByRole('button', { name: 'Restore Home' })).toBeEnabled()
     expect(warn).not.toHaveBeenCalled()
   })

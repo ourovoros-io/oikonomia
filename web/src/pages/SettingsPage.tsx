@@ -70,8 +70,11 @@ type Props = {
   /** False when no vault files exist. Settings is normally only mounted unlocked. */
   vaultPresent?: boolean
   onEntitiesChange: () => Promise<void>
-  /** Reloads the books and makes the new one current, without leaving this page. */
-  onEntityCreated: (id: string) => Promise<void>
+  /**
+   * Reloads the books and makes a created or restored one current, without
+   * leaving this page.
+   */
+  onEntityAdded: (id: string) => Promise<void>
   /** Opens a book: makes it current and goes to its Dashboard. */
   onSelectEntity: (id: string) => void
   onLockTimeoutChange?: (secs: number) => void
@@ -137,7 +140,7 @@ export function SettingsPage({
   entitiesLoaded = true,
   vaultPresent = true,
   onEntitiesChange,
-  onEntityCreated,
+  onEntityAdded,
   onSelectEntity,
   onLockTimeoutChange,
   createBookIntent,
@@ -302,7 +305,7 @@ export function SettingsPage({
         chart_template: template,
         fiscal_year_start_month: 1,
       })
-      await onEntityCreated(entity.id)
+      await onEntityAdded(entity.id)
       setShowCreate(false)
       // Cleared once the dialog is closed, so its fields do not change under
       // the user while the books reload. The chart is a choice about this one
@@ -363,7 +366,9 @@ export function SettingsPage({
     setNoticeKey(null)
     try {
       await api.entityUnarchive(book.id)
-      await onEntitiesChange()
+      // As with a new book: a book is restored to be worked in, and this page
+      // stays so several books can be restored in a row.
+      await onEntityAdded(book.id)
     } catch (err) {
       const cmd = asCommandError(err)
       // The general sentence for a taken name says to choose another, which
