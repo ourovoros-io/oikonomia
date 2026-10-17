@@ -62,7 +62,7 @@ describe('CsvPreviewModal currency warning', () => {
 
 describe('CsvPreviewModal row problems', () => {
   const cases: Array<[Locale, string]> = [
-    ['en', '"not-a-date" is not a valid date.'],
+    ['en', '“not-a-date” is not a valid date.'],
     ['el', 'Το «not-a-date» δεν είναι έγκυρη ημερομηνία.'],
     ['fr', '« not-a-date » n’est pas une date valide.'],
     ['de', '„not-a-date“ ist kein gültiges Datum.'],

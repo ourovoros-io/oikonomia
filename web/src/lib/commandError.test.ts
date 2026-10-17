@@ -218,7 +218,7 @@ describe('command error localization', () => {
     )
     expect(
       commandErrorMessage({ code: 'csv_invalid_date', message: 'raw', params: { value: '31/31/2026' } }),
-    ).toBe('"31/31/2026" is not a valid date.')
+    ).toBe('“31/31/2026” is not a valid date.')
   })
 
   it('has a sentence for every mapping problem Rust names, in every language', () => {
