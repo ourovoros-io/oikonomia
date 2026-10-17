@@ -117,6 +117,7 @@ beforeEach(() => {
   vi.mocked(api.entityList).mockReset().mockResolvedValue([entity])
   vi.mocked(api.entityListArchived).mockReset().mockResolvedValue([])
   vi.mocked(api.entityArchive).mockReset().mockResolvedValue(undefined)
+  vi.mocked(api.rememberLastEntity).mockReset().mockResolvedValue(undefined)
   vi.mocked(listen).mockClear()
 })
 
@@ -473,6 +474,53 @@ describe('App book selection', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Company, EUR' }))
 
     expect(api.rememberLastEntity).toHaveBeenCalledWith('e2')
+  })
+
+  async function createBookInSettings(name: string) {
+    await userEvent.click(await screen.findByRole('button', { name: 'Settings' }))
+    await userEvent.click(screen.getByRole('button', { name: /^books/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /^new book$/i }))
+    await userEvent.type(screen.getByLabelText('Name'), name)
+    await userEvent.click(screen.getByRole('button', { name: /create book/i }))
+  }
+
+  test('a book created in Settings becomes current and Settings stays open', async () => {
+    vi.mocked(api.entityCreate).mockReset().mockResolvedValue(second)
+    render(<App />)
+    await screen.findByRole('button', { name: 'Personal, EUR' })
+    vi.mocked(api.entityList).mockResolvedValue([entity, second])
+
+    await createBookInSettings('Company')
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Company, EUR' })).toHaveAttribute(
+        'aria-current',
+        'true',
+      )
+    })
+    expect(screen.getByRole('button', { name: 'Personal, EUR' })).not.toHaveAttribute(
+      'aria-current',
+    )
+    expect(api.rememberLastEntity).toHaveBeenCalledExactlyOnceWith('e2')
+    expect(screen.getByRole('button', { name: 'Settings' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.queryByText('Dashboard stub')).toBeNull()
+  })
+
+  test('a failed reload after creating a book keeps the current book', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    vi.mocked(api.entityCreate).mockReset().mockResolvedValue(second)
+    render(<App />)
+    await screen.findByRole('button', { name: 'Personal, EUR' })
+    vi.mocked(api.entityList).mockRejectedValue({ code: 'brand_new', message: 'raw detail' })
+
+    await createBookInSettings('Company')
+
+    await screen.findByRole('alert')
+    expect(screen.getByRole('button', { name: 'Personal, EUR' })).toHaveAttribute(
+      'aria-current',
+      'true',
+    )
+    expect(api.rememberLastEntity).not.toHaveBeenCalled()
   })
 })
 

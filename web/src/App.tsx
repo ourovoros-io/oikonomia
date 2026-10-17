@@ -175,6 +175,23 @@ export default function App() {
     if (prefsNotice) void noteDamagedPrefs()
   }
 
+  /** Reloads the books after Settings changed them; false when that failed and was reported. */
+  async function reloadEntities(): Promise<boolean> {
+    try {
+      await loadEntities()
+      return true
+    } catch (err) {
+      setError(commandErrorMessage(err, 'app.failedBackend'))
+      return false
+    }
+  }
+
+  // Only a book the reloaded list holds is made current: after a failed reload
+  // the current book stays, rather than one the sidebar does not show.
+  async function makeCreatedEntityCurrent(id: string) {
+    if (await reloadEntities()) selectEntity(id)
+  }
+
   // The Rust watchdog is the authority on idle locking; it emits this event
   // when it closes the vault so the UI drops to the unlock screen.
   useEffect(() => {
@@ -484,12 +501,9 @@ export default function App() {
                       onCreateBookIntentHandled={onCreateBookIntentHandled}
                       onLockTimeoutChange={setLockTimeoutSecs}
                       onEntitiesChange={async () => {
-                        try {
-                          await loadEntities()
-                        } catch (err) {
-                          setError(commandErrorMessage(err, 'app.failedBackend'))
-                        }
+                        await reloadEntities()
                       }}
+                      onEntityCreated={makeCreatedEntityCurrent}
                       onSelectEntity={(id) => {
                         selectEntity(id)
                         setActive('dashboard')

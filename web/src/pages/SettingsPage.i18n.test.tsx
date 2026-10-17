@@ -47,7 +47,12 @@ describe('SettingsPage i18n', () => {
   test('heading and language chrome render Writer el catalog', async () => {
     setLocale('el')
     render(
-      <SettingsPage entities={[]} onEntitiesChange={async () => {}} onSelectEntity={() => {}} />,
+      <SettingsPage
+        entities={[]}
+        onEntitiesChange={async () => {}}
+        onEntityCreated={async () => {}}
+        onSelectEntity={() => {}}
+      />,
     )
     expect(screen.getByRole('heading', { name: 'Ρυθμίσεις' })).toBeTruthy()
     expect(screen.getByRole('heading', { name: 'Γλώσσα' })).toBeTruthy()
@@ -73,7 +78,12 @@ describe('SettingsPage i18n', () => {
   test('language pill persists via settings_set_locale and mirrors oikonomia.locale', async () => {
     render(
       <I18nProvider>
-        <SettingsPage entities={[]} onEntitiesChange={async () => {}} onSelectEntity={() => {}} />
+        <SettingsPage
+          entities={[]}
+          onEntitiesChange={async () => {}}
+          onEntityCreated={async () => {}}
+          onSelectEntity={() => {}}
+        />
       </I18nProvider>,
     )
     await waitFor(() => {
@@ -99,7 +109,12 @@ describe('SettingsPage i18n', () => {
   async function openLanguageSection() {
     render(
       <I18nProvider>
-        <SettingsPage entities={[]} onEntitiesChange={async () => {}} onSelectEntity={() => {}} />
+        <SettingsPage
+          entities={[]}
+          onEntitiesChange={async () => {}}
+          onEntityCreated={async () => {}}
+          onSelectEntity={() => {}}
+        />
       </I18nProvider>,
     )
     await waitFor(() => {

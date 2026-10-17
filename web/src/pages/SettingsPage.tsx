@@ -68,6 +68,9 @@ type Props = {
   /** False when no vault files exist. Settings is normally only mounted unlocked. */
   vaultPresent?: boolean
   onEntitiesChange: () => Promise<void>
+  /** Reloads the books and makes the new one current, without leaving this page. */
+  onEntityCreated: (id: string) => Promise<void>
+  /** Opens a book: makes it current and goes to its Dashboard. */
   onSelectEntity: (id: string) => void
   onLockTimeoutChange?: (secs: number) => void
   /** Bumped by App's empty-state CTAs to pop the new-entity form open and scroll to it. */
@@ -129,6 +132,7 @@ export function SettingsPage({
   entities,
   vaultPresent = true,
   onEntitiesChange,
+  onEntityCreated,
   onSelectEntity,
   onLockTimeoutChange,
   createBookIntent,
@@ -290,10 +294,11 @@ export function SettingsPage({
         fiscal_year_start_month: 1,
       })
       setName('')
-      await onEntitiesChange()
+      await onEntityCreated(entity.id)
       setShowCreate(false)
-      // Stay here: adding several books should not take a trip to each
-      // one's Dashboard. The new book is marked in the list instead.
+      // The new book is the one the user means to work in next, so it becomes
+      // current, but this page stays: adding several books should not take a
+      // trip to each one's Dashboard. The new book is marked in the list too.
       setNewBookId(entity.id)
       setCreatedBook(entity.name)
     } catch (err) {

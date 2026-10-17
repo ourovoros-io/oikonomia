@@ -71,6 +71,7 @@ async function openBooks(entities: Entity[], onEntitiesChange = vi.fn(async () =
     <SettingsPage
       entities={entities}
       onEntitiesChange={onEntitiesChange}
+      onEntityCreated={async () => {}}
       onSelectEntity={() => {}}
     />,
   )
@@ -226,6 +227,7 @@ describe('SettingsPage archived books', () => {
         entities={[]}
         vaultPresent={false}
         onEntitiesChange={async () => {}}
+        onEntityCreated={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
