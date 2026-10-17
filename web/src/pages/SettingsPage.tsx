@@ -81,6 +81,8 @@ type Props = {
   appInfo?: AppInfo | null
 }
 
+const DEFAULT_TEMPLATE: ChartTemplate = 'personal'
+
 const TEMPLATES: Array<{
   id: ChartTemplate
   titleKey:
@@ -151,7 +153,7 @@ export function SettingsPage({
   const [mailTried, setMailTried] = useState(false)
   const [name, setName] = useState('')
   const [currency, setCurrency] = useState(rememberedBookCurrency)
-  const [template, setTemplate] = useState<ChartTemplate>('personal')
+  const [template, setTemplate] = useState<ChartTemplate>(DEFAULT_TEMPLATE)
   const [busy, setBusy] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
   const [lockMins, setLockMins] = useState(15)
@@ -294,6 +296,9 @@ export function SettingsPage({
         fiscal_year_start_month: 1,
       })
       setName('')
+      // The chart is a choice about this one book, unlike the currency, which
+      // the session remembers: the next book starts from the default again.
+      setTemplate(DEFAULT_TEMPLATE)
       await onEntityCreated(entity.id)
       setShowCreate(false)
       // The new book is the one the user means to work in next, so it becomes

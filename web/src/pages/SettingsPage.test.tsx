@@ -1003,6 +1003,33 @@ describe('SettingsPage books', () => {
     expect(onSelectEntity).not.toHaveBeenCalled()
   })
 
+  test('the next New book form starts from the default chart again', async () => {
+    vi.mocked(api.entityCreate).mockResolvedValue(created)
+    render(
+      <SettingsPage
+        entities={[entity]}
+        onEntitiesChange={noopAsync}
+        onEntityCreated={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: /^books/i }))
+
+    async function createBook(name: string, chart?: RegExp) {
+      await userEvent.click(await screen.findByRole('button', { name: /^new book$/i }))
+      const dialog = await screen.findByRole('dialog', { name: 'New book' })
+      await userEvent.type(within(dialog).getByLabelText('Name'), name)
+      if (chart) await userEvent.click(within(dialog).getByRole('button', { name: chart }))
+      await userEvent.click(within(dialog).getByRole('button', { name: 'Create book' }))
+      await screen.findByText(`Book ${created.name} created.`)
+    }
+    await createBook('Shop', /^Company/)
+    await createBook('Home')
+
+    const charts = vi.mocked(api.entityCreate).mock.calls.map(([input]) => input.chart_template)
+    expect(charts).toEqual(['company', 'personal'])
+  })
+
   test('a book can be renamed', async () => {
     vi.mocked(api.entityUpdate).mockResolvedValue({ ...entity, name: 'Home' })
     const onEntitiesChange = vi.fn(async () => {})
