@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Download, Eye, FileImage, FileText, FolderOpen, Trash2 } from 'lucide-react'
-import { api, type DocumentMeta, type Entity } from '../lib/api'
+import { api, formatDate, type DocumentMeta, type Entity } from '../lib/api'
 import { commandErrorMessage } from '../lib/commandError'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { DocumentViewerModal } from '../components/DocumentViewerModal'
@@ -8,23 +8,28 @@ import { formatBytes } from '../lib/files'
 import { TopBar } from '../components/TopBar'
 import { Button, EmptyState, ErrorBanner, IconBadge, Panel, ToastStack } from '../components/ui'
 import { useI18n } from '../lib/I18nProvider'
+import type { Locale } from '../lib/i18n'
 
 type Props = { entity: Entity | null; onCreateBook?: () => void }
 
-/** created_at is the app-wide "unix:<seconds>" ordering key; render as dd/mm/yyyy. */
-function formatCreatedAt(createdAt: string): string {
+/**
+ * created_at is the app-wide "unix:<seconds>" ordering key; it is shown as the
+ * local calendar day, written like every other date in the app.
+ */
+function formatCreatedAt(createdAt: string, locale: Locale): string {
   const secs = Number(createdAt.replace(/^unix:/, ''))
   if (!Number.isFinite(secs) || secs <= 0) return ''
-  return new Date(secs * 1000).toLocaleDateString('el-GR', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  })
+
+  const day = new Date(secs * 1000)
+  return formatDate(
+    { year: day.getFullYear(), month: day.getMonth() + 1, day: day.getDate() },
+    locale,
+  )
 }
 
 /** Every file in the book's vault — always linked to the entry it was saved with. */
 export function DocumentsPage({ entity, onCreateBook }: Props) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const [docs, setDocs] = useState<DocumentMeta[]>([])
   const [error, setError] = useState<string | null>(null)
   const [viewerDocId, setViewerDocId] = useState<string | null>(null)
@@ -146,9 +151,9 @@ export function DocumentsPage({ entity, onCreateBook }: Props) {
                     {doc.filename}
                   </div>
                   <div className="truncate text-xs text-[var(--color-muted)] tabular-nums">
-                    {formatCreatedAt(doc.created_at) ? (
+                    {formatCreatedAt(doc.created_at, locale) ? (
                       <>
-                        {formatCreatedAt(doc.created_at)}
+                        {formatCreatedAt(doc.created_at, locale)}
                         <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
                       </>
                     ) : null}
