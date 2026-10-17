@@ -482,6 +482,51 @@ jobs:
 
       - run: npm run build
 
+  # Translated labels that overflow only show with real layout, which jsdom
+  # does not do: this measures the marketing fixture in Chromium.
+  layout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+
+      # Each Playwright release drives its own browser build, so the cache
+      # key is the installed Playwright version.
+      - name: Read the Playwright version
+        id: playwright
+        run: echo "version=$(node -p "require('playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: browser-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
+      - name: Install the headless Chromium build
+        if: steps.browser-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --only-shell chromium
+
+      # The runner image usually has every system library Chromium needs;
+      # the dry run checks that without an apt-get update, and only a miss
+      # pays for the install.
+      - name: Install Chromium's system libraries if any are missing
+        run: npx playwright install-deps --dry-run chromium || npx playwright install-deps chromium
+
+      - run: npm run check:layout
+
   audit:
     runs-on: ubuntu-latest
     steps:
