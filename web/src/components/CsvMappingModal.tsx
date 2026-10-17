@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react'
+import { useId, useState } from 'react'
 import { ArrowRight } from 'lucide-react'
 import { Modal } from './Modal'
 import { Button, Input, Select } from './ui'
@@ -38,14 +38,12 @@ function HeaderSelect({
   target,
   value,
   headers,
-  optional,
   onChange,
 }: {
   label: string
   target: string
   value: string
   headers: string[]
-  optional?: boolean
   onChange: (value: string) => void
 }) {
   const { t } = useI18n()
@@ -60,7 +58,9 @@ function HeaderSelect({
         onChange={(e) => onChange(e.target.value)}
         aria-label={t('tx.csv.sourceAria', { label })}
       >
-        {optional || !value ? <option value="">{t('tx.csv.notMapped')}</option> : null}
+        {/* Required fields offer it too, so a wrong pick can be undone; the
+            Continue button stays blocked until the mapping is complete. */}
+        <option value="">{t('tx.csv.notMapped')}</option>
         {headers.map((header) => (
           <option key={header} value={header}>
             {header}
@@ -97,19 +97,34 @@ function PlaceholderRow({ label, target }: { label: string; target: string }) {
   )
 }
 
+function detectedDraft(preview: CsvImportPreview | null): CsvMapDraft {
+  return draftFromDetected(preview?.headers ?? [], preview?.detected_mapping ?? {})
+}
+
+/**
+ * The draft mapping, reset to the detected one whenever the dialog opens or
+ * gets a new file. The dialog stays mounted between imports, so the reset
+ * happens during render: an effect runs after the first frame, which would
+ * then show the previous file's columns.
+ */
+function useDraftForPreview(open: boolean, preview: CsvImportPreview | null) {
+  const [draft, setDraft] = useState(() => detectedDraft(preview))
+  const [shown, setShown] = useState({ open, preview })
+
+  if (shown.open !== open || shown.preview !== preview) {
+    setShown({ open, preview })
+    if (open && preview) setDraft(detectedDraft(preview))
+  }
+
+  return [draft, setDraft] as const
+}
+
 /** Step 2 of CSV import: map file headers, or Auto-detected placeholders until headers exist. */
 export function CsvMappingModal({ open, preview, busy = false, error = null, onClose, onContinue }: Props) {
   const { t } = useI18n()
   const headers = preview?.headers ?? []
   const live = preview != null && previewHasColumnMap(preview)
-  const [draft, setDraft] = useState<CsvMapDraft>(() =>
-    draftFromDetected(headers, preview?.detected_mapping ?? {}),
-  )
-
-  useEffect(() => {
-    if (!open || !preview) return
-    setDraft(draftFromDetected(preview.headers ?? [], preview.detected_mapping ?? {}))
-  }, [open, preview])
+  const [draft, setDraft] = useDraftForPreview(open, preview)
 
   const mapping = draftToMapping(draft)
   const canContinue = !live || mappingReady(mapping)
@@ -149,8 +164,7 @@ export function CsvMappingModal({ open, preview, busy = false, error = null, onC
       onContinue({}, true)
       return
     }
-    const initial = draftFromDetected(preview.headers ?? [], preview.detected_mapping ?? {})
-    onContinue(mapping, draftsEqual(draft, initial))
+    onContinue(mapping, draftsEqual(draft, detectedDraft(preview)))
   }
 
   return (
@@ -184,7 +198,6 @@ export function CsvMappingModal({ open, preview, busy = false, error = null, onC
                   target={t('tx.csv.field.debit')}
                   value={draft.debit}
                   headers={headers}
-                  optional
                   onChange={(debit) => patch({ debit })}
                 />
                 <HeaderSelect
@@ -192,7 +205,6 @@ export function CsvMappingModal({ open, preview, busy = false, error = null, onC
                   target={t('tx.csv.field.credit')}
                   value={draft.credit}
                   headers={headers}
-                  optional
                   onChange={(credit) => patch({ credit })}
                 />
               </>
@@ -210,7 +222,6 @@ export function CsvMappingModal({ open, preview, busy = false, error = null, onC
                   target={t('tx.csv.field.directionOptional')}
                   value={draft.direction}
                   headers={headers}
-                  optional
                   onChange={(direction) => patch({ direction })}
                 />
               </>
@@ -220,7 +231,6 @@ export function CsvMappingModal({ open, preview, busy = false, error = null, onC
               target={t('tx.csv.field.descriptionOptional')}
               value={draft.description}
               headers={headers}
-              optional
               onChange={(description) => patch({ description })}
             />
             <HeaderSelect
@@ -228,7 +238,6 @@ export function CsvMappingModal({ open, preview, busy = false, error = null, onC
               target={t('tx.csv.field.referenceOptional')}
               value={draft.reference}
               headers={headers}
-              optional
               onChange={(reference) => patch({ reference })}
             />
           </>
