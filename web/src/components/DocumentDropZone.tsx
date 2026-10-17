@@ -4,7 +4,7 @@ import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { api, type AnalyzerHint, type DocumentSuggestion, type PendingDocSource } from '../lib/api'
 import { renderAnalyzerHint } from '../lib/uiText'
 import { isTauri } from '../lib/tauri'
-import { commandErrorMessage } from '../lib/commandError'
+import { commandFailure, copyError, uiErrorText, type UiError } from '../lib/uiError'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import { cn } from '../lib/cn'
 import { useI18n } from '../lib/I18nProvider'
@@ -13,14 +13,14 @@ type Props = {
   entityId: string
   disabled?: boolean
   onSuggestion: (suggestion: DocumentSuggestion, source: PendingDocSource) => void
-  onError: (message: string) => void
+  onError: (error: UiError) => void
 }
 
 export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: Props) {
   const { t } = useI18n()
   const [dragOver, setDragOver] = useState(false)
   const [busy, setBusy] = useState(false)
-  const [localError, setLocalError] = useState<string | null>(null)
+  const [localError, setLocalError] = useState<UiError | null>(null)
   // The analyzer's own hint, or 'unavailable' when its status could not be read.
   const [hint, setHint] = useState<AnalyzerHint | 'unavailable' | null>(null)
   const busyRef = useRef(false)
@@ -38,9 +38,9 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
       // Resource guard only — the backend enforces the same cap (MAX_DOCUMENT_BYTES);
       // checking here avoids reading a huge file into memory and across IPC first.
       if (file.size > 8 * 1024 * 1024) {
-        const msg = t('drop.fileTooLarge')
-        setLocalError(msg)
-        onError(msg)
+        const failure = copyError('drop.fileTooLarge')
+        setLocalError(failure)
+        onError(failure)
         return
       }
       busyRef.current = true
@@ -57,16 +57,16 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
         })
         onSuggestion(suggestion, { kind: 'file', file })
       } catch (err) {
-        const msg = commandErrorMessage(err, 'drop.analyzeFailed')
-        setLocalError(msg)
-        onError(msg)
+        const failure = commandFailure(err, 'drop.analyzeFailed')
+        setLocalError(failure)
+        onError(failure)
       } finally {
         busyRef.current = false
         setBusy(false)
         setDragOver(false)
       }
     },
-    [disabled, entityId, onError, onSuggestion, t],
+    [disabled, entityId, onError, onSuggestion],
   )
 
   const processPath = useCallback(
@@ -79,9 +79,9 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
         const suggestion = await api.documentAnalyzePath({ entityId, path })
         onSuggestion(suggestion, { kind: 'path', path })
       } catch (err) {
-        const msg = commandErrorMessage(err, 'drop.analyzeFailed')
-        setLocalError(msg)
-        onError(msg)
+        const failure = commandFailure(err, 'drop.analyzeFailed')
+        setLocalError(failure)
+        onError(failure)
       } finally {
         busyRef.current = false
         setBusy(false)
@@ -118,7 +118,7 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
             if (path) {
               void processPath(path)
             } else {
-              setLocalError(t('drop.noPath'))
+              setLocalError(copyError('drop.noPath'))
             }
           }
         })
@@ -131,7 +131,7 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
       cancelled = true
       unlisten?.()
     }
-  }, [disabled, processPath, t])
+  }, [disabled, processPath])
 
   function onHtmlDrop(e: DragEvent) {
     e.preventDefault()
@@ -145,7 +145,7 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
     }
     // In Tauri, paths often only arrive via onDragDropEvent (handled above).
     if (!isTauri()) {
-      setLocalError(t('drop.noFile'))
+      setLocalError(copyError('drop.noFile'))
     }
   }
 
@@ -213,7 +213,7 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
       ) : null}
       {localError ? (
         <p className="pointer-events-none relative mt-2 text-xs [overflow-wrap:anywhere] text-[var(--color-danger)]">
-          {localError}
+          {uiErrorText(localError)}
         </p>
       ) : null}
     </div>

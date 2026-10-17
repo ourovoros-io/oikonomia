@@ -1,4 +1,4 @@
-import { getLocale, type Locale } from './i18n'
+import { getLocale, type Locale, type MessageKey } from './i18n'
 
 /**
  * A currency as core describes it: its code, and how many decimals one minor
@@ -82,7 +82,10 @@ function decimalMark(locale: string): string {
  *
  * `unreadableKey` is the screen's own wording for text that is not a number.
  */
-export function amountProblemKey(minor: number | null, unreadableKey: string): string | null {
+export function amountProblemKey(
+  minor: number | null,
+  unreadableKey: MessageKey,
+): MessageKey | null {
   if (minor === null) return unreadableKey
   if (minor <= 0) return 'error.amountNotPositive'
 

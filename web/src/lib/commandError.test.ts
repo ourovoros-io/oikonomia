@@ -5,10 +5,11 @@ import codeParams from './errorCodeParams.json'
 import mappingProblems from './csvMappingProblems.json'
 import {
   asCommandError,
-  commandErrorMessage,
+  commandErrorText,
   ERROR_CODE_KEYS,
   fileReadError,
   logCommandError,
+  logHiddenCause,
   VARIANT_KEYS,
   WEB_ERROR_KEYS,
 } from './commandError'
@@ -76,7 +77,7 @@ describe('command error localization', () => {
       expect(sentence, locale).not.toBe(flat['error.vaultCorrupt'])
     }
 
-    const shown = commandErrorMessage({
+    const shown = commandErrorText({
       code: 'vault_unlock_before_backup',
       message: 'unmerged write-ahead log',
       params: {},
@@ -102,7 +103,7 @@ describe('command error localization', () => {
       expect(flat['error.vaultTooNew'], locale).not.toBe(flat['error.vaultCorrupt'])
     }
 
-    const shown = commandErrorMessage({
+    const shown = commandErrorText({
       code: 'vault_too_new',
       message: 'vault schema version 8 is newer than this build supports (7)',
       params: { found: '8', supported: '7' },
@@ -208,27 +209,27 @@ describe('command error localization', () => {
   })
 
   it('says what is wrong with a CSV file, with the value Rust sent', () => {
-    expect(commandErrorMessage({ code: 'csv_not_utf8', message: 'raw' })).toBe(
+    expect(commandErrorText({ code: 'csv_not_utf8', message: 'raw' })).toBe(
       'That CSV file is not UTF-8 text. Save or export it again as CSV with UTF-8 encoding.',
     )
     expect(
-      commandErrorMessage({ code: 'csv_missing_column', message: 'raw', params: { column: 'debit_minor' } }),
+      commandErrorText({ code: 'csv_missing_column', message: 'raw', params: { column: 'debit_minor' } }),
     ).toBe(
       'That journal CSV has no “debit_minor” column. Use a file exported from Oikonomia with all its columns.',
     )
     expect(
-      commandErrorMessage({ code: 'csv_invalid_date', message: 'raw', params: { value: '31/31/2026' } }),
+      commandErrorText({ code: 'csv_invalid_date', message: 'raw', params: { value: '31/31/2026' } }),
     ).toBe('“31/31/2026” is not a valid date.')
   })
 
   it('says rows to import need a category, with the count, never the raw text', () => {
     const refused = { code: 'import_category_required', message: 'raw', params: { count: '2' } }
 
-    expect(commandErrorMessage(refused)).toBe(
+    expect(commandErrorText(refused)).toBe(
       'Some rows to import have no category (2). Choose a category for each before importing.',
     )
     setLocale('el')
-    expect(commandErrorMessage(refused)).toBe(
+    expect(commandErrorText(refused)).toBe(
       'Ορισμένες γραμμές προς εισαγωγή δεν έχουν κατηγορία (2). Επιλέξτε κατηγορία για καθεμία πριν από την εισαγωγή.',
     )
   })
@@ -242,7 +243,7 @@ describe('command error localization', () => {
     for (const locale of LOCALES) {
       setLocale(locale)
       const shown = mappingProblems.map((problem) =>
-        commandErrorMessage({
+        commandErrorText({
           code: 'csv_invalid_mapping',
           message: 'raw',
           params: { problem, column: 'Payee' },
@@ -261,7 +262,7 @@ describe('command error localization', () => {
 
   it('names the column a mapping could not find', () => {
     expect(
-      commandErrorMessage({
+      commandErrorText({
         code: 'csv_invalid_mapping',
         message: 'raw',
         params: { problem: 'unknown_column', column: 'Payee' },
@@ -285,7 +286,7 @@ describe('command error localization', () => {
       setLocale(locale)
 
       for (const params of unusable) {
-        const shown = commandErrorMessage({ code: 'csv_invalid_mapping', message: 'raw', params })
+        const shown = commandErrorText({ code: 'csv_invalid_mapping', message: 'raw', params })
 
         expect(shown, locale).toBe(t('error.csvInvalidMapping'))
         expect(shown, locale).not.toContain('_')
@@ -295,8 +296,8 @@ describe('command error localization', () => {
 
   it('cuts a long cell from the file and shows markup in it as text', () => {
     const long = 'x'.repeat(FILE_TEXT_LIMIT * 3)
-    const cut = commandErrorMessage({ code: 'csv_invalid_status', message: 'raw', params: { value: long } })
-    const markup = commandErrorMessage({
+    const cut = commandErrorText({ code: 'csv_invalid_status', message: 'raw', params: { value: long } })
+    const markup = commandErrorText({
       code: 'csv_invalid_status',
       message: 'raw',
       params: { value: '<b>posted</b>' },
@@ -308,14 +309,14 @@ describe('command error localization', () => {
   })
 
   it('names the literal status column values a re-import accepts', () => {
-    expect(commandErrorMessage({ code: 'csv_invalid_status', message: 'raw', params: { value: 'void' } })).toBe(
+    expect(commandErrorText({ code: 'csv_invalid_status', message: 'raw', params: { value: 'void' } })).toBe(
       '“void” is not a journal status. The “status” column must contain “posted” or “voided”.',
     )
   })
 
   it('fills the copy in from the error params', () => {
     expect(
-      commandErrorMessage({
+      commandErrorText({
         code: 'password_too_short',
         message: 'password must be at least 12 characters',
         params: { min: '12' },
@@ -326,27 +327,27 @@ describe('command error localization', () => {
   it('falls back to the screen sentence for an unknown code, never the raw message', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
-    const shown = commandErrorMessage(
+    const shown = commandErrorText(
       { code: 'brand_new', message: 'sqlcipher: disk image is malformed' },
       'settings.deleteFailed',
     )
 
     expect(shown).toBe('Could not delete the book.')
     expect(shown).not.toContain('sqlcipher')
-    // The raw text is kept for diagnosis.
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('sqlcipher: disk image is malformed'))
+    // Wording runs on every draw and in every language, so it never logs.
+    expect(warn).not.toHaveBeenCalled()
   })
 
   it('uses the generic copy when an unknown code comes with no screen fallback', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
-    expect(commandErrorMessage({ code: 'brand_new', message: 'raw text' })).toBe('Something went wrong.')
+    expect(commandErrorText({ code: 'brand_new', message: 'raw text' })).toBe('Something went wrong.')
   })
 
   it('prefers the screen sentence over the generic copy for the catch-all unknown code', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
-    expect(commandErrorMessage({ code: 'unknown', message: 'raw text' }, 'app.failedLock')).toBe(
+    expect(commandErrorText({ code: 'unknown', message: 'raw text' }, 'app.failedLock')).toBe(
       'Could not lock the vault.',
     )
   })
@@ -357,8 +358,8 @@ describe('command error localization', () => {
     for (const locale of LOCALES) {
       setLocale(locale)
 
-      const bare = commandErrorMessage({ code: 'name_taken', message: 'raw' })
-      const withFallback = commandErrorMessage(
+      const bare = commandErrorText({ code: 'name_taken', message: 'raw' })
+      const withFallback = commandErrorText(
         { code: 'name_taken', message: 'raw', params: {} },
         'settings.deleteFailed',
       )
@@ -370,6 +371,7 @@ describe('command error localization', () => {
     }
 
     // The error is logged, so the missing value is not lost.
+    logHiddenCause({ code: 'name_taken', message: 'raw' })
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('name_taken'))
   })
 
@@ -377,19 +379,19 @@ describe('command error localization', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
     expect(
-      commandErrorMessage({ code: 'password_too_short', message: 'raw', params: { other: '1' } }),
+      commandErrorText({ code: 'password_too_short', message: 'raw', params: { other: '1' } }),
     ).toBe('Something went wrong.')
   })
 
   it('still shows a value that itself looks like a placeholder', () => {
     expect(
-      commandErrorMessage({ code: 'name_taken', message: 'raw', params: { name: '{a}' } }),
+      commandErrorText({ code: 'name_taken', message: 'raw', params: { name: '{a}' } }),
     ).toContain('{a}')
   })
 
   it('shows the copy for a known code and ignores the screen fallback', () => {
     expect(
-      commandErrorMessage(
+      commandErrorText(
         { code: 'name_taken', message: 'raw', params: { name: 'Personal' } },
         'settings.deleteFailed',
       ),
@@ -402,7 +404,7 @@ describe('command error localization', () => {
 
     for (const locale of LOCALES) {
       setLocale(locale)
-      shown.add(commandErrorMessage(error))
+      shown.add(commandErrorText(error))
     }
 
     expect(shown.size).toBe(LOCALES.length)
@@ -419,10 +421,10 @@ describe('command error localization', () => {
   })
 
   it('localizes an error raised by the web layer itself', () => {
-    expect(commandErrorMessage(fileReadError())).toBe('Could not read the file.')
+    expect(commandErrorText(fileReadError())).toBe('Could not read the file.')
 
     setLocale('el')
-    expect(commandErrorMessage(fileReadError())).toBe('Δεν ήταν δυνατή η ανάγνωση του αρχείου.')
+    expect(commandErrorText(fileReadError())).toBe('Δεν ήταν δυνατή η ανάγνωση του αρχείου.')
   })
 
   it('names the missing account in every language, with the form\u2019s own label', () => {
@@ -440,7 +442,7 @@ describe('command error localization', () => {
 
     for (const locale of LOCALES) {
       setLocale(locale)
-      const shown = commandErrorMessage(error)
+      const shown = commandErrorText(error)
 
       expect(shown, locale).toContain(expected[locale])
       expect(shown, locale).not.toContain('{')
@@ -458,7 +460,7 @@ describe('command error localization', () => {
 
     for (const locale of LOCALES) {
       setLocale(locale)
-      const shown = commandErrorMessage(error)
+      const shown = commandErrorText(error)
 
       expect(shown, locale).toContain(expected[locale])
       expect(shown, locale).toContain('5100')
@@ -469,7 +471,7 @@ describe('command error localization', () => {
     for (const role of roles) {
       for (const locale of LOCALES) {
         setLocale(locale)
-        const shown = commandErrorMessage({
+        const shown = commandErrorText({
           code: 'account_required',
           message: 'm',
           params: { role },
@@ -486,7 +488,7 @@ describe('command error localization', () => {
       setLocale(locale)
 
       for (const params of [{ role: 'mystery' }, undefined]) {
-        const shown = commandErrorMessage({ code: 'account_required', message: 'm', params })
+        const shown = commandErrorText({ code: 'account_required', message: 'm', params })
 
         expect(shown, locale).not.toContain('mystery')
         expect(shown, locale).not.toContain('{')
@@ -496,7 +498,7 @@ describe('command error localization', () => {
 
     setLocale('en')
     expect(
-      commandErrorMessage({
+      commandErrorText({
         code: 'account_wrong_type',
         message: 'm',
         params: { role: 'mystery', code: '5100' },
@@ -512,11 +514,11 @@ describe('command error localization', () => {
 
       for (const params of [undefined, { role: 'payment' }, { role: 'mystery' }]) {
         const error = { code: 'account_wrong_type', message: 'm', params }
-        const unknown = commandErrorMessage(error)
+        const unknown = commandErrorText(error)
 
         expect(unknown, locale).not.toContain('{')
         expect(unknown, locale).toBe(t('error.unknown'))
-        expect(commandErrorMessage(error, 'files.error.read'), locale).toBe(t('files.error.read'))
+        expect(commandErrorText(error, 'files.error.read'), locale).toBe(t('files.error.read'))
       }
     }
   })
@@ -538,7 +540,7 @@ describe('command error localization', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
     for (const code of VAGUE_CODES) {
-      expect(commandErrorMessage({ code, message: 'raw' }, 'docs.deleteFailed'), code).toBe(
+      expect(commandErrorText({ code, message: 'raw' }, 'docs.deleteFailed'), code).toBe(
         'Could not delete the document.',
       )
     }
@@ -548,13 +550,13 @@ describe('command error localization', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
     for (const code of VAGUE_CODES) {
-      const shown = commandErrorMessage({ code, message: 'raw' })
+      const shown = commandErrorText({ code, message: 'raw' })
 
       expect(shown, code).toBe(t(ERROR_CODE_KEYS[code]))
       expect(shown, code).not.toBe('Could not delete the document.')
     }
 
-    expect(commandErrorMessage({ code: 'io', message: 'raw' })).toBe('A file operation failed.')
+    expect(commandErrorText({ code: 'io', message: 'raw' })).toBe('A file operation failed.')
   })
 
   it('says a damaged preferences file is damaged, not that a file operation failed', () => {
@@ -567,7 +569,7 @@ describe('command error localization', () => {
 
     for (const locale of LOCALES) {
       setLocale(locale)
-      const shown = commandErrorMessage(error, 'settings.language.error')
+      const shown = commandErrorText(error, 'settings.language.error')
 
       expect(shown, locale).toBe(t('settings.prefs.unreadable'))
       expect(shown, locale).not.toBe(t('error.io'))
@@ -575,26 +577,26 @@ describe('command error localization', () => {
       expect(shown, locale).not.toContain('replace a preferences file')
     }
     // The sentence says what to do, so the error is not a diagnostic one.
+    logHiddenCause(error)
     expect(warn).not.toHaveBeenCalled()
   })
 
   it('lets a specific code win over the screen sentence', () => {
     expect(
-      commandErrorMessage({ code: 'name_taken', message: 'raw', params: { name: 'A' } }, 'docs.deleteFailed'),
+      commandErrorText({ code: 'name_taken', message: 'raw', params: { name: 'A' } }, 'docs.deleteFailed'),
     ).toContain('already in use')
   })
 
   it('logs the raw error for a vague code and for an unknown code', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
-    commandErrorMessage({ code: 'io', message: 'EACCES: /Users/x/vault' }, 'docs.deleteFailed')
-    commandErrorMessage({ code: 'io', message: 'EACCES: /Users/x/vault' })
-    expect(warn).toHaveBeenCalledTimes(2)
+    logHiddenCause({ code: 'io', message: 'EACCES: /Users/x/vault' })
+    expect(warn).toHaveBeenCalledTimes(1)
     expect(warn.mock.calls[0][0]).toContain('"io"')
     expect(warn.mock.calls[0][0]).toContain('EACCES: /Users/x/vault')
 
     warn.mockClear()
-    commandErrorMessage({ code: 'brand_new', message: 'sqlcipher: bad page', params: { a: 'b' } })
+    logHiddenCause({ code: 'brand_new', message: 'sqlcipher: bad page', params: { a: 'b' } })
     expect(warn).toHaveBeenCalledTimes(1)
     expect(warn.mock.calls[0][0]).toContain('"brand_new"')
     expect(warn.mock.calls[0][0]).toContain('sqlcipher: bad page')
@@ -604,8 +606,8 @@ describe('command error localization', () => {
   it('does not log a user-correctable error', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
-    commandErrorMessage({ code: 'name_taken', message: 'raw', params: { name: 'A' } }, 'docs.deleteFailed')
-    commandErrorMessage({ code: 'invalid_password', message: 'raw' })
+    logHiddenCause({ code: 'name_taken', message: 'raw', params: { name: 'A' } })
+    logHiddenCause({ code: 'invalid_password', message: 'raw' })
 
     expect(warn).not.toHaveBeenCalled()
   })
@@ -624,16 +626,16 @@ describe('command error localization', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
     for (const code of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
-      expect(commandErrorMessage({ code, message: 'raw' }, 'docs.deleteFailed'), code).toBe(
+      expect(commandErrorText({ code, message: 'raw' }, 'docs.deleteFailed'), code).toBe(
         'Could not delete the document.',
       )
-      expect(commandErrorMessage({ code, message: 'raw' }), code).toBe('Something went wrong.')
+      expect(commandErrorText({ code, message: 'raw' }), code).toBe('Something went wrong.')
     }
   })
 
   it('treats a role named like an Object.prototype member as having no label', () => {
     for (const role of ['constructor', '__proto__', 'toString']) {
-      const shown = commandErrorMessage({ code: 'account_required', message: 'm', params: { role } })
+      const shown = commandErrorText({ code: 'account_required', message: 'm', params: { role } })
 
       expect(shown, role).not.toContain(role)
       expect(shown, role).not.toContain('{')
@@ -644,7 +646,7 @@ describe('command error localization', () => {
     for (const locale of LOCALES) {
       setLocale(locale)
 
-      expect(commandErrorMessage(fileReadError()), locale).toMatch(/\.$/)
+      expect(commandErrorText(fileReadError()), locale).toMatch(/\.$/)
     }
   })
 })

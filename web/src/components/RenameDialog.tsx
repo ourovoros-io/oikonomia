@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { Modal } from './Modal'
 import { Button, Field, Input } from './ui'
-import { commandErrorMessage } from '../lib/commandError'
+import { commandFailure, type UiError } from '../lib/uiError'
 import { useI18n } from '../lib/I18nProvider'
 
 type Props = {
@@ -18,7 +18,7 @@ type Props = {
 export function RenameDialog({ current, title, label, onSave, onClose }: Props) {
   const { t } = useI18n()
   const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<UiError | null>(null)
 
   function close() {
     setError(null)
@@ -32,7 +32,7 @@ export function RenameDialog({ current, title, label, onSave, onClose }: Props) 
       await onSave(name)
       close()
     } catch (err) {
-      setError(commandErrorMessage(err))
+      setError(commandFailure(err))
     } finally {
       setBusy(false)
     }

@@ -5,6 +5,7 @@ import { Button, ErrorBanner } from './ui'
 import { cn } from '../lib/cn'
 import { useDialogFocus } from './useDialogFocus'
 import { useI18n } from '../lib/I18nProvider'
+import type { UiError } from '../lib/uiError'
 
 type Props = {
   open: boolean
@@ -14,7 +15,7 @@ type Props = {
   maxWidth?: string
   onClose: () => void
   /** What went wrong with this dialog's action, shown at the top of its body. */
-  error?: string | null
+  error?: UiError | null
   /** Lets a field point `aria-describedby` at the banner. */
   errorId?: string
   onDismissError?: () => void
@@ -90,7 +91,7 @@ export function Modal({
 
         <div className="overflow-y-auto p-6">
           {/* Inside the dialog: a banner on the page would sit behind the scrim. */}
-          <ErrorBanner message={error ?? null} id={errorId} onDismiss={onDismissError} />
+          <ErrorBanner error={error ?? null} id={errorId} onDismiss={onDismissError} />
           {children}
         </div>
       </div>
