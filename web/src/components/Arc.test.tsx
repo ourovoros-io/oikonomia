@@ -57,7 +57,7 @@ describe('ArcTile', () => {
     expect(screen.getByRole('meter', { name: 'Spend ratio' })).toHaveAttribute('aria-valuenow', '100')
   })
 
-  test('a long label shows in full and a long hint stays reachable through title', () => {
+  test('a long label and a long hint show in full', () => {
     const label = 'Καθαρό έναντι προηγούμενης περιόδου'
     const hint = 'Καθαρό έναντι του προηγούμενου μήνα, σε ποσοστό επί των εσόδων'
     render(<ArcTile label={label} hint={hint} bps={4200} tone="in" locale="en" noValueLabel="No value yet" />)
@@ -68,6 +68,10 @@ describe('ArcTile', () => {
     expect(shownLabel).not.toHaveAttribute('title')
     // With no title on the label, the meter's name is how assistive tech reads it.
     expect(screen.getByRole('meter', { name: label })).toBeTruthy()
-    expect(screen.getByTitle(hint).className).toMatch(/line-clamp-2/)
+    const shownHint = screen.getByText(hint)
+    expect(shownHint.className).not.toMatch(/line-clamp/)
+    expect(shownHint).not.toHaveAttribute('title')
+    // The hint stays the meter's description for assistive tech.
+    expect(screen.getByRole('meter', { name: label })).toHaveAccessibleDescription(hint)
   })
 })

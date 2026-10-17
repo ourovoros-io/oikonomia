@@ -115,8 +115,8 @@ export function ArcTile({
             </>
           )}
         </div>
-        {/* Not clamped: the label names the metric, so it shows in full even
-            when a long translation takes a third line. */}
+        {/* Neither label nor hint is clamped: a long translation takes a third
+            line, which costs little because tiles in a row share a height. */}
         <div aria-hidden="true" className="mt-2 text-sm leading-tight font-medium break-words hyphens-auto text-[var(--color-fg)]">
           {label}
         </div>
@@ -124,8 +124,7 @@ export function ArcTile({
           <div
             id={hintId}
             aria-hidden="true"
-            title={hint}
-            className="mt-1 line-clamp-2 text-xs text-[var(--color-muted)]"
+            className="mt-1 text-xs break-words hyphens-auto text-[var(--color-muted)]"
           >
             {hint}
           </div>
