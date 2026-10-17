@@ -1015,7 +1015,9 @@
     "incomeStatus": "Status der Einnahme",
     "incomeReceivedNow": "Jetzt erhalten",
     "incomeUnpaid": "Offen — mir geschuldet (Forderung)",
-    "receivableAccount": "Forderungskonto"
+    "receivableAccount": "Forderungskonto",
+    "billToPay": "Zu zahlende Rechnung",
+    "billToPayNone": "Mit keiner Rechnung verknüpft"
   },
   "recurring": {
     "title": "Wiederkehrend",
@@ -1143,6 +1145,9 @@
     "entryAlreadyVoided": "Diese Buchung wurde bereits gelöscht.",
     "entryNotPosted": "Nur gebuchte Buchungen können gelöscht werden.",
     "wrongBook": "Dieses Element gehört zu einem anderen Buch. Wechseln Sie zum richtigen Buch und versuchen Sie es erneut.",
+    "billNotOpen": "Diese Rechnung ist bereits bezahlt oder nicht mehr offen. Wählen Sie eine andere Rechnung.",
+    "paymentDoesNotMatchBill": "Eine Rechnungszahlung begleicht die ganze Rechnung über das Konto, auf dem sie offen ist. Wählen Sie die Rechnung erneut, um Betrag und Konto auszufüllen.",
+    "billSettled": "Diese Rechnung hat eine Zahlung. Löschen Sie zuerst die Zahlung und ändern oder löschen Sie dann die Rechnung.",
     "openingBalanceAccountType": "Ein Anfangssaldo lässt sich nur für Vermögens- oder Verbindlichkeitskonten festlegen.",
     "openingBalanceUnchanged": "Dieses Konto hat bereits diesen Saldo.",
     "noEquityAccount": "Dieses Buch hat kein Eigenkapitalkonto, gegen das der Anfangssaldo gebucht werden kann. Legen Sie zuerst ein Eigenkapitalkonto an.",

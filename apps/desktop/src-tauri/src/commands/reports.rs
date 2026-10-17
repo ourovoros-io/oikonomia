@@ -356,6 +356,7 @@ mod ipc_tests {
                 payable_account_id: None,
                 from_account_id: None,
                 to_account_id: None,
+                settles_entry_id: None,
             };
             post_simple_entry(conn, &PostSimpleEntry::try_from(request).unwrap()).unwrap();
         }

@@ -446,6 +446,7 @@ pub(crate) fn suggested_entry(
         payable_account_id: None,
         from_account_id: None,
         to_account_id: None,
+        settles_entry_id: None,
     }
 }
 

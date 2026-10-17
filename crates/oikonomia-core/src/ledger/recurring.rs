@@ -541,6 +541,7 @@ pub fn post_recurring_template(
         description: template.name.clone(),
         reference: None,
         amount_minor: post_amount,
+        settles_entry_id: None,
     };
 
     let entry = post_simple_entry_unchecked(&tx, &input)?;
@@ -951,15 +952,12 @@ fn parse_cadence(stored: &str) -> Result<RecurringCadence> {
 /// [`Error::VaultCorrupt`] naming `recurring_templates.bill_status` when
 /// `stored` is none of those strings.
 fn parse_bill_status(stored: &str) -> Result<SimpleBillStatus> {
-    match stored {
-        "paid" => Ok(SimpleBillStatus::Paid),
-        "unpaid" => Ok(SimpleBillStatus::Unpaid),
-        "pay_existing" => Ok(SimpleBillStatus::PayExisting),
-        other => Err(corrupt_column(
+    SimpleBillStatus::from_identifier(stored).ok_or_else(|| {
+        corrupt_column(
             "recurring_templates.bill_status",
-            format_args!("unknown recurring bill_status: {other}"),
-        )),
-    }
+            format_args!("unknown recurring bill_status: {stored}"),
+        )
+    })
 }
 
 #[cfg(test)]

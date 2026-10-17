@@ -25,9 +25,9 @@ use oikonomia_core::documents::{AnalyzerStatus, DocumentMeta, DocumentSuggestion
 use oikonomia_core::domain::{Account, Entity, JournalEntry, JournalLine};
 use oikonomia_core::ledger::{
     BalanceSheet, CashFlowSeries, CreateAccount, CreateEntity, CreateRecurringTemplateRequest,
-    DashboardSummary, EntryHistoryItem, JournalLineRequest, ListedEntryKind, PnL,
+    DashboardSummary, EntryHistoryItem, JournalLineRequest, ListedEntryKind, OpenBill, PnL,
     PostJournalRequest, PostSimpleEntryRequest, PostedEntryView, RecurringPostResult,
-    RecurringTemplateView, RegisterLine, TrialBalance, UpdateAccount,
+    RecurringTemplateView, RegisterLine, SimpleEntryAccounts, TrialBalance, UpdateAccount,
     UpdateRecurringTemplateRequest, VoidResult,
 };
 use oikonomia_core::prefs::{UiPrefs, load_ui_prefs_view, ui_prefs_path};
@@ -149,7 +149,39 @@ fn posted_entry_view() {
         r#""amount_minor":0},"memo":null},{"id":"55555555-5555-4555-8555-555555555555","#,
         r#""entry_id":"33333333-3333-4333-8333-333333333333","account_id":"#,
         r#""66666666-6666-4666-8666-666666666666","debit":{"amount_minor":0},"credit":{"#,
-        r#""amount_minor":4500},"memo":null}],"is_voided":false,"listed_kind":"expense"}"#,
+        r#""amount_minor":4500},"memo":null}],"is_voided":false,"listed_kind":"expense","#,
+        r#""simple_form":{"kind":"expense","bill_status":null,"category_account_id":"#,
+        r#""22222222-2222-4222-8222-222222222222","wallet_account_id":"#,
+        r#""66666666-6666-4666-8666-666666666666","payable_account_id":null,"#,
+        r#""from_account_id":null,"to_account_id":null},"#,
+        r#""settles_entry_id":null}"#,
+    ));
+}
+
+/// The bill picker labels each bill from these fields and fills the form from
+/// its amount and payable account.
+#[test]
+fn open_bill() {
+    assert_json_is_pinned::<OpenBill>(concat!(
+        r#"{"entry_id":"33333333-3333-4333-8333-333333333333","entry_date":"2026-08-10","#,
+        r#""description":"Power","amount_minor":9900,"payable_account_id":"#,
+        r#""66666666-6666-4666-8666-666666666666"}"#,
+    ));
+}
+
+/// The form an edit opens on has the field names of the request it sends.
+#[test]
+fn simple_entry_accounts_of_a_bill() {
+    let unpaid_bill = concat!(
+        r#"{"kind":"bill","bill_status":"unpaid","category_account_id":"#,
+        r#""22222222-2222-4222-8222-222222222222","wallet_account_id":null,"#,
+        r#""payable_account_id":"66666666-6666-4666-8666-666666666666","#,
+        r#""from_account_id":null,"to_account_id":null}"#,
+    );
+    assert_json_is_pinned::<SimpleEntryAccounts>(unpaid_bill);
+
+    assert!(is_refused::<SimpleEntryAccounts>(
+        &unpaid_bill.replace(r#""unpaid""#, "null")
     ));
 }
 
@@ -218,7 +250,8 @@ fn post_simple_entry_request_of_each_kind() {
         r#""reference":null,"amount_minor":4500,"category_account_id":"#,
         r#""22222222-2222-4222-8222-222222222222","wallet_account_id":"#,
         r#""66666666-6666-4666-8666-666666666666","payable_account_id":null,"#,
-        r#""from_account_id":null,"to_account_id":null}"#,
+        r#""from_account_id":null,"to_account_id":null,"#,
+        r#""settles_entry_id":null}"#,
     ));
     // An unpaid bill: category and payable, with a status.
     assert_json_is_pinned::<PostSimpleEntryRequest>(concat!(
@@ -227,7 +260,7 @@ fn post_simple_entry_request_of_each_kind() {
         r#""amount_minor":9900,"category_account_id":"22222222-2222-4222-8222-222222222222","#,
         r#""wallet_account_id":null,"payable_account_id":"#,
         r#""66666666-6666-4666-8666-666666666666","from_account_id":null,"to_account_id":"#,
-        r#"null}"#,
+        r#"null,"settles_entry_id":null}"#,
     ));
     // Paying an existing bill.
     assert_json_is_pinned::<PostSimpleEntryRequest>(concat!(
@@ -236,7 +269,7 @@ fn post_simple_entry_request_of_each_kind() {
         r#""amount_minor":9900,"category_account_id":null,"wallet_account_id":"#,
         r#""22222222-2222-4222-8222-222222222222","payable_account_id":"#,
         r#""66666666-6666-4666-8666-666666666666","from_account_id":null,"to_account_id":"#,
-        r#"null}"#,
+        r#"null,"settles_entry_id":"33333333-3333-4333-8333-333333333333"}"#,
     ));
     // A transfer: from and to.
     assert_json_is_pinned::<PostSimpleEntryRequest>(concat!(
@@ -245,7 +278,7 @@ fn post_simple_entry_request_of_each_kind() {
         r#""amount_minor":1,"category_account_id":null,"wallet_account_id":null,"#,
         r#""payable_account_id":null,"from_account_id":"#,
         r#""22222222-2222-4222-8222-222222222222","to_account_id":"#,
-        r#""66666666-6666-4666-8666-666666666666"}"#,
+        r#""66666666-6666-4666-8666-666666666666","settles_entry_id":null}"#,
     ));
 }
 
@@ -259,7 +292,8 @@ fn a_request_with_a_missing_role_or_a_bad_date_still_reads() {
         r#"{"entity_id":"11111111-1111-4111-8111-111111111111","kind":"bill","bill_status":"#,
         r#"null,"entry_date":"10/08/2026","description":"","reference":null,"amount_minor":0,"#,
         r#""category_account_id":null,"wallet_account_id":null,"payable_account_id":null,"#,
-        r#""from_account_id":null,"to_account_id":null}"#,
+        r#""from_account_id":null,"to_account_id":null,"#,
+        r#""settles_entry_id":null}"#,
     ));
     assert_json_is_pinned::<PostJournalRequest>(concat!(
         r#"{"entity_id":"11111111-1111-4111-8111-111111111111","entry_date":"not a date","#,
@@ -317,7 +351,9 @@ fn recurring_post_result() {
         r#"{"entry":{"entry":{"id":"33333333-3333-4333-8333-333333333333","entity_id":"#,
         r#""11111111-1111-4111-8111-111111111111","entry_date":"2026-08-10","description":"#,
         r#""Power","reference":null,"status":"posted","hidden":false},"lines":[],"is_voided":"#,
-        r#"false,"listed_kind":"bill"},"template":{"id":"88888888-8888-4888-8888-888888888888","#,
+        r#"false,"listed_kind":"bill","simple_form":null,"settles_entry_id":null},"#,
+        r#""template":{"id":"#,
+        r#""88888888-8888-4888-8888-888888888888","#,
         r#""entity_id":"#,
         r#""11111111-1111-4111-8111-111111111111","name":"Power","kind":"bill","bill_status":"#,
         r#""unpaid","amount_minor":9900,"cadence":"monthly","day_of_month":10,"#,
@@ -380,7 +416,8 @@ fn csv_import_rows_carry_the_simple_entry_request() {
         r#"null,"amount_minor":250000,"category_account_id":"#,
         r#""22222222-2222-4222-8222-222222222222","wallet_account_id":"#,
         r#""66666666-6666-4666-8666-666666666666","payable_account_id":null,"#,
-        r#""from_account_id":null,"to_account_id":null}],"include_duplicates":true}"#,
+        r#""from_account_id":null,"to_account_id":null,"#,
+        r#""settles_entry_id":null}],"include_duplicates":true}"#,
     ));
     // A suggestion is a part-filled form: the accounts are not chosen yet.
     assert_json_is_pinned::<CsvImportPreviewRow>(concat!(
@@ -388,7 +425,8 @@ fn csv_import_rows_carry_the_simple_entry_request() {
         r#""11111111-1111-4111-8111-111111111111","kind":"expense","bill_status":null,"#,
         r#""entry_date":"2026-08-10","description":"Cafe","reference":null,"amount_minor":"#,
         r#"350,"category_account_id":null,"wallet_account_id":null,"payable_account_id":null,"#,
-        r#""from_account_id":null,"to_account_id":null},"signed_amount_minor":-350}"#,
+        r#""from_account_id":null,"to_account_id":null,"#,
+        r#""settles_entry_id":null},"signed_amount_minor":-350}"#,
     ));
 }
 

@@ -177,5 +177,6 @@ pub(crate) fn simple_expense(
         description: "groceries".into(),
         reference: None,
         amount_minor: minor,
+        settles_entry_id: None,
     }
 }

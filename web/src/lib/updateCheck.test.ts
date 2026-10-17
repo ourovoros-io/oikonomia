@@ -63,7 +63,7 @@ describe('parseUpdateCheckResult', () => {
     })
 
     expect(parsed).toEqual({ kind: 'availableManually', version: '0.2.0' })
-    expect(isAvailableUpdate(parsed)).toBe(false)
+    expect(isAvailableUpdate(dialogStateFromCheck(parsed))).toBe(false)
     expect(parseUpdateCheckResult({ kind: 'available_manually', version: ' ' })).toEqual({
       kind: 'failed',
     })

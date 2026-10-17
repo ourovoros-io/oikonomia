@@ -110,17 +110,22 @@ beforeEach(() => {
   vi.mocked(api.recurringDelete).mockReset().mockResolvedValue(undefined)
   vi.mocked(api.recurringPost).mockReset().mockResolvedValue({
     entry: {
-      id: 'j1',
-      entity_id: 'e1',
-      entry_date: '2026-08-01',
-      description: 'Rent',
-      reference: null,
-      status: 'posted',
-      hidden: false,
+      entry: {
+        id: 'j1',
+        entity_id: 'e1',
+        entry_date: '2026-08-01',
+        description: 'Rent',
+        reference: null,
+        status: 'posted',
+        hidden: false,
+      },
+      lines: [],
+      is_voided: false,
+      listed_kind: 'expense',
+      simple_form: null,
+      settles_entry_id: null,
     },
-    lines: [],
-    is_voided: false,
-    listed_kind: 'expense',
+    template: rent,
   })
   vi.mocked(api.accountList).mockReset().mockResolvedValue(accounts)
   vi.mocked(api.accountDefaults).mockReset().mockResolvedValue(DEFAULTS)
@@ -273,7 +278,7 @@ describe('RecurringPage new template modal', () => {
     await waitFor(() => {
       expect(api.recurringCreate).toHaveBeenCalledTimes(1)
     })
-    expect(api.recurringCreate.mock.calls[0]?.[0]).toMatchObject({
+    expect(vi.mocked(api.recurringCreate).mock.calls[0]?.[0]).toMatchObject({
       cadence: 'weekly',
       day_of_month: null,
     })
@@ -421,7 +426,7 @@ describe('RecurringPage weekly and yearly start dates', () => {
     await waitFor(() => {
       expect(api.recurringCreate).toHaveBeenCalledTimes(1)
     })
-    expect(api.recurringCreate.mock.calls[0]?.[0]).toMatchObject({
+    expect(vi.mocked(api.recurringCreate).mock.calls[0]?.[0]).toMatchObject({
       cadence: 'weekly',
       day_of_month: null,
       next_date: '2026-10-09',
@@ -440,7 +445,7 @@ describe('RecurringPage weekly and yearly start dates', () => {
     await waitFor(() => {
       expect(api.recurringCreate).toHaveBeenCalledTimes(1)
     })
-    expect(api.recurringCreate.mock.calls[0]?.[0]).toMatchObject({
+    expect(vi.mocked(api.recurringCreate).mock.calls[0]?.[0]).toMatchObject({
       cadence: 'yearly',
       day_of_month: null,
       next_date: '2027-03-15',

@@ -62,6 +62,7 @@ const DEFAULTS: AccountDefaults = {
   income: null,
   bill_category: null,
   bills_payable: null,
+  receivable: null,
   transfer_source: null,
   transfer_destination: null,
 }

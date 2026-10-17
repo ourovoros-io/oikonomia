@@ -347,6 +347,7 @@ fn a_void_is_written_in_the_given_language() {
                 payable_account_id: None,
                 from_account_id: None,
                 to_account_id: None,
+                settles_entry_id: None,
             }),
         )
         .expect("post");
@@ -498,6 +499,7 @@ fn the_void_inside_an_edit_is_written_in_the_given_language() {
             payable_account_id: None,
             from_account_id: None,
             to_account_id: None,
+            settles_entry_id: None,
         });
         let original = post_simple_entry(conn, &expense).expect("post");
 

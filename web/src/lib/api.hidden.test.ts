@@ -22,6 +22,8 @@ const posted: PostedEntryView = {
   lines: [],
   is_voided: false,
   listed_kind: 'expense',
+  simple_form: null,
+  settles_entry_id: null,
 }
 
 beforeEach(() => {

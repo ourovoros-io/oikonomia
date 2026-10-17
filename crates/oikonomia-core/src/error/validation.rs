@@ -278,6 +278,21 @@ pub enum ValidationError {
     #[error("entry belongs to a different book")]
     WrongBook,
 
+    /// The bill a payment names is not an open bill: it is not an unpaid
+    /// bill, it is voided, or another payment already settles it.
+    #[error("bill is not open")]
+    BillNotOpen,
+
+    /// A payment that settles a bill must pay its whole amount, from the
+    /// payable account the bill is owed on.
+    #[error("payment does not match the bill it settles")]
+    PaymentDoesNotMatchBill,
+
+    /// The bill has a payment that settles it, so it cannot be voided or
+    /// corrected until that payment is voided.
+    #[error("bill is settled by a payment")]
+    BillSettled,
+
     /// Opening balances apply only to asset and liability accounts.
     #[error("opening balances apply to asset or liability accounts")]
     OpeningBalanceAccountType,
@@ -345,6 +360,9 @@ impl ValidationError {
         "entry_already_voided",
         "entry_not_posted",
         "wrong_book",
+        "bill_not_open",
+        "payment_does_not_match_bill",
+        "bill_settled",
         "opening_balance_account_type",
         "opening_balance_unchanged",
         "no_equity_account",
@@ -381,6 +399,9 @@ impl ValidationError {
             Self::EntryAlreadyVoided => "entry_already_voided",
             Self::EntryNotPosted => "entry_not_posted",
             Self::WrongBook => "wrong_book",
+            Self::BillNotOpen => "bill_not_open",
+            Self::PaymentDoesNotMatchBill => "payment_does_not_match_bill",
+            Self::BillSettled => "bill_settled",
             Self::OpeningBalanceAccountType => "opening_balance_account_type",
             Self::OpeningBalanceUnchanged => "opening_balance_unchanged",
             Self::NoEquityAccount => "no_equity_account",
@@ -444,6 +465,9 @@ impl ValidationError {
             | Self::EntryAlreadyVoided
             | Self::EntryNotPosted
             | Self::WrongBook
+            | Self::BillNotOpen
+            | Self::PaymentDoesNotMatchBill
+            | Self::BillSettled
             | Self::OpeningBalanceAccountType
             | Self::OpeningBalanceUnchanged
             | Self::NoEquityAccount
@@ -726,6 +750,9 @@ mod tests {
             ValidationError::EntryAlreadyVoided,
             ValidationError::EntryNotPosted,
             ValidationError::WrongBook,
+            ValidationError::BillNotOpen,
+            ValidationError::PaymentDoesNotMatchBill,
+            ValidationError::BillSettled,
             ValidationError::OpeningBalanceAccountType,
             ValidationError::OpeningBalanceUnchanged,
             ValidationError::NoEquityAccount,
@@ -768,6 +795,9 @@ mod tests {
             ValidationError::EntryAlreadyVoided,
             ValidationError::EntryNotPosted,
             ValidationError::WrongBook,
+            ValidationError::BillNotOpen,
+            ValidationError::PaymentDoesNotMatchBill,
+            ValidationError::BillSettled,
             ValidationError::OpeningBalanceAccountType,
             ValidationError::OpeningBalanceUnchanged,
             ValidationError::NoEquityAccount,
