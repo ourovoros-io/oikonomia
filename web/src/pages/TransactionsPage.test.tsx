@@ -55,6 +55,7 @@ vi.mock('../lib/api', async (importOriginal) => {
       entrySetHidden: vi.fn(),
       entryHistory: vi.fn(),
       entryPostSimple: vi.fn(),
+      entryReplaceSimple: vi.fn(),
       entryPostSimpleWithDocumentPath: vi.fn(),
       recurringList: vi.fn(),
       recurringCreate: vi.fn(),
@@ -201,6 +202,15 @@ const postedEntry: PostedEntryView = {
   ],
   is_voided: false,
   listed_kind: 'expense',
+  simple_form: {
+    kind: 'expense',
+    bill_status: null,
+    category_account_id: 'exp1',
+    wallet_account_id: 'w1',
+    payable_account_id: null,
+    from_account_id: null,
+    to_account_id: null,
+  },
 }
 
 const incomeEntry: PostedEntryView = {
@@ -233,6 +243,15 @@ const incomeEntry: PostedEntryView = {
   ],
   is_voided: false,
   listed_kind: 'income',
+  simple_form: {
+    kind: 'income',
+    bill_status: null,
+    category_account_id: 'inc1',
+    wallet_account_id: 'w1',
+    payable_account_id: null,
+    from_account_id: null,
+    to_account_id: null,
+  },
 }
 
 function documentSuggestion(over: Partial<DocumentSuggestion> = {}): DocumentSuggestion {
@@ -1588,6 +1607,15 @@ describe('TransactionsPage unpaid income', () => {
       lines: incomeEntry.lines.map((line) =>
         line.account_id === 'w1' ? { ...line, account_id: 'r1' } : line,
       ),
+      simple_form: {
+        kind: 'income',
+        bill_status: 'unpaid',
+        category_account_id: 'inc1',
+        wallet_account_id: null,
+        payable_account_id: 'r1',
+        from_account_id: null,
+        to_account_id: null,
+      },
     }
     vi.mocked(api.entryList).mockResolvedValue([invoice])
     await renderReady()
@@ -1665,6 +1693,109 @@ describe('TransactionsPage list header', () => {
     await waitFor(() => {
       expect(vi.mocked(api.entryList).mock.calls.length).toBeGreaterThan(before)
     })
+  })
+})
+
+describe('TransactionsPage edit form', () => {
+  test('a bill paid at once reopens as a paid bill and is saved as one', async () => {
+    // The lines are an expense's; only core's form says it is a bill.
+    const paidBill: PostedEntryView = {
+      ...postedEntry,
+      listed_kind: 'bill',
+      simple_form: {
+        kind: 'bill',
+        bill_status: 'paid',
+        category_account_id: 'exp1',
+        wallet_account_id: 'w1',
+        payable_account_id: null,
+        from_account_id: null,
+        to_account_id: null,
+      },
+    }
+    vi.mocked(api.entryList).mockResolvedValue([paidBill])
+    vi.mocked(api.entryReplaceSimple).mockResolvedValue(paidBill)
+    await renderReady()
+
+    await userEvent.click(await screen.findByText('Alpha supermarket'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit entry' }))
+
+    expect(await screen.findByRole('button', { name: 'Bill' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByLabelText('Bill status')).toHaveValue('paid')
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+    await waitFor(() => {
+      expect(api.entryReplaceSimple).toHaveBeenCalledWith(
+        'j1',
+        expect.objectContaining({
+          kind: 'bill',
+          bill_status: 'paid',
+          category_account_id: 'exp1',
+          wallet_account_id: 'w1',
+        }),
+      )
+    })
+  })
+
+  test('a part the edited entry lacks holds its default, not the last form account', async () => {
+    const owedOn = account({ id: 'r1', name: 'Receivables', account_type: 'asset', code: '1200' })
+    const payable = account({ id: 'bp1', name: 'Bills Payable', account_type: 'liability', code: '2050' })
+    vi.mocked(api.accountList).mockResolvedValue([...accounts, owedOn, payable])
+    vi.mocked(api.accountDefaults).mockResolvedValue({ ...DEFAULTS, receivable: 'r1', bills_payable: 'bp1' })
+    const invoice: PostedEntryView = {
+      ...incomeEntry,
+      simple_form: {
+        kind: 'income',
+        bill_status: 'unpaid',
+        category_account_id: 'inc1',
+        wallet_account_id: null,
+        payable_account_id: 'r1',
+        from_account_id: null,
+        to_account_id: null,
+      },
+    }
+    const paidBill: PostedEntryView = {
+      ...postedEntry,
+      listed_kind: 'bill',
+      simple_form: {
+        kind: 'bill',
+        bill_status: 'paid',
+        category_account_id: 'exp1',
+        wallet_account_id: 'w1',
+        payable_account_id: null,
+        from_account_id: null,
+        to_account_id: null,
+      },
+    }
+    vi.mocked(api.entryList).mockResolvedValue([paidBill, invoice])
+    vi.mocked(api.entryReplaceSimple).mockResolvedValue(paidBill)
+    await renderReady()
+
+    // The invoice leaves its receivable in the form's payable part.
+    await userEvent.click(await screen.findByText('CLIENT INVOICE'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit entry' }))
+    await screen.findByRole('heading', { name: 'Edit entry' })
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }))
+
+    await userEvent.click(await screen.findByText('Alpha supermarket'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit entry' }))
+    await userEvent.selectOptions(await screen.findByLabelText('Bill status'), 'unpaid')
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+
+    await waitFor(() => {
+      expect(api.entryReplaceSimple).toHaveBeenCalledWith(
+        'j1',
+        expect.objectContaining({ bill_status: 'unpaid', payable_account_id: 'bp1' }),
+      )
+    })
+  })
+
+  test('an entry core gives no simple form has no Edit button', async () => {
+    vi.mocked(api.entryList).mockResolvedValue([{ ...postedEntry, simple_form: null }])
+    await renderReady()
+
+    await userEvent.click(await screen.findByText('Alpha supermarket'))
+
+    expect(await screen.findByRole('dialog')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Edit entry' })).toBeNull()
   })
 })
 

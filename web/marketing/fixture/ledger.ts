@@ -253,6 +253,8 @@ function entry(
     lines: [line(id, 1, debitAcc, amount, 0), line(id, 2, creditAcc, 0, amount)],
     is_voided: false,
     listed_kind: listedKind,
+    // The demo never opens the edit form.
+    simple_form: null,
   }
 }
 

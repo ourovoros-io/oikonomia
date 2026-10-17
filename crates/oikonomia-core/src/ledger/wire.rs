@@ -21,8 +21,9 @@
 //! One `TryFrom` turns it into the strict type, and the ledger functions take
 //! only the strict type.
 //!
-//! A view goes the other way. [`RecurringTemplateView`] is strict in memory
-//! and serializes through a flat twin that stays inside the crate, so the UI
+//! A view goes the other way. [`RecurringTemplateView`] and
+//! [`SimpleEntryAccounts`], the form of a posted entry, are strict in memory
+//! and serialize through flat twins that stay inside the crate, so the UI
 //! keeps reading the kind, the bill status and five optional accounts side
 //! by side.
 //!
@@ -571,6 +572,69 @@ impl TryFrom<RecurringTemplateViewWire> for RecurringTemplateView {
             },
             due: wire.due,
         })
+    }
+}
+
+/// The JSON shape of a [`SimpleEntryAccounts`]: the kind, the bill status
+/// and the five role accounts of the simple entry form, with the names
+/// [`PostSimpleEntryRequest`] gives them, so the UI fills its form from it
+/// field by field.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SimpleEntryAccountsWire {
+    /// Kind of entry.
+    kind: SimpleEntryKind,
+    /// Payment state of a bill or of an income not yet received; `None` for
+    /// the other entries.
+    bill_status: Option<SimpleBillStatus>,
+    /// Expense or income category account, when the kind has one.
+    category_account_id: Option<AccountId>,
+    /// Bank, cash or card account, when the kind has one.
+    wallet_account_id: Option<AccountId>,
+    /// Bills payable or receivable account, when the kind has one.
+    payable_account_id: Option<AccountId>,
+    /// Account a transfer takes from.
+    from_account_id: Option<AccountId>,
+    /// Account a transfer pays into.
+    to_account_id: Option<AccountId>,
+}
+
+impl From<SimpleEntryAccounts> for SimpleEntryAccountsWire {
+    fn from(accounts: SimpleEntryAccounts) -> Self {
+        let roles = accounts.roles();
+
+        Self {
+            kind: accounts.kind(),
+            bill_status: accounts.bill_status(),
+            category_account_id: roles.category,
+            wallet_account_id: roles.wallet,
+            payable_account_id: roles.payable,
+            from_account_id: roles.from,
+            to_account_id: roles.to,
+        }
+    }
+}
+
+impl TryFrom<SimpleEntryAccountsWire> for SimpleEntryAccounts {
+    type Error = Error;
+
+    /// Reads serialized accounts back.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`SimpleEntryAccounts::from_roles`]; accounts this crate
+    /// serialized have none of them.
+    fn try_from(wire: SimpleEntryAccountsWire) -> Result<Self> {
+        Self::from_roles(
+            wire.kind,
+            wire.bill_status,
+            SimpleEntryRoleAccounts {
+                category: wire.category_account_id,
+                wallet: wire.wallet_account_id,
+                payable: wire.payable_account_id,
+                from: wire.from_account_id,
+                to: wire.to_account_id,
+            },
+        )
     }
 }
 

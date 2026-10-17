@@ -46,7 +46,7 @@ use rusqlite::{Connection, Transaction};
 use std::collections::HashSet;
 
 /// The schema version [`migrate`] brings a vault to.
-pub const CURRENT_SCHEMA_VERSION: i64 = 10;
+pub const CURRENT_SCHEMA_VERSION: i64 = 11;
 
 /// One schema change, made through the transaction the runner opened for it.
 type Migration = fn(&Transaction<'_>) -> Result<()>;
@@ -65,6 +65,7 @@ const MIGRATIONS: &[(i64, Migration)] = &[
     (8, migrate_v8),
     (9, migrate_v9),
     (10, migrate_v10),
+    (11, migrate_v11),
 ];
 
 /// Applies the migrations a vault has not run yet.
@@ -414,19 +415,7 @@ fn migrate_v8(tx: &Transaction<'_>) -> Result<()> {
 /// The index serves the lookups along that link and is partial because most
 /// entries replace nothing.
 fn migrate_v9(tx: &Transaction<'_>) -> Result<()> {
-    // `ADD COLUMN` has no `IF NOT EXISTS`. The older migration tests take a
-    // current vault back to an earlier version without dropping this column.
-    let has_column: i64 = tx
-        .query_row(
-            "
-            SELECT COUNT(1) FROM pragma_table_info('journal_entries')
-            WHERE name = 'replaces_entry_id'
-            ",
-            [],
-            |row| row.get(0),
-        )
-        .database("look for the replaces_entry_id column")?;
-    if has_column == 0 {
+    if !journal_entries_has_column(tx, "replaces_entry_id")? {
         tx.execute_batch(
             "
             ALTER TABLE journal_entries
@@ -464,19 +453,7 @@ fn migrate_v9(tx: &Transaction<'_>) -> Result<()> {
 /// they are all NULL, which passes. `SQLite` cannot change a `CHECK` in
 /// place, so a fifth kind needs a migration that rebuilds the table.
 fn migrate_v10(tx: &Transaction<'_>) -> Result<()> {
-    // `ADD COLUMN` has no `IF NOT EXISTS`, and the older migration tests take a
-    // current vault back to an earlier version without dropping this column.
-    let has_column: i64 = tx
-        .query_row(
-            "
-            SELECT COUNT(1) FROM pragma_table_info('journal_entries')
-            WHERE name = 'kind'
-            ",
-            [],
-            |row| row.get(0),
-        )
-        .database("look for the kind column")?;
-    if has_column > 0 {
+    if journal_entries_has_column(tx, "kind")? {
         return Ok(());
     }
 
@@ -489,6 +466,54 @@ fn migrate_v10(tx: &Transaction<'_>) -> Result<()> {
         ",
     )
     .database("add the kind column to journal entries")
+}
+
+/// v11: `bill_status`, the payment state an entry was posted with.
+///
+/// A bill paid with a card and a bill recorded as owed post the same lines,
+/// a debit on an expense and a credit on a liability, and so do an income
+/// received and one invoiced, on two asset accounts. The kind alone cannot
+/// tell them apart, so an edit could not reopen the form the user filled in.
+/// The column holds [`crate::ledger::SimpleBillStatus::identifier`] for
+/// every simple entry whose accounts have a status: every bill, and an
+/// income not yet received. It is NULL for every other entry, and for every
+/// bill posted before this step; the reader derives the status of such a
+/// bill from its lines. The reversing entry of a void takes the status of the
+/// entry it reverses, as it takes its kind.
+fn migrate_v11(tx: &Transaction<'_>) -> Result<()> {
+    if journal_entries_has_column(tx, "bill_status")? {
+        return Ok(());
+    }
+
+    tx.execute_batch(
+        "
+        ALTER TABLE journal_entries
+            ADD COLUMN bill_status TEXT CHECK (
+                bill_status IS NULL OR bill_status IN ('paid', 'unpaid', 'pay_existing')
+            );
+        ",
+    )
+    .database("add the bill status column to journal entries")
+}
+
+/// Returns whether `journal_entries` has a column named `column`.
+///
+/// `ADD COLUMN` has no `IF NOT EXISTS`, and the older migration tests take a
+/// current vault back to an earlier version without dropping the columns
+/// later steps added, so a step that adds one looks first.
+///
+/// # Errors
+///
+/// [`Error::Database`] when the table's columns cannot be read.
+fn journal_entries_has_column(tx: &Transaction<'_>, column: &str) -> Result<bool> {
+    let count: i64 = tx
+        .query_row(
+            "SELECT COUNT(1) FROM pragma_table_info('journal_entries') WHERE name = ?1",
+            [column],
+            |row| row.get(0),
+        )
+        .database("look for a column of journal entries")?;
+    Ok(count > 0)
 }
 
 /// Renames documents so that no two in one book share a filename.

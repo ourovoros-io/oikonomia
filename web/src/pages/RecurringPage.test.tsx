@@ -121,6 +121,7 @@ beforeEach(() => {
     lines: [],
     is_voided: false,
     listed_kind: 'expense',
+    simple_form: null,
   })
   vi.mocked(api.accountList).mockReset().mockResolvedValue(accounts)
   vi.mocked(api.accountDefaults).mockReset().mockResolvedValue(DEFAULTS)

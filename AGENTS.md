@@ -99,5 +99,5 @@ See [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Schema
 
-- `vault_meta.schema_version` starts at 1 on init; `db::migrate` upgrades to current (v10 = `journal_entries.kind`, the simple-entry kind an entry was posted as (a void reversal takes the original's), NULL for manual entries, opening balances and older rows; v9 = `replaces_entry_id`, the entry a correction replaced; v8 = indexes on void links and entry lines; v7 = recurring templates).
+- `vault_meta.schema_version` starts at 1 on init; `db::migrate` upgrades to current (v11 = `journal_entries.bill_status`, the bill status a simple entry was posted with (every bill, and an income not yet received; a void reversal takes the original's), NULL for every other entry and for bills posted before v11, whose status is read from their lines; v10 = `journal_entries.kind`, the simple-entry kind an entry was posted as (a void reversal takes the original's), NULL for manual entries, opening balances and older rows; v9 = `replaces_entry_id`, the entry a correction replaced; v8 = indexes on void links and entry lines; v7 = recurring templates).
 - Migrations run on vault init and unlock.
