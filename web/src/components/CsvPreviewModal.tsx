@@ -294,7 +294,11 @@ export function CsvPreviewModal({
                   <td className="px-3 py-2.5 tabular-nums text-[var(--color-fg-secondary)]">
                     {row.suggested ? formatDate(row.suggested.entry_date) : '—'}
                   </td>
-                  <td className="max-w-[12rem] truncate px-3 py-2.5 text-[var(--color-fg)]">
+                  {/* The column is narrow enough to truncate, so the full text is a hover away. */}
+                  <td
+                    className="max-w-[12rem] truncate px-3 py-2.5 text-[var(--color-fg)]"
+                    title={row.suggested?.description || undefined}
+                  >
                     {row.suggested?.description || '—'}
                   </td>
                   <td

@@ -182,6 +182,12 @@ describe('CsvPreviewModal category column', () => {
     expect(rowCategory(4)).toHaveDisplayValue('Salary')
   })
 
+  test('a truncated description keeps its full text on hover', () => {
+    renderCategoryPreview(mixedRows)
+
+    expect(screen.getByText('Row 2')).toHaveAttribute('title', 'Row 2')
+  })
+
   test('lists only the accounts of the row kind', () => {
     renderCategoryPreview(mixedRows)
 
