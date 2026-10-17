@@ -66,6 +66,19 @@ impl SimpleEntryKind {
             Self::Transfer => "transfer",
         }
     }
+
+    /// Returns the kind whose [`identifier`](Self::identifier) is `text`, or
+    /// `None` for any other text.
+    #[must_use]
+    pub fn from_identifier(text: &str) -> Option<Self> {
+        match text {
+            "expense" => Some(Self::Expense),
+            "income" => Some(Self::Income),
+            "bill" => Some(Self::Bill),
+            "transfer" => Some(Self::Transfer),
+            _ => None,
+        }
+    }
 }
 
 /// Payment state for [`SimpleEntryKind::Bill`], and for
@@ -693,7 +706,12 @@ mod tests {
                 serde_json::to_value(kind).unwrap(),
                 serde_json::Value::from(kind.identifier())
             );
+            assert_eq!(
+                SimpleEntryKind::from_identifier(kind.identifier()),
+                Some(kind)
+            );
         }
+        assert_eq!(SimpleEntryKind::from_identifier("Expense"), None);
     }
 }
 

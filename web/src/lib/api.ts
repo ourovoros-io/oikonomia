@@ -68,10 +68,17 @@ export type JournalEntry = {
   hidden: boolean
 }
 
+/**
+ * What core lists an entry as (`ListedEntryKind`): the kind it was posted as,
+ * or for an entry without one, the kind its lines suggest. A code; the UI words it.
+ */
+export type ListedEntryKind = 'expense' | 'income' | 'bill' | 'transfer' | 'other'
+
 export type PostedEntryView = {
   entry: JournalEntry
   lines: JournalLine[]
   is_voided: boolean
+  listed_kind: ListedEntryKind
 }
 
 /** How an entry of a history relates to the edit that replaced it. */

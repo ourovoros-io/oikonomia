@@ -33,6 +33,7 @@ import { useDialogError } from '../lib/useDialogError'
 import { renderUiTexts, type UiText } from '../lib/uiText'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import { beginExclusive } from '../lib/guards'
+import { amountTone, isMoneyOut } from '../lib/entryKind'
 import { CashFlowPulse } from '../components/CashFlowPulse'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { CsvMappingModal } from '../components/CsvMappingModal'
@@ -40,6 +41,7 @@ import { CsvPreviewModal } from '../components/CsvPreviewModal'
 import { DateInput } from '../components/DateInput'
 import { DocumentDropZone } from '../components/DocumentDropZone'
 import { DocumentViewerModal } from '../components/DocumentViewerModal'
+import { EntryKindBadge } from '../components/EntryKindBadge'
 import { EntryDetailModal } from '../components/EntryDetailModal'
 import { HiddenBadge, HiddenIncludedNote, HideFromExportControl } from '../components/hiddenUi'
 import { Modal } from '../components/Modal'
@@ -52,7 +54,6 @@ import {
   EmptyState,
   ErrorBanner,
   Field,
-  IconBadge,
   Input,
   MoneyPill,
   Panel,
@@ -83,27 +84,6 @@ type BillStatus = 'paid' | 'unpaid' | 'pay_existing'
 
 function accountsOf(accounts: Account[], types: Account['account_type'][]): Account[] {
   return accounts.filter((a) => a.is_active && types.includes(a.account_type))
-}
-
-type ListedKind = 'expense' | 'income' | 'bill' | 'transfer' | 'other'
-
-/**
- * The kind a listed entry is shown as. The journal keeps no kind, so a bill
- * is recognised by the bills payable account on one of its lines: an unpaid
- * bill and the payment of one. A bill paid at once has the lines of an
- * expense and is listed as one.
- */
-function inferKind(
-  view: PostedEntryView,
-  accountMap: Map<string, Account>,
-  billsPayableId: string | null,
-): ListedKind {
-  if (billsPayableId && view.lines.some((l) => l.account_id === billsPayableId)) return 'bill'
-  const types = view.lines.map((l) => accountMap.get(l.account_id)?.account_type)
-  if (types.includes('expense')) return 'expense'
-  if (types.includes('income')) return 'income'
-  if (types.every((t) => t === 'asset' || t === 'liability')) return 'transfer'
-  return 'other'
 }
 
 export function TransactionsPage({
@@ -1315,7 +1295,7 @@ export function TransactionsPage({
           <ul className="divide-y divide-[var(--color-border)]">
             {visibleEntries.map((view) => {
               const amountMinor = view.lines.reduce((s, l) => s + l.debit.amount_minor, 0)
-              const kindLabel = inferKind(view, accountMap, defaults?.bills_payable ?? null)
+              const kindLabel = view.listed_kind
               const parts = view.lines
                 .map((l) => {
                   const acc = accountMap.get(l.account_id)
@@ -1323,10 +1303,8 @@ export function TransactionsPage({
                   return `${side} ${acc?.name ?? '?'}`
                 })
                 .join('  ')
-              // A bill is money going out whether it is owed or being paid.
-              const moneyOut = kindLabel === 'expense' || kindLabel === 'bill'
+              const moneyOut = isMoneyOut(kindLabel)
               const signed = moneyOut ? -amountMinor : amountMinor
-              const tone = kindLabel === 'income' ? 'money-in' : moneyOut ? 'money-out' : 'muted'
 
               return (
                 <li
@@ -1334,17 +1312,7 @@ export function TransactionsPage({
                   onClick={() => setDetailId(view.entry.id)}
                   className="group flex cursor-pointer items-center gap-4 px-5 py-3 transition hover:bg-white/[0.05] focus-within:bg-white/[0.05]"
                 >
-                  <IconBadge tone={tone}>
-                    {kindLabel === 'income' ? (
-                      <ArrowDownLeft className="size-4" />
-                    ) : kindLabel === 'bill' ? (
-                      <FileText className="size-4" />
-                    ) : kindLabel === 'expense' ? (
-                      <ArrowUpRight className="size-4" />
-                    ) : (
-                      <ArrowLeftRight className="size-4" />
-                    )}
-                  </IconBadge>
+                  <EntryKindBadge kind={kindLabel} />
                   {/* Keyboard path: activating this button bubbles its click
                       to the row handler above — no duplicate handler. */}
                   <button type="button" className="min-w-0 flex-1 text-left">
@@ -1375,7 +1343,7 @@ export function TransactionsPage({
                   {/* Amount and its delete slot sit as one group, 8px apart. */}
                   <span className="flex shrink-0 items-center gap-2">
                     <span className="flex min-w-32 justify-end">
-                      <AmountPill tone={kindLabel === 'income' ? 'in' : moneyOut ? 'out' : 'neutral'}>
+                      <AmountPill tone={amountTone(kindLabel)}>
                         {formatMoney(signed, currency, undefined, {
                           signed: moneyOut || kindLabel === 'income',
                         })}
