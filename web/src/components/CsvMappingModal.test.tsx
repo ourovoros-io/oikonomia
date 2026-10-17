@@ -100,5 +100,19 @@ describe('CsvMappingModal between imports', () => {
 
     expect(firstFrame).toEqual(['Amount', ''])
     expect(amountSelect()).toHaveValue('')
+    // A stale draft can hide behind the empty option and still map the
+    // first file's column; only a fresh draft leaves Continue blocked.
+    expect(continueButton()).toBeDisabled()
+  })
+
+  test('reopening after a cancelled edit starts from the detected mapping', async () => {
+    const user = userEvent.setup()
+    const { rerender } = render(modal(true, DETECTED))
+    await user.selectOptions(amountSelect(), 'Text')
+
+    rerender(modal(false, null))
+    rerender(modal(true, { ...DETECTED }))
+
+    expect(amountSelect()).toHaveValue('Amount')
   })
 })
