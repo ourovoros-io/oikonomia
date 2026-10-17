@@ -95,7 +95,9 @@
 //! column's name is its header, or for an empty or repeated header a name
 //! made up for it (`Column 3`, `Amount (2)`; the `csv/header.rs` module doc
 //! has the rule), so every column can be mapped. Detection reads the headers
-//! as written, so a made-up name changes nothing it finds. It needs what detection needs: a date column, and an amount column
+//! as written, so a made-up name changes nothing it finds.
+//!
+//! A mapping needs what detection needs: a date column, and an amount column
 //! or at least one of debit and credit, never an amount column beside one of
 //! those. The description column is optional either way: a row of a file
 //! without one gets an empty description, which the ledger accepts.
@@ -297,7 +299,7 @@ const YEAR_DIGITS: usize = 4;
 /// the header row cannot be read, [`CsvError::MissingHeader`] when it has no
 /// name in it, [`CsvError::JournalExport`] when it is the header of
 /// Oikonomia's own journal export, and [`CsvError::InvalidMapping`] when `mapping` is
-/// incomplete, contradictory or names a header the file does not have.
+/// incomplete, contradictory or names a column the file does not have.
 ///
 /// A malformed **row** is not an error. It is returned as
 /// [`CsvRowOutcome::Invalid`] in its place among the rows.
@@ -637,7 +639,7 @@ fn trimmed_nonempty(value: Option<&str>) -> Option<&str> {
 ///
 /// # Errors
 ///
-/// [`CsvError::InvalidMapping`] naming the header when the file has none.
+/// [`CsvError::InvalidMapping`] carrying `name` when no column has it.
 fn header_index(headers: &[CsvHeader], name: &str) -> CsvResult<usize> {
     let needle = name.trim();
     headers
@@ -656,7 +658,7 @@ fn header_index(headers: &[CsvHeader], name: &str) -> CsvResult<usize> {
 ///
 /// [`Error::Csv`] with [`CsvError::InvalidMapping`] when the mapping
 /// has no date, sets both an amount and a debit or credit column, sets none
-/// of amount, debit and credit, or names a header the file does not have.
+/// of amount, debit and credit, or names a column the file does not have.
 fn resolve_user_mapping(
     headers: &[CsvHeader],
     mapping: &CsvColumnMapping,
@@ -1140,7 +1142,7 @@ mod tests {
         "EUR".parse().expect("a currency code")
     }
 
-    /// The problem of a mapping that names a header the file does not have.
+    /// The problem of a mapping that names a column the file does not have.
     fn unknown_column(name: &str) -> CsvMappingProblem {
         CsvMappingProblem::UnknownColumn {
             name: name.to_owned(),
@@ -1866,6 +1868,24 @@ mod tests {
         let mapping = column_mapping("Date", "Column 2", Some("AMOUNT"), None, None);
         let mapped = parse_bank_csv(csv, eur(), Some(&mapping)).expect("mapped");
         let CsvRowOutcome::Parsed(row) = &mapped.rows[0] else {
+            panic!("mapped row");
+        };
+        assert_eq!(row.signed_amount_minor, -100);
+    }
+
+    /// Detection can pass over a header and take a later one equal to it; the
+    /// detected mapping then names that later column, so sending it back as
+    /// the mapping reads the same column.
+    #[test]
+    fn a_detected_repeated_header_maps_back_to_its_own_column() {
+        let csv = "Date,Type,Amount,Type\n2026-03-15,Fee,1.00,D\n";
+        let auto = parse_bank_csv(csv, eur(), None).expect("auto");
+
+        assert_eq!(auto.detected_mapping.direction.as_deref(), Some("Type (2)"));
+
+        let again = parse_bank_csv(csv, eur(), Some(&auto.detected_mapping)).expect("mapped");
+        assert_eq!(again.rows, auto.rows);
+        let CsvRowOutcome::Parsed(row) = &again.rows[0] else {
             panic!("mapped row");
         };
         assert_eq!(row.signed_amount_minor, -100);

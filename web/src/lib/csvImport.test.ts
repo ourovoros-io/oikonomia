@@ -211,6 +211,12 @@ describe('column mapping helpers', () => {
     expect(matchHeader(headers, 'DATE')).toBe('Date')
   })
 
+  test('matchHeader prefers the column of exactly that name', () => {
+    const greek = [{ name: 'Ποσό' }, { name: 'ΠΟΣΌ' }]
+    expect(matchHeader(greek, 'ΠΟΣΌ')).toBe('ΠΟΣΌ')
+    expect(matchHeader(greek, 'Ποσό')).toBe('Ποσό')
+  })
+
   test('draftFromDetected pre-fills header names', () => {
     const draft = draftFromDetected(headers, detected)
     expect(draft.date).toBe('Date')
@@ -340,6 +346,16 @@ describe('headerLabel', () => {
 
     setLocale('de')
     expect(headerLabel(unnamed)).toBe('Spalte 2')
+  })
+
+  test('an empty header whose plain name was taken shows its number', () => {
+    const bumped = {
+      name: 'Column 1 (2)',
+      label: { code: 'csv_unnamed_repeated_column', params: { position: '1', occurrence: '2' } },
+    }
+    expect(headerLabel(bumped)).toBe('Column 1 (2)')
+    setLocale('fr')
+    expect(headerLabel(bumped)).toBe('Colonne 1 (2)')
   })
 
   test('a label this UI cannot word falls back to the name', () => {

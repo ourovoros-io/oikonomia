@@ -70,12 +70,18 @@ fn made_up_column(index: usize, header: &str, taken: &mut HashSet<String>) -> Cs
     let position = index + 1;
 
     if header.is_empty() {
-        let (name, _) = first_free_name(&format!("{UNNAMED_COLUMN} {position}"), 1, taken);
-        let label =
-            UiText::new(UiTextCode::CsvUnnamedColumn).with_param("position", position.to_string());
+        let (name, occurrence) = first_free_name(&format!("{UNNAMED_COLUMN} {position}"), 1, taken);
+        // A label without the number would read like the header that took
+        // the plain name, in English at least.
+        let label = if occurrence == 1 {
+            UiText::new(UiTextCode::CsvUnnamedColumn)
+        } else {
+            UiText::new(UiTextCode::CsvUnnamedRepeatedColumn)
+                .with_param("occurrence", occurrence.to_string())
+        };
         return CsvHeader {
             name,
-            label: Some(label),
+            label: Some(label.with_param("position", position.to_string())),
         };
     }
 
@@ -89,9 +95,12 @@ fn made_up_column(index: usize, header: &str, taken: &mut HashSet<String>) -> Cs
     }
 }
 
-/// Returns the first of `base` (for occurrence 1) and `base (n)` (for
-/// occurrence n) from occurrence `first` on that is not in `taken`, ASCII
-/// case ignored, with its occurrence, and adds it to `taken`.
+/// Returns the first free name for `base`, with its occurrence, and records
+/// it in `taken`.
+///
+/// Occurrence 1 is `base` itself and occurrence n is `base (n)`. The search
+/// starts at occurrence `first`, and a name is free when `taken` lacks it,
+/// ASCII case ignored.
 fn first_free_name(base: &str, first: usize, taken: &mut HashSet<String>) -> (String, usize) {
     // Ends: each step that does not return finds a distinct name in `taken`,
     // which is finite, so at most `taken.len() + 1` steps are made.
@@ -180,6 +189,14 @@ mod tests {
         );
         assert_eq!(names(&["", "column 1"]), ["Column 1 (2)", "column 1"]);
         assert_eq!(
+            name_columns(&StringRecord::from(vec!["", "column 1"]))[0].label,
+            Some(
+                UiText::new(UiTextCode::CsvUnnamedRepeatedColumn)
+                    .with_param("position", "1")
+                    .with_param("occurrence", "2")
+            )
+        );
+        assert_eq!(
             names(&["", "", "Column 2"]),
             ["Column 1", "Column 2 (2)", "Column 2"]
         );
@@ -230,6 +247,31 @@ mod tests {
                     prop_assert_eq!(&column.name, header);
                 }
             }
+        }
+
+        /// Names are unique, so labels worded as the English copy words them
+        /// are told apart as well.
+        #[test]
+        fn an_english_label_reads_as_the_name(headers in header_rows()) {
+            for column in name_columns(&StringRecord::from(headers)) {
+                let Some(label) = &column.label else { continue };
+                prop_assert_eq!(english(label), column.name);
+            }
+        }
+    }
+
+    /// `label` as `web/src/locales/en.json` words it.
+    fn english(label: &UiText) -> String {
+        let param = |name: &str| label.params.get(name).cloned().unwrap_or_default();
+        match label.code {
+            UiTextCode::CsvUnnamedColumn => format!("Column {}", param("position")),
+            UiTextCode::CsvUnnamedRepeatedColumn => {
+                format!("Column {} ({})", param("position"), param("occurrence"))
+            }
+            UiTextCode::CsvRepeatedColumn => {
+                format!("{} ({})", param("name"), param("occurrence"))
+            }
+            other => format!("not a column label: {other:?}"),
         }
     }
 }

@@ -997,6 +997,7 @@
       },
       "column": {
         "unnamed": "Spalte {position}",
+        "unnamedRepeated": "Spalte {position} ({occurrence})",
         "repeated": "{name} ({occurrence})"
       },
       "duplicate": "Möglicherweise doppelt",

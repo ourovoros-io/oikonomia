@@ -96,6 +96,11 @@ pub enum UiTextCode {
     /// A CSV column whose header is empty. Parameter: `position`, the 1-based
     /// position of the column in the file.
     CsvUnnamedColumn,
+    /// A CSV column whose header is empty, where another header of the file
+    /// is already named like it. Parameters: `position`, as for
+    /// [`Self::CsvUnnamedColumn`], and `occurrence`, the number that tells it
+    /// apart (2 or more).
+    CsvUnnamedRepeatedColumn,
     /// A CSV column whose header repeats one further left. Parameters:
     /// `name`, the header as written, and `occurrence`, the number that tells
     /// it apart (2 for the first repeat).
@@ -141,6 +146,7 @@ impl UiTextCode {
         Self::CsvAmountOverflow,
         Self::CsvUnreadableRow,
         Self::CsvUnnamedColumn,
+        Self::CsvUnnamedRepeatedColumn,
         Self::CsvRepeatedColumn,
     ];
 }
@@ -290,6 +296,7 @@ mod tests {
             UiTextCode::CsvAmountOverflow,
             UiTextCode::CsvUnreadableRow,
             UiTextCode::CsvUnnamedColumn,
+            UiTextCode::CsvUnnamedRepeatedColumn,
             UiTextCode::CsvRepeatedColumn,
         }
     }

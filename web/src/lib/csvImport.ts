@@ -49,10 +49,17 @@ function eqIgnoreAsciiCase(a: string, b: string): boolean {
   return a.localeCompare(b, 'en', { sensitivity: 'accent' }) === 0
 }
 
-/** Pick the column whose name matches a detected name (ASCII case-insensitive). */
+/**
+ * Pick the column whose name matches a detected name. An exact match wins:
+ * Rust names are unique only up to ASCII case, and `eqIgnoreAsciiCase` also
+ * folds non-ASCII case, so `Ποσό` and `ΠΟΣΌ` are two columns it cannot tell
+ * apart.
+ */
 export function matchHeader(headers: CsvHeader[], name: string | null | undefined): string {
   const needle = name?.trim()
   if (!needle) return ''
+  const exact = headers.find((h) => h.name === needle)
+  if (exact) return exact.name
   return headers.find((h) => eqIgnoreAsciiCase(h.name.trim(), needle))?.name ?? ''
 }
 

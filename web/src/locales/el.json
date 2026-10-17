@@ -997,6 +997,7 @@
       },
       "column": {
         "unnamed": "Στήλη {position}",
+        "unnamedRepeated": "Στήλη {position} ({occurrence})",
         "repeated": "{name} ({occurrence})"
       },
       "duplicate": "Πιθανό διπλότυπο",

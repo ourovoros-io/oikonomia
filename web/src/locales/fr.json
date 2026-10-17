@@ -997,6 +997,7 @@
       },
       "column": {
         "unnamed": "Colonne {position}",
+        "unnamedRepeated": "Colonne {position} ({occurrence})",
         "repeated": "{name} ({occurrence})"
       },
       "duplicate": "Doublon probable",

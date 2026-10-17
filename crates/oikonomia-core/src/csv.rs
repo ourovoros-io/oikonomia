@@ -249,6 +249,9 @@ pub enum CsvRowOutcome {
 /// two headers equal but for ASCII case cannot tell apart. So every column
 /// gets a [`Self::name`] that is unique among the headers and never empty,
 /// and the UI shows [`Self::label`] for one whose name was made up.
+///
+/// Frozen until the next major version: the Map columns step reads both
+/// fields.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CsvHeader {
     /// What a [`CsvColumnMapping`] names this column by: unique among the
@@ -261,10 +264,18 @@ pub struct CsvHeader {
     pub name: String,
     /// What the UI shows for a column whose name was made up, as a code it
     /// words ([`UiTextCode::CsvUnnamedColumn`],
+    /// [`UiTextCode::CsvUnnamedRepeatedColumn`],
     /// [`UiTextCode::CsvRepeatedColumn`]). `None` when [`Self::name`] is the
     /// header as written, which is the file's own text and shown as it is.
     ///
+    /// In English a label reads as the name, so no two read alike. In another
+    /// language a label can read like a header of the file (`Spalte 3` beside
+    /// an empty third column in a German file); the options still differ by
+    /// position.
+    ///
     /// [`UiTextCode::CsvUnnamedColumn`]: crate::ui_text::UiTextCode::CsvUnnamedColumn
+    /// [`UiTextCode::CsvUnnamedRepeatedColumn`]:
+    ///     crate::ui_text::UiTextCode::CsvUnnamedRepeatedColumn
     /// [`UiTextCode::CsvRepeatedColumn`]: crate::ui_text::UiTextCode::CsvRepeatedColumn
     pub label: Option<UiText>,
 }
@@ -287,10 +298,10 @@ pub struct CsvHeader {
 /// its values as well.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CsvColumnMapping {
-    /// Date column header.
+    /// Date column, by [`CsvHeader::name`], as is every field here.
     #[serde(default)]
     pub date: Option<String>,
-    /// Optional description / payee / memo column header. Without one,
+    /// Optional description / payee / memo column. Without one,
     /// every row has an empty description.
     #[serde(default)]
     pub description: Option<String>,

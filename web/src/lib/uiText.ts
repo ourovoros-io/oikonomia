@@ -48,6 +48,7 @@ export const NOTE_CODE_KEYS: Record<string, string> = {
   csv_amount_overflow: 'tx.csv.rowProblem.amountOverflow',
   csv_unreadable_row: 'tx.csv.rowProblem.unreadable',
   csv_unnamed_column: 'tx.csv.column.unnamed',
+  csv_unnamed_repeated_column: 'tx.csv.column.unnamedRepeated',
   csv_repeated_column: 'tx.csv.column.repeated',
 }
 
