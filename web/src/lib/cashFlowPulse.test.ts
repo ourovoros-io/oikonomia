@@ -25,6 +25,7 @@ function seriesOf(buckets: CashFlowBucket[]): CashFlowSeries {
     total_income_minor: 0,
     total_expenses_minor: 0,
     net_minor: 0,
+    hidden_entry_count: 0,
     buckets,
   }
 }

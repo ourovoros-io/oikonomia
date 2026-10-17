@@ -68,6 +68,7 @@ const series: CashFlowSeries = {
   total_income_minor: 120000,
   total_expenses_minor: 4250,
   net_minor: 115750,
+  hidden_entry_count: 0,
   buckets: [],
 }
 
@@ -89,6 +90,7 @@ const entries: PostedEntryView[] = [
     is_voided: false,
     listed_kind: 'expense',
     simple_form: null,
+    settles_entry_id: null,
   },
   {
     entry: { id: 'j2', entity_id: 'e1', entry_date: '2026-08-11', description: 'Client invoice', reference: null, status: 'posted', hidden: false },
@@ -96,6 +98,7 @@ const entries: PostedEntryView[] = [
     is_voided: false,
     listed_kind: 'income',
     simple_form: null,
+    settles_entry_id: null,
   },
 ]
 

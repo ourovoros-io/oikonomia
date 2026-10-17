@@ -5,7 +5,7 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import { CsvPreviewModal } from './CsvPreviewModal'
-import type { Account, CsvImportPreview, SimpleEntryInput } from '../lib/api'
+import type { Account, CsvHeader, CsvImportPreview, SimpleEntryInput } from '../lib/api'
 import { resetI18nForTests, setLocale, type Locale } from '../lib/i18n'
 
 afterEach(() => {
@@ -13,10 +13,12 @@ afterEach(() => {
   resetI18nForTests()
 })
 
+const headers: CsvHeader[] = ['Date', 'Description', 'Amount'].map((name) => ({ name }))
+
 function previewWith(error: { code: string; params?: Record<string, string> }): CsvImportPreview {
   return {
     source: 'bank.csv',
-    headers: ['Date', 'Description', 'Amount'].map((name) => ({ name })),
+    headers,
     rows: [
       {
         source_row: 2,
@@ -139,6 +141,7 @@ function suggestedRow(
       payable_account_id: null,
       from_account_id: null,
       to_account_id: null,
+      settles_entry_id: null,
     },
     signed_amount_minor: kind === 'expense' ? -4250 : 4250,
   }
@@ -153,7 +156,7 @@ function renderCategoryPreview(
   render(
     <CsvPreviewModal
       open
-      preview={{ source: 'bank.csv', headers: ['Date', 'Description', 'Amount'], rows }}
+      preview={{ source: 'bank.csv', headers, rows }}
       currency={{ code: 'EUR', decimals: 2 }}
       walletAccounts={[]}
       expenseAccounts={expenseAccounts}

@@ -46,7 +46,11 @@ const accounts: Account[] = [
   },
 ]
 
-const prefs: UiPrefs = { last_entity_id: 'e1', last_accounts_by_entity_kind: {} }
+const prefs: UiPrefs = {
+  last_entity_id: 'e1',
+  last_accounts_by_entity_kind: {},
+  unreadable: false,
+}
 
 const defaults: AccountDefaults = {
   category: null,
@@ -55,6 +59,7 @@ const defaults: AccountDefaults = {
   income: null,
   bill_category: null,
   bills_payable: null,
+  receivable: null,
   transfer_source: 'w1',
   transfer_destination: 'w1',
 }
