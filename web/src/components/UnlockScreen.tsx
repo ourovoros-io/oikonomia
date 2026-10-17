@@ -27,7 +27,7 @@ import { useI18n } from '../lib/I18nProvider'
 import { LanguagePill } from './LanguagePill'
 import { UnlockUpdateDialog } from './UnlockUpdateDialog'
 import { useUnlockUpdate } from './useUnlockUpdate'
-import { Button, ErrorBanner, Field, Input, Notice } from './ui'
+import { Button, ErrorBanner, Field, Input, Notice, TruncatedLabel } from './ui'
 
 type Props = {
   status: Exclude<VaultStatus, 'unlocked'>
@@ -371,11 +371,15 @@ export function UnlockScreen({
               ) : null}
 
               <Button type="submit" size="lg" busy={busy || unlocking} className="w-full">
-                {busy || unlocking
-                  ? t('common.working')
-                  : isSetup
-                    ? t('unlock.createVault')
-                    : t('unlock.unlock')}
+                <TruncatedLabel
+                  text={
+                    busy || unlocking
+                      ? t('common.working')
+                      : isSetup
+                        ? t('unlock.createVault')
+                        : t('unlock.unlock')
+                  }
+                />
               </Button>
             </div>
           </form>

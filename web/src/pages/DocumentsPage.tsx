@@ -45,12 +45,7 @@ export function DocumentsPage({ entity, onCreateBook }: Props) {
   }
 
   useEffect(() => {
-    setViewerDocId(null)
-    setDeleteId(null)
-    if (!entity) {
-      setDocs([])
-      return
-    }
+    if (!entity) return
     void reload().catch((err) => setError(commandErrorMessage(err)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity?.id])

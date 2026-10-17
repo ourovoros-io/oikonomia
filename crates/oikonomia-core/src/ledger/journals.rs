@@ -74,7 +74,7 @@ use crate::domain::{
     JournalLine, JournalLineId, Side, validate_lines_for_post,
 };
 use crate::error::{DatabaseContext, Error, Resource, Result, ValidationError};
-use crate::ledger::accounts::{get_account, list_accounts};
+use crate::ledger::accounts::{get_account, list_accounts, opening_balance_account};
 use crate::ledger::balance::{
     ACTIVE_ENTRY_PREDICATE, account_balance_as_of, add_minor, normal_balance,
 };
@@ -648,16 +648,8 @@ pub fn set_account_opening_balance(
         return Err(ValidationError::OpeningBalanceUnchanged.into());
     }
 
-    // Prefer the system Opening Balances account; fall back to any active
-    // equity account so hand-built (blank template) charts still work.
     let accounts = list_accounts(conn, account.entity_id)?;
-    let is_active_equity =
-        |candidate: &&Account| candidate.account_type == AccountType::Equity && candidate.is_active;
-    let equity = accounts
-        .iter()
-        .find(|candidate| is_active_equity(candidate) && candidate.is_system)
-        .or_else(|| accounts.iter().find(is_active_equity))
-        .ok_or(ValidationError::NoEquityAccount)?;
+    let equity = opening_balance_account(&accounts).ok_or(ValidationError::NoEquityAccount)?;
 
     // A debit-normal account grows by debiting: a positive delta debits the
     // account and credits equity; every other combination flips the sides.

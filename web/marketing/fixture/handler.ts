@@ -1,4 +1,5 @@
 import type { AnalyzerStatus, UiPrefs } from '../../src/lib/api'
+import type { Locale } from '../../src/lib/i18n'
 import { accountDefaults, buildLedger, type DemoLang } from './ledger'
 import {
   accountBalance,
@@ -14,20 +15,23 @@ import {
 type Args = Record<string, unknown>
 
 /**
- * Answers every read the four captured screens make, plus the two no-op
- * writes -- `vault_touch` and `settings_set_locale` -- the app itself calls
- * on load, and `settings_resolve_locale`, which returns the demo language
- * the capture was asked for. Anything beyond those reads and no-op writes, a real write or a
- * native dialog, is deliberately unanswered: a capture that reaches one is
- * wrong.
+ * Answers every read the app's screens make, plus the two no-op writes --
+ * `vault_touch` and `settings_set_locale` -- the app itself calls on load,
+ * and `settings_resolve_locale`, which returns the UI language the run asked
+ * for. Anything beyond those reads and no-op writes, a real write or a native
+ * dialog, is deliberately unanswered: a capture that reaches one is wrong.
+ *
+ * `lang` picks the demo ledger's language (names, descriptions); `locale`
+ * the UI language. They differ only for fr and de, which have no demo ledger
+ * of their own and show the English one.
  */
-export function createHandler(lang: DemoLang) {
+export function createHandler(lang: DemoLang, locale: Locale = lang) {
   const l = buildLedger(lang)
 
   const prefs: UiPrefs = {
     last_entity_id: l.entity.id,
     last_accounts_by_entity_kind: {},
-    locale: lang,
+    locale,
     unreadable: false,
   }
   const analyzer: AnalyzerStatus = { ocr_available: true, offline: true, hint: 'ready' }
@@ -57,12 +61,13 @@ export function createHandler(lang: DemoLang) {
     app_info: () => ({ name: 'Oikonomia', version: '0.1.0', support_email: 'info@ourovoros.io' }),
     donation_addresses: () => [],
     update_check: () => ({ kind: 'up_to_date' }),
-    settings_get_locale: () => lang,
-    settings_resolve_locale: () => lang,
+    settings_get_locale: () => locale,
+    settings_resolve_locale: () => locale,
     settings_set_locale: () => null,
     settings_get_ui_prefs: () => prefs,
     settings_get_lock_timeout: () => 900,
     entity_list: () => [l.entity],
+    entity_list_archived: () => [],
     account_list: () => l.accounts,
     account_defaults: () => accountDefaults(),
     entry_list: (a) =>

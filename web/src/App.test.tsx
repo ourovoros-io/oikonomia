@@ -38,6 +38,7 @@ vi.mock('./lib/api', () => ({
     entityList: vi.fn(),
     entityListArchived: vi.fn(),
     entityArchive: vi.fn(),
+    entityUnarchive: vi.fn(async () => undefined),
     entityCreate: vi.fn(),
     getLockTimeout: vi.fn(async () => 900),
     donationAddresses: vi.fn(async () => []),
@@ -56,6 +57,7 @@ vi.mock('./pages/DashboardPage', async () => {
       <div>
         <TopBar title="Dashboard stub title" actions={<button type="button">Stub period</button>} />
         Dashboard stub
+        <input aria-label="Stub page state" />
         {onCreateBook ? (
           <button type="button" onClick={onCreateBook}>
             Create a book
@@ -67,17 +69,20 @@ vi.mock('./pages/DashboardPage', async () => {
 })
 vi.mock('./pages/TransactionsPage', () => ({
   TransactionsPage: ({ newEntryIntent }: { newEntryIntent?: number }) => (
-    <div>{`Transactions stub, new entry intent ${newEntryIntent ?? 0}`}</div>
+    <div>
+      {`Transactions stub, new entry intent ${newEntryIntent ?? 0}`}
+      <input aria-label="Stub page state" />
+    </div>
   ),
 }))
 vi.mock('./pages/DocumentsPage', () => ({
-  DocumentsPage: () => null,
+  DocumentsPage: () => <input aria-label="Stub page state" />,
 }))
 vi.mock('./pages/AccountsPage', () => ({
-  AccountsPage: () => null,
+  AccountsPage: () => <input aria-label="Stub page state" />,
 }))
 vi.mock('./pages/ReportsPage', () => ({
-  ReportsPage: () => null,
+  ReportsPage: () => <input aria-label="Stub page state" />,
 }))
 
 import { listen } from '@tauri-apps/api/event'
@@ -304,6 +309,25 @@ describe('App shell', () => {
     ).toBeNull()
   })
 
+  // Each stub page holds an uncontrolled input: its text survives a rerender
+  // and only a remount clears it. The pages keep no per-book reset of their own.
+  test.each(['Dashboard', 'Transactions', 'Documents', 'Accounts', 'Reports'])(
+    'another book remounts %s, so no state carries over from the last one',
+    async (page) => {
+      vi.mocked(api.entityList).mockResolvedValue([
+        entity,
+        { ...entity, id: 'e2', name: 'Household' },
+      ])
+      render(<App />)
+      await userEvent.click(await screen.findByRole('button', { name: page }))
+      await userEvent.type(await screen.findByLabelText('Stub page state'), 'groceries')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Household, EUR' }))
+
+      expect(screen.getByLabelText('Stub page state')).toHaveValue('')
+    },
+  )
+
   test('Lock is a button with its own word, and has no native tooltip to linger on the lock screen', async () => {
     render(<App />)
     const lock = await screen.findByRole('button', { name: 'Lock vault' })
@@ -377,6 +401,14 @@ describe('App top bar and Quick add', () => {
 
     expect(await screen.findByRole('button', { name: 'Quick add' })).toBeDisabled()
   })
+
+  test('Quick add fills the sidebar width, so a long label truncates with a tooltip', async () => {
+    render(<App />)
+
+    const button = await screen.findByRole('button', { name: 'Quick add' })
+    expect(button.className).toMatch(/w-full/)
+    expect(within(button).getByTitle('Quick add').className).toMatch(/truncate/)
+  })
 })
 
 describe('App after archiving the current book', () => {
@@ -432,6 +464,34 @@ describe('App after archiving the current book', () => {
     expect((await screen.findAllByText('No books yet')).length).toBeGreaterThan(0)
     expect(screen.getByRole('button', { name: 'Quick add' })).toBeDisabled()
     expect(await screen.findByRole('button', { name: 'Restore Personal' })).toBeEnabled()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+})
+
+describe('App after restoring an archived book', () => {
+  const household: Entity = { ...entity, id: 'e2', name: 'Household' }
+
+  test('the restored book becomes current and Settings stays open, as after creating one', async () => {
+    vi.mocked(api.entityList).mockReset().mockResolvedValue([entity])
+    vi.mocked(api.entityListArchived).mockResolvedValueOnce([household]).mockResolvedValue([])
+    render(<App />)
+    await screen.findByRole('button', { name: 'Personal, EUR' })
+    await userEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    await userEvent.click(screen.getByRole('button', { name: /^books/i }))
+    vi.mocked(api.entityList).mockResolvedValue([entity, household])
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Restore Household' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Household, EUR' })).toHaveAttribute(
+        'aria-current',
+        'true',
+      )
+    })
+    expect(api.entityUnarchive).toHaveBeenCalledWith('e2')
+    expect(api.rememberLastEntity).toHaveBeenCalledWith('e2')
+    expect(screen.getByRole('button', { name: 'Settings' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.queryByText('Dashboard stub')).toBeNull()
     expect(screen.queryByRole('alert')).toBeNull()
   })
 })

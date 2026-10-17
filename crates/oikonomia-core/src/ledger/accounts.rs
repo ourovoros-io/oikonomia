@@ -24,6 +24,25 @@ use crate::ledger::entities::ensure_writable_entity;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
+/// Returns the equity account a book's opening balances post against: its
+/// system equity account (the template's Opening Balances), else its first
+/// active equity account in chart order, for a blank book.
+///
+/// `accounts` is the book's chart as [`list_accounts`] returns it. A system
+/// account cannot be archived, so in a template book this is always the
+/// system one.
+/// [`set_account_opening_balance`](crate::ledger::set_account_opening_balance)
+/// posts against it and the entry list recognises opening balances by it, so
+/// the two cannot disagree.
+pub(crate) fn opening_balance_account(accounts: &[Account]) -> Option<&Account> {
+    let is_active_equity =
+        |candidate: &&Account| candidate.account_type == AccountType::Equity && candidate.is_active;
+    accounts
+        .iter()
+        .find(|candidate| is_active_equity(candidate) && candidate.is_system)
+        .or_else(|| accounts.iter().find(is_active_equity))
+}
+
 /// Input for [`create_account`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateAccount {

@@ -21,6 +21,7 @@ Rust core, with a React interface in a webview.
 | `crates/oikonomia-core` | Vault, schema and migrations, ledger, reports, CSV, documents and OCR, UI preferences. No network crates (`scripts/assert-core-offline.sh`). |
 | `crates/oikonomia-update` | The update client: signed feed, host allow-list, verified download. The only crate that talks to the network. |
 | `crates/macos-dock-icon` | Sets the Dock icon for dev mode (`make app`). |
+| `crates/appindicator-probe` | Checks that the Linux tray library loads before the tray is created; without it the tray library panics. |
 | `apps/desktop/src-tauri` | The Tauri shell: IPC commands, app state, tray and quick-add window, idle auto-lock, capabilities, bundle config, OCR models. |
 | `web` | The React, Vite and Tailwind interface. |
 | `docs` | This overview, the release runbook, brand assets. |
@@ -312,11 +313,16 @@ with its reason so that it is not raised again without something new to say.
   `ledger/journals.rs` for every simple entry). A positive-amount type would
   say the same thing once, but it would touch every place money is
   constructed, for little gain over two checks that already exist.
-- **A bill paid at once is listed as an expense.** It posts the same two lines
-  as an expense (category debited, wallet credited), so the list cannot tell
-  them apart. Showing a Bill badge would need the entry kind stored on
-  `journal_entries`, a schema migration, for a label only. Unpaid bills and
-  bill payments do show as Bill.
+- **Some entries are listed by a guess from their lines.** Since schema v10 a
+  simple entry stores its kind (`journal_entries.kind`). Older entries, journal
+  entries posted line by line and opening balances do not, so the list
+  classifies them from their lines (`ListedEntryKind` in
+  `ledger/entry_kind.rs`): an older bill paid at once lists as an expense, and
+  any entry on the account opening balances post against lists as an opening
+  balance. In a blank book that account is its first active equity account, so
+  reordering or archiving its equity accounts can relabel older entries.
+  Storing an opening-balance kind would mean widening the column's `CHECK`,
+  which `SQLite` can only do by rebuilding `journal_entries`, for a label only.
 - **The app's own journal CSV export cannot be imported.** The import refuses
   it with a clear message (`csv_journal_export`). A journal line has no wallet
   side, so importing two-line entries as bank rows would create unrelated

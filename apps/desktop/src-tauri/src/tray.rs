@@ -516,11 +516,15 @@ impl TrayStatus {
     fn after(outcome: tauri::Result<()>) -> Self {
         match outcome {
             Ok(()) => Self::Created,
-            Err(err) => {
-                log::warn!("starting without a tray icon: {err}");
-                Self::Missing
-            }
+            Err(err) => Self::missing(err),
         }
+    }
+
+    /// Returns [`TrayStatus::Missing`], logging `reason` as a warning. The
+    /// Linux smoke test (`scripts/smoke-linux.sh`) looks for this wording.
+    fn missing(reason: impl std::fmt::Display) -> Self {
+        log::warn!("starting without a tray icon: {reason}");
+        Self::Missing
     }
 }
 
@@ -529,12 +533,46 @@ impl TrayStatus {
 ///
 /// A tray that cannot be created does not stop the start: the main window
 /// does not need it. Creating it returns an error when its menu or icon
-/// cannot be made or, on Linux, its icon file cannot be written. A system
-/// without the appindicator library is not covered: tray-icon panics then
-/// (libappindicator-sys), and the start still fails
+/// cannot be made or, on Linux, its icon file cannot be written. On Linux it
+/// is not attempted at all without the appindicator library, because
+/// tray-icon panics then (libappindicator-sys) instead of returning an error
 /// (<https://github.com/ourovoros-io/oikonomia/issues/206>).
 pub(crate) fn install(app: &tauri::App, locale: Locale) {
-    app.manage(TrayStatus::after(init(app, locale)));
+    app.manage(create(tray_library(), || init(app, locale)));
+}
+
+/// Returns the status after creating the tray with `init`, which is called
+/// only when `library`, the native library the tray needs, has loaded. A
+/// library that did not load is logged as a warning.
+fn create<E: std::fmt::Display>(
+    library: Result<(), E>,
+    init: impl FnOnce() -> tauri::Result<()>,
+) -> TrayStatus {
+    match library {
+        Ok(()) => TrayStatus::after(init()),
+        Err(err) => TrayStatus::missing(err),
+    }
+}
+
+/// Loads the appindicator library that the Linux tray draws its icon with.
+///
+/// # Errors
+///
+/// Returns why no appindicator library loads.
+#[cfg(target_os = "linux")]
+fn tray_library() -> Result<(), appindicator_probe::NotFound> {
+    appindicator_probe::load().map(|name| log::info!("tray library: {name}"))
+}
+
+/// Returns `Ok`: the Windows and macOS trays need no library beyond the
+/// system's own.
+#[cfg(not(target_os = "linux"))]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the same signature as the Linux check, so `install` has one shape"
+)]
+fn tray_library() -> Result<(), std::convert::Infallible> {
+    Ok(())
 }
 
 /// Returns whether the tray can bring a hidden main window back: the icon
@@ -667,6 +705,30 @@ mod tests {
             TrayStatus::Missing
         );
         assert_eq!(TrayStatus::after(Ok(())), TrayStatus::Created);
+    }
+
+    #[test]
+    fn without_the_tray_library_the_tray_is_missing_and_never_created() {
+        let created = std::cell::Cell::new(false);
+
+        let status = create(Err("no appindicator library loads"), || {
+            created.set(true);
+            Ok(())
+        });
+
+        assert_eq!(status, TrayStatus::Missing);
+        assert!(!created.get());
+    }
+
+    #[test]
+    fn with_the_tray_library_the_tray_is_created_and_its_outcome_recorded() {
+        assert_eq!(create(Ok::<(), &str>(()), || Ok(())), TrayStatus::Created);
+
+        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert_eq!(
+            create(Ok::<(), &str>(()), || Err(tauri::Error::Io(denied))),
+            TrayStatus::Missing
+        );
     }
 
     #[test]

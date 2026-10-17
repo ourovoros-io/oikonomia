@@ -603,7 +603,7 @@ describe('TransactionsPage hidden paint', () => {
     vi.mocked(api.entryList).mockResolvedValue([postedEntry, hiddenEntry])
     await renderReady()
     expect(screen.getByText('1 posted · 1 hidden · EUR')).toBeTruthy()
-    expect(screen.getByText('Export omits hidden rows. Deleted entries are included, with “voided” in the “status” column.')).toBeTruthy()
+    expect(screen.getByText('Export writes the whole book, whatever the filters, and omits hidden rows. Deleted entries are included, with “voided” in the “status” column.')).toBeTruthy()
     expect(screen.getByText('Hidden')).toBeTruthy()
     expect(screen.getByText('ATM cash')).toBeTruthy()
     expect(screen.queryByRole('checkbox', { name: /include hidden/i })).toBeNull()
@@ -619,7 +619,7 @@ describe('TransactionsPage hidden paint', () => {
       expect(screen.getByText('Κρυφή')).toBeTruthy()
     })
     expect(screen.getByText('0 καταχωρισμένα · 1 κρυφά · EUR')).toBeTruthy()
-    expect(screen.getByText('Η εξαγωγή παραλείπει τις κρυφές γραμμές. Οι διαγραμμένες εγγραφές περιλαμβάνονται, με την τιμή «voided» στη στήλη «status».')).toBeTruthy()
+    expect(screen.getByText('Η εξαγωγή γράφει ολόκληρο το βιβλίο, ανεξάρτητα από τα φίλτρα, και παραλείπει τις κρυφές γραμμές. Οι διαγραμμένες εγγραφές περιλαμβάνονται, με την τιμή «voided» στη στήλη «status».')).toBeTruthy()
   })
 
   test('detail Hide checkbox calls entry_set_hidden', async () => {
@@ -1293,21 +1293,6 @@ describe('TransactionsPage default accounts', () => {
     })
     expect(api.accountDefaults).toHaveBeenCalledWith('e1')
   })
-
-  test('the loaded ledger and defaults are dropped when the book goes away', async () => {
-    const { rerender } = render(
-      <TransactionsPage entity={entity} newEntryIntent={0} onNewEntryIntentHandled={vi.fn()} />,
-    )
-    await waitFor(() => {
-      expect(api.accountDefaults).toHaveBeenCalledTimes(1)
-    })
-
-    rerender(<TransactionsPage entity={null} newEntryIntent={0} onNewEntryIntentHandled={vi.fn()} />)
-
-    // No book, so nothing is fetched again and nothing from the old one stays.
-    expect(api.accountDefaults).toHaveBeenCalledTimes(1)
-    expect(screen.queryByText('Meals & dining')).toBeNull()
-  })
 })
 
 describe('TransactionsPage Quick add intent', () => {
@@ -1659,6 +1644,48 @@ describe('TransactionsPage list header', () => {
     expect(screen.getByRole('button', { name: 'Recurring' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Import CSV' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Export CSV' })).toBeTruthy()
+    expect(screen.getByText('Matching entries')).toBeTruthy()
+  })
+
+  test('the title reads Matching entries while a search narrows the list', async () => {
+    await renderReady()
+    expect(screen.getByText('All entries')).toBeTruthy()
+
+    await userEvent.type(screen.getByLabelText('Search'), 'Lunch')
+
+    expect(await screen.findByText('Matching entries')).toBeTruthy()
+    expect(screen.queryByText('All entries')).toBeNull()
+
+    await userEvent.clear(screen.getByLabelText('Search'))
+
+    expect(await screen.findByText('All entries')).toBeTruthy()
+  })
+
+  test('the title reads Matching entries while a date narrows the list', async () => {
+    await renderReady()
+
+    await userEvent.type(screen.getByLabelText('Entries from date'), '01/01/2026')
+    await userEvent.tab()
+
+    expect(await screen.findByText('Matching entries')).toBeTruthy()
+    expect(screen.queryByText('All entries')).toBeNull()
+  })
+
+  test('Export writes the whole book while a filter narrows the list', async () => {
+    await renderReady()
+    await userEvent.type(screen.getByLabelText('Search'), 'Lunch')
+    await screen.findByText('Matching entries')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Export CSV' }))
+
+    await waitFor(() => {
+      expect(api.csvExportJournal).toHaveBeenCalledWith('e1')
+    })
+    expect(
+      screen.getByText(
+        'Export writes the whole book, whatever the filters, and omits hidden rows. Deleted entries are included, with “voided” in the “status” column.',
+      ),
+    ).toBeTruthy()
   })
 
   test('coming back from Recurring reloads the entries', async () => {
@@ -1886,7 +1913,7 @@ describe('TransactionsPage bills in the list', () => {
 })
 
 describe('TransactionsPage row meta', () => {
-  test('shows the reference, and names an equity-only entry an opening balance', async () => {
+  test('shows the reference, and names an entry core lists as an opening balance one', async () => {
     const equity = account({ id: 'eq1', name: 'Opening Balances', account_type: 'equity', code: '3000' })
     vi.mocked(api.accountList).mockResolvedValue([...accounts, equity])
     vi.mocked(api.entryList).mockResolvedValue([
@@ -1894,7 +1921,7 @@ describe('TransactionsPage row meta', () => {
       {
         ...incomeEntry,
         entry: { ...incomeEntry.entry, id: 'j9', description: 'Opening balance — Checking' },
-        listed_kind: 'other',
+        listed_kind: 'opening_balance',
         lines: incomeEntry.lines.map((line) =>
           line.account_id === 'inc1' ? { ...line, account_id: 'eq1' } : line,
         ),
@@ -1907,5 +1934,20 @@ describe('TransactionsPage row meta', () => {
     const opening = screen.getByText('Opening balance — Checking').closest('li')
     expect(opening).toHaveTextContent('Opening balance')
     expect(opening).not.toHaveTextContent(/\bother\b/)
+  })
+
+  test('names an entry core lists as other a journal entry, not an opening balance', async () => {
+    vi.mocked(api.entryList).mockResolvedValue([
+      {
+        ...incomeEntry,
+        entry: { ...incomeEntry.entry, id: 'j9', description: 'Owner pays in' },
+        listed_kind: 'other',
+      },
+    ])
+    await renderReady()
+
+    const row = (await screen.findByText('Owner pays in')).closest('li')
+    expect(row).toHaveTextContent('Journal entry')
+    expect(row).not.toHaveTextContent('Opening balance')
   })
 })

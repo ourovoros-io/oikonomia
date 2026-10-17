@@ -56,6 +56,7 @@ export const ERROR_CODE_KEYS: Record<string, string> = {
   account_inactive: 'error.accountInactive',
   account_required: 'error.accountRequired',
   account_wrong_type: 'error.accountWrongType',
+  import_category_required: 'error.importCategoryRequired',
   same_account: 'error.sameAccount',
   amount_not_positive: 'error.amountNotPositive',
   bill_status_required: 'error.billStatusRequired',

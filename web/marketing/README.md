@@ -22,3 +22,22 @@ fixture does not answer fails with `marketing fixture has no answer for <cmd>`:
 add it to `fixture/handler.ts`, typed from `src/lib/api.ts`.
 
 Re-run whenever the app UI changes, then commit the PNGs in the site repo.
+
+## Layout check
+
+`marketing.html?lang=` takes `en`, `el`, `fr` or `de`. French and German show
+the English demo ledger under their own UI text; only English and Greek have
+a ledger of their own.
+
+    npm run check:layout
+
+Measures the fixture in Chromium at 960, 1024, 1280, 1440 and 1600 px in all
+four languages, on every screen, and fails if:
+
+- a Button label wraps, or the button is narrower than its label (a label
+  that truncates inside its own element may end in an ellipsis);
+- a dashboard arc tile label or hint is cut off or runs past its tile;
+- an Accounts row action is out of line with the same action in the other
+  rows, or a Set balance label takes more than one line.
+
+Console errors and page errors fail it too. CI runs it in the `layout` job.

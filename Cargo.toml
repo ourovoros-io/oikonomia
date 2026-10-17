@@ -4,6 +4,7 @@ members = [
     "crates/oikonomia-core",
     "crates/oikonomia-update",
     "crates/macos-dock-icon",
+    "crates/appindicator-probe",
     "crates/oikonomia-test-support",
     "apps/desktop/src-tauri",
 ]

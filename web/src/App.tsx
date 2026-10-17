@@ -14,7 +14,7 @@ import { Aurora } from './components/Aurora'
 import { Logo } from './components/Logo'
 import { PageErrorBoundary } from './components/PageErrorBoundary'
 import { UnlockScreen } from './components/UnlockScreen'
-import { Button, ErrorBanner, ToastStack } from './components/ui'
+import { Button, ErrorBanner, ToastStack, TruncatedLabel } from './components/ui'
 import { bookDotColour } from './lib/bookColour'
 import { cn } from './lib/cn'
 import { TopBarContext, type TopBarSlots } from './lib/topBar'
@@ -198,9 +198,9 @@ export default function App() {
   }
 
   // Only a book the reloaded list holds is made current. After a failed reload
-  // the current book stays: choosing the new one would remember a book the
+  // the current book stays: choosing the added one would remember a book the
   // list does not hold, and the sidebar would quietly show another.
-  async function makeCreatedEntityCurrent(id: string) {
+  async function makeAddedEntityCurrent(id: string) {
     if (await reloadEntities()) selectEntity(id)
   }
 
@@ -396,7 +396,7 @@ export default function App() {
                 aria-describedby={entity ? undefined : 'quick-add-hint'}
               >
                 <Plus className="size-4" />
-                {t('app.sidebar.quickAdd')}
+                <TruncatedLabel text={t('app.sidebar.quickAdd')} />
               </Button>
               {entity ? null : (
                 <p id="quick-add-hint" className="px-3 text-xs text-[var(--color-muted)]">
@@ -514,7 +514,7 @@ export default function App() {
                       onEntitiesChange={async () => {
                         await reloadEntities()
                       }}
-                      onEntityCreated={makeCreatedEntityCurrent}
+                      onEntityAdded={makeAddedEntityCurrent}
                       onSelectEntity={(id) => {
                         selectEntity(id)
                         setActive('dashboard')

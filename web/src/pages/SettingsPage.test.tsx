@@ -84,7 +84,7 @@ describe('SettingsPage', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -101,7 +101,7 @@ describe('SettingsPage', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -120,7 +120,7 @@ describe('SettingsPage', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -137,7 +137,7 @@ describe('SettingsPage', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -159,13 +159,13 @@ describe('SettingsPage', () => {
       fiscal_year_start_month: 1,
       chart_template: 'personal',
     })
-    const onEntityCreated = vi.fn(noopAsync)
+    const onEntityAdded = vi.fn(noopAsync)
     const onSelectEntity = vi.fn()
     render(
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={onEntityCreated}
+        onEntityAdded={onEntityAdded}
         onSelectEntity={onSelectEntity}
       />,
     )
@@ -183,7 +183,7 @@ describe('SettingsPage', () => {
       chart_template: 'personal',
       fiscal_year_start_month: 1,
     })
-    expect(onEntityCreated).toHaveBeenCalledExactlyOnceWith('e2')
+    expect(onEntityAdded).toHaveBeenCalledExactlyOnceWith('e2')
     // Opening a book also goes to its Dashboard; a new book only becomes current.
     expect(onSelectEntity).not.toHaveBeenCalled()
   })
@@ -194,13 +194,13 @@ describe('SettingsPage', () => {
       message: 'the name "Personal" is already in use',
       params: { name: 'Personal' },
     })
-    const onEntityCreated = vi.fn(noopAsync)
+    const onEntityAdded = vi.fn(noopAsync)
     const onSelectEntity = vi.fn()
     render(
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={onEntityCreated}
+        onEntityAdded={onEntityAdded}
         onSelectEntity={onSelectEntity}
       />,
     )
@@ -215,7 +215,7 @@ describe('SettingsPage', () => {
     ).toBeInTheDocument()
     expect(screen.queryByText(/is already in use$/)).toBeNull()
     expect(api.entityCreate).toHaveBeenCalledTimes(1)
-    expect(onEntityCreated).not.toHaveBeenCalled()
+    expect(onEntityAdded).not.toHaveBeenCalled()
     expect(onSelectEntity).not.toHaveBeenCalled()
   })
 
@@ -229,7 +229,7 @@ describe('SettingsPage', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={vi.fn(noopAsync)}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={vi.fn()}
       />,
     )
@@ -251,7 +251,7 @@ describe('SettingsPage', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={vi.fn(noopAsync)}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={vi.fn()}
       />,
     )
@@ -277,7 +277,7 @@ describe('SettingsPage', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={vi.fn(noopAsync)}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={vi.fn()}
       />,
     )
@@ -298,7 +298,7 @@ describe('SettingsPage', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
         appInfo={appInfo}
       />,
@@ -321,7 +321,7 @@ describe('SettingsPage', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
         appInfo={appInfo}
       />,
@@ -341,7 +341,7 @@ describe('SettingsPage', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -357,7 +357,7 @@ describe('SettingsPage hidden chrome HOLD', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -373,7 +373,7 @@ describe('SettingsPage vault backup', () => {
       <SettingsPage
         entities={[]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -394,7 +394,7 @@ describe('SettingsPage vault backup', () => {
         entities={[]}
         vaultPresent={false}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -412,7 +412,7 @@ describe('SettingsPage vault backup', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -426,7 +426,7 @@ describe('SettingsPage vault backup', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -443,7 +443,7 @@ describe('SettingsPage vault backup', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -484,7 +484,7 @@ describe('SettingsPage vault backup', () => {
         <SettingsPage
           entities={[entity]}
           onEntitiesChange={noopAsync}
-          onEntityCreated={async () => {}}
+          onEntityAdded={async () => {}}
           onSelectEntity={() => {}}
         />,
       )
@@ -521,7 +521,7 @@ describe('SettingsPage vault backup', () => {
         <SettingsPage
           entities={[entity]}
           onEntitiesChange={noopAsync}
-          onEntityCreated={async () => {}}
+          onEntityAdded={async () => {}}
           onSelectEntity={() => {}}
         />,
       )
@@ -545,7 +545,7 @@ describe('SettingsPage vault backup', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -569,7 +569,7 @@ describe('SettingsPage vault backup', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -588,7 +588,7 @@ describe('SettingsPage vault backup', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -606,7 +606,7 @@ describe('SettingsPage vault backup', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -626,7 +626,7 @@ describe('SettingsPage section design', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -640,7 +640,7 @@ describe('SettingsPage section design', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -673,7 +673,7 @@ describe('SettingsPage section design', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -702,7 +702,7 @@ describe('SettingsPage section design', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -723,7 +723,7 @@ describe('SettingsPage section design', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -742,7 +742,7 @@ describe('SettingsPage section design', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -767,7 +767,7 @@ describe('SettingsPage section design', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -810,7 +810,7 @@ describe('SettingsPage createBookIntent', () => {
       <SettingsPage
         entities={[]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
         createBookIntent={0}
       />,
@@ -821,7 +821,7 @@ describe('SettingsPage createBookIntent', () => {
       <SettingsPage
         entities={[]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
         createBookIntent={1}
       />,
@@ -838,7 +838,7 @@ describe('SettingsPage createBookIntent', () => {
       <SettingsPage
         entities={[]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -851,7 +851,7 @@ describe('SettingsPage createBookIntent', () => {
       <SettingsPage
         entities={[]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
         createBookIntent={0}
         onCreateBookIntentHandled={onCreateBookIntentHandled}
@@ -863,7 +863,7 @@ describe('SettingsPage createBookIntent', () => {
       <SettingsPage
         entities={[]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
         createBookIntent={1}
         onCreateBookIntentHandled={onCreateBookIntentHandled}
@@ -881,7 +881,7 @@ describe('SettingsPage createBookIntent', () => {
       <SettingsPage
         entities={[]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
         createBookIntent={0}
         onCreateBookIntentHandled={onCreateBookIntentHandled}
@@ -895,7 +895,7 @@ describe('SettingsPage createBookIntent', () => {
       <SettingsPage
         entities={[]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
         createBookIntent={0}
       />,
@@ -904,7 +904,7 @@ describe('SettingsPage createBookIntent', () => {
       <SettingsPage
         entities={[]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
         createBookIntent={1}
       />,
@@ -922,7 +922,7 @@ describe('SettingsPage Auto-lock feedback', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -946,7 +946,7 @@ describe('SettingsPage New book currency', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -961,7 +961,7 @@ describe('SettingsPage New book currency', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -984,7 +984,7 @@ describe('SettingsPage books', () => {
         <SettingsPage
           entities={books}
           onEntitiesChange={async () => {}}
-          onEntityCreated={async () => setBooks([entity, created])}
+          onEntityAdded={async () => setBooks([entity, created])}
           onSelectEntity={onSelectEntity}
         />
       )
@@ -1008,7 +1008,7 @@ describe('SettingsPage books', () => {
       <SettingsPage
         entities={[]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={noopAsync}
+        onEntityAdded={noopAsync}
         onSelectEntity={() => {}}
       />,
     )
@@ -1027,7 +1027,7 @@ describe('SettingsPage books', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={noopAsync}
+        onEntityAdded={noopAsync}
         onSelectEntity={() => {}}
       />,
     )
@@ -1055,7 +1055,7 @@ describe('SettingsPage books', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={onEntitiesChange}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )
@@ -1080,7 +1080,7 @@ describe('SettingsPage books', () => {
       <SettingsPage
         entities={[entity]}
         onEntitiesChange={noopAsync}
-        onEntityCreated={async () => {}}
+        onEntityAdded={async () => {}}
         onSelectEntity={() => {}}
       />,
     )

@@ -15,7 +15,7 @@ import {
 } from '../lib/updateCheck'
 import { UPDATE_DIALOG_BUTTON_WIDTHS } from '../lib/updateDialogButtons'
 import { useDialogFocus } from './useDialogFocus'
-import { Button } from './ui'
+import { Button, TruncatedLabel } from './ui'
 
 type DialogAction = { kind: 'secondary'; label: string } | { kind: 'primary'; label: string }
 
@@ -154,11 +154,11 @@ export function UnlockUpdateDialog({
             <Button
               key={action.label}
               variant={action.kind === 'primary' ? 'primary' : 'secondary'}
-              className="shrink-0 whitespace-nowrap"
+              className="shrink-0"
               style={{ width: action.kind === 'primary' ? widths.primary : widths.secondary }}
               onClick={action.kind === 'primary' ? onInstall : onDismiss}
             >
-              {action.label}
+              <TruncatedLabel text={action.label} />
             </Button>
           ))}
         </div>
