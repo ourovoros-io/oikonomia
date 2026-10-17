@@ -13,6 +13,20 @@ const STROKE = 24
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS
 const GAP = 2
 
+/** Each share's arc on the ring: where it starts, and its length less the gap after it. */
+function ringSegments(shares: readonly number[], gap: number) {
+  const segments: Array<{ start: number; length: number }> = []
+  let start = 0
+
+  for (const share of shares) {
+    const full = share * CIRCUMFERENCE
+    segments.push({ start, length: Math.max(full - gap, 0.5) })
+    start += full
+  }
+
+  return segments
+}
+
 /** Donut of period expenses by category, with a hover readout in the hole. */
 export function ExpenseDonut({ lines, ccy }: { lines: ReportLine[]; ccy: Currency }) {
   useI18n()
@@ -32,13 +46,10 @@ export function ExpenseDonut({ lines, ccy }: { lines: ReportLine[]; ccy: Currenc
   const active = hover !== null ? slices[hover] : null
   const gap = slices.length > 1 ? GAP : 0
 
-  let acc = 0
-  const segments = slices.map((slice) => {
-    const start = acc
-    const full = slice.share * CIRCUMFERENCE
-    acc += full
-    return { start, length: Math.max(full - gap, 0.5) }
-  })
+  const segments = ringSegments(
+    slices.map((slice) => slice.share),
+    gap,
+  )
 
   return (
     <div className="flex flex-wrap items-center justify-center gap-x-10 gap-y-6 px-5 py-6">

@@ -58,7 +58,7 @@ import {
   ToastStack,
 } from '../components/ui'
 import { cn } from '../lib/cn'
-import { commandErrorMessage } from '../lib/commandError'
+import { commandFailure, copyError } from '../lib/uiError'
 import { useI18n } from '../lib/I18nProvider'
 import { tn } from '../lib/i18n'
 
@@ -190,7 +190,7 @@ export function RecurringPage({ entity, onBack }: Props) {
   }
 
   useEffect(() => {
-    void reload().catch((err) => setError(commandErrorMessage(err)))
+    void reload().catch((err) => setError(commandFailure(err)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entity.id])
 
@@ -289,13 +289,13 @@ export function RecurringPage({ entity, onBack }: Props) {
     // minor is only null alongside a problem; the check narrows its type.
     if (problem || minor === null) {
       formBusyRef.current = false
-      setError(t(problem ?? 'tx.invalidAmount'))
+      setError(copyError(problem ?? 'tx.invalidAmount'))
       return
     }
     const day = dayOfMonthForCadence(cadence, Number(dayOfMonth))
     if (cadence === 'monthly' && day == null) {
       formBusyRef.current = false
-      setError(t('recurring.form.error'))
+      setError(copyError('recurring.form.error'))
       return
     }
     setFormBusy(true)
@@ -324,7 +324,7 @@ export function RecurringPage({ entity, onBack }: Props) {
       setEditId(null)
       await reload()
     } catch (err) {
-      setError(commandErrorMessage(err, 'recurring.form.error'))
+      setError(commandFailure(err, 'recurring.form.error'))
     } finally {
       formBusyRef.current = false
       setFormBusy(false)
@@ -342,7 +342,7 @@ export function RecurringPage({ entity, onBack }: Props) {
     const minor = parseMajorToMinor(postAmount, currency)
     if (minor === null || minor <= 0) {
       postBusyRef.current = false
-      setError(t('recurring.posting.error'))
+      setError(copyError('recurring.posting.error'))
       return
     }
     setPostBusy(true)
@@ -352,7 +352,7 @@ export function RecurringPage({ entity, onBack }: Props) {
       setPosting(null)
       await reload()
     } catch (err) {
-      setError(commandErrorMessage(err, 'recurring.posting.error'))
+      setError(commandFailure(err, 'recurring.posting.error'))
     } finally {
       postBusyRef.current = false
       setPostBusy(false)
@@ -370,7 +370,7 @@ export function RecurringPage({ entity, onBack }: Props) {
       setEditId(null)
       await reload()
     } catch (err) {
-      setError(commandErrorMessage(err))
+      setError(commandFailure(err))
     } finally {
       deleteBusyRef.current = false
       setDeleteBusy(false)
@@ -405,7 +405,7 @@ export function RecurringPage({ entity, onBack }: Props) {
       />
 
       <ToastStack>
-        <ErrorBanner className="" message={openDialog ? null : error} onDismiss={dismissError} />
+        <ErrorBanner className="" error={openDialog ? null : error} onDismiss={dismissError} />
       </ToastStack>
 
       <Modal
@@ -587,7 +587,7 @@ export function RecurringPage({ entity, onBack }: Props) {
         onConfirm={() => void confirmPost()}
       >
         <ErrorBanner
-          message={openDialog === 'post' ? error : null}
+          error={openDialog === 'post' ? error : null}
           className="mb-4"
           onDismiss={dismissError}
         />
@@ -636,7 +636,7 @@ export function RecurringPage({ entity, onBack }: Props) {
         onConfirm={() => void confirmDelete()}
       >
         <ErrorBanner
-          message={openDialog === 'delete' ? error : null}
+          error={openDialog === 'delete' ? error : null}
           className=""
           onDismiss={dismissError}
         />

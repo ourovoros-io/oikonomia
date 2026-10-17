@@ -8,7 +8,7 @@ import { stripComments } from './stripComments.testutil'
  *
  * A command error's `message` is English text from Rust, with operating-system
  * detail in it. Screens show localized copy by code through
- * `commandErrorMessage`, and anything that needs the error's shape goes
+ * `commandErrorText`, and anything that needs the error's shape goes
  * through `asCommandError`.
  *
  * This is a tripwire, not a proof. It scans source text for the common ways of
@@ -165,7 +165,7 @@ describe('rawMessageReads', () => {
     ['an object literal with a message field', "const toast = { message: 'Saved' }"],
     ['a multi-line object literal', "const toast = {\n  message: 'Saved',\n  kind: 'ok',\n}"],
     ['destructuring other fields', "const { code, params } = asCommandError(err)"],
-    ['the shared helper', "setError(commandErrorMessage(err, 'docs.deleteFailed'))"],
+    ['the shared helper', "setError(commandFailure(err, 'docs.deleteFailed'))"],
     ['String() of a non-error', "const label = String(count)"],
     ['a template of a non-error', "const label = `${name} (${currency})`"],
     ['toString() of a non-error', "const label = value.toString()"],

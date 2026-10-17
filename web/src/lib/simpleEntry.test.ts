@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'vitest'
 import type { AccountDefaults } from './api'
-import { resetI18nForTests, t } from './i18n'
+import { resetI18nForTests } from './i18n'
 import {
   buildSimpleEntryInput,
   kindDefaultAccounts,
@@ -158,23 +158,23 @@ describe('validateTrayAccounts', () => {
 
   test('expense requires both accounts', () => {
     expect(validateTrayAccounts({ ...base, kind: 'expense', categoryId: '' })).toBe(
-      t('quickAdd.pickAccounts'),
+      'quickAdd.pickAccounts',
     )
     expect(validateTrayAccounts({ ...base, kind: 'expense', walletId: '' })).toBe(
-      t('quickAdd.pickAccounts'),
+      'quickAdd.pickAccounts',
     )
   })
 
   test('a received income requires a category and a wallet', () => {
     const received = { ...base, kind: 'income' as const, billStatus: 'paid' as const }
     expect(validateTrayAccounts(received)).toBeNull()
-    expect(validateTrayAccounts({ ...received, walletId: '' })).toBe(t('quickAdd.pickAccounts'))
+    expect(validateTrayAccounts({ ...received, walletId: '' })).toBe('quickAdd.pickAccounts')
   })
 
   test('an unpaid income requires a category and a receivable, not a wallet', () => {
     const unpaid = { ...base, kind: 'income' as const, billStatus: 'unpaid' as const }
     expect(validateTrayAccounts({ ...unpaid, walletId: '' })).toBeNull()
-    expect(validateTrayAccounts({ ...unpaid, payableId: '' })).toBe(t('quickAdd.pickAccounts'))
+    expect(validateTrayAccounts({ ...unpaid, payableId: '' })).toBe('quickAdd.pickAccounts')
   })
 
   test('bill unpaid needs category + payable', () => {
@@ -188,7 +188,7 @@ describe('validateTrayAccounts', () => {
         billStatus: 'unpaid',
         categoryId: '',
       }),
-    ).toBe(t('quickAdd.pickCategory'))
+    ).toBe('quickAdd.pickCategory')
     expect(
       validateTrayAccounts({
         ...base,
@@ -196,7 +196,7 @@ describe('validateTrayAccounts', () => {
         billStatus: 'unpaid',
         payableId: '',
       }),
-    ).toBe(t('quickAdd.pickPayable'))
+    ).toBe('quickAdd.pickPayable')
   })
 
   test('bill paid needs category + wallet', () => {
@@ -210,14 +210,14 @@ describe('validateTrayAccounts', () => {
         billStatus: 'paid',
         walletId: '',
       }),
-    ).toBe(t('quickAdd.pickWallet'))
+    ).toBe('quickAdd.pickWallet')
   })
 
   test('transfer needs distinct from/to', () => {
     expect(validateTrayAccounts({ ...base, kind: 'transfer' })).toBeNull()
     expect(
       validateTrayAccounts({ ...base, kind: 'transfer', fromId: '' }),
-    ).toBe(t('quickAdd.pickDifferentAccounts'))
+    ).toBe('quickAdd.pickDifferentAccounts')
     expect(
       validateTrayAccounts({
         ...base,
@@ -225,6 +225,6 @@ describe('validateTrayAccounts', () => {
         fromId: 'a1',
         toId: 'a1',
       }),
-    ).toBe(t('quickAdd.pickDifferentAccounts'))
+    ).toBe('quickAdd.pickDifferentAccounts')
   })
 })

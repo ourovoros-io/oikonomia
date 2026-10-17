@@ -7,6 +7,7 @@ import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, test } from 'vitest'
 
 import { ErrorBanner, Notice, ToastStack } from './ui'
+import { copyError } from '../lib/uiError'
 
 afterEach(() => {
   cleanup()
@@ -24,7 +25,7 @@ describe('ToastStack', () => {
   test('keeps errors assertive and confirmations polite', () => {
     render(
       <ToastStack>
-        <ErrorBanner className="" message="Could not save." />
+        <ErrorBanner className="" error={copyError('error.saveFailed')} />
         <Notice message="Saved." onDismiss={() => undefined} />
       </ToastStack>,
     )
@@ -36,7 +37,7 @@ describe('ToastStack', () => {
   test('floats its banners in the stack and leaves no visible wrapper for a quiet one', () => {
     const { container } = render(
       <ToastStack>
-        <ErrorBanner className="" message={null} />
+        <ErrorBanner className="" error={null} />
         {null}
         <Notice message="Saved." onDismiss={() => undefined} />
       </ToastStack>,

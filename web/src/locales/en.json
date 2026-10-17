@@ -614,6 +614,7 @@
   "entry.attachFile": "Attach file",
   "entry.noFiles": "No files attached to this entry.",
   "entry.edit": "Edit entry",
+  "entry.paidBill": "Bill, paid",
   "entry.fileTooLarge": "File too large (max 8 MB)",
   "entry.history.title": "History",
   "entry.history.note": "Kept for the audit trail when this entry was edited.",

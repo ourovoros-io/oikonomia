@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, formatDate, formatMoney, type OpenBill } from '../lib/api'
-import { commandErrorMessage } from '../lib/commandError'
+import { commandFailure, type UiError } from '../lib/uiError'
 import { useI18n } from '../lib/I18nProvider'
 import type { Currency } from '../lib/money'
 import { Field, Select } from './ui'
@@ -14,7 +14,7 @@ type Props = {
   currency: Currency
   /** The picked bill, or null when the user picks no bill. */
   onPick: (bill: OpenBill | null) => void
-  onError: (message: string) => void
+  onError: (error: UiError) => void
 }
 
 /**
@@ -33,7 +33,7 @@ export function BillPicker({ entityId, correctingPaymentId, value, currency, onP
         if (current) setBills(open)
       },
       (err: unknown) => {
-        if (current) onError(commandErrorMessage(err))
+        if (current) onError(commandFailure(err))
       },
     )
 

@@ -78,7 +78,7 @@ use crate::ledger::accounts::{get_account, list_accounts, opening_balance_accoun
 use crate::ledger::balance::{
     ACTIVE_ENTRY_PREDICATE, account_balance_as_of, add_minor, normal_balance,
 };
-use crate::ledger::bills::{ensure_not_settled, open_bill};
+use crate::ledger::bills::{open_bill, settled_by_sql};
 use crate::ledger::entities::ensure_writable_entity;
 use crate::ledger::entry_kind::{LineFallback, ListedEntryKind, PostedAs};
 use crate::ledger::simple_entry::{
@@ -182,6 +182,10 @@ pub struct PostedEntryView {
     /// The bill this payment settles, for a payment posted against one; the
     /// edit form of the payment opens with that bill picked.
     pub settles_entry_id: Option<JournalEntryId>,
+    /// The active payment that settles this bill, for a bill paid through
+    /// one. Such a bill is not voided or corrected until that payment is
+    /// voided, so the UI offers neither.
+    pub settled_by_entry_id: Option<JournalEntryId>,
 }
 
 impl PostedEntryView {
@@ -202,6 +206,7 @@ impl PostedEntryView {
             listed_kind,
             simple_form,
             settles_entry_id: stored.settles_entry_id,
+            settled_by_entry_id: stored.settled_by_entry_id,
         }
     }
 }
@@ -351,6 +356,8 @@ pub(crate) struct StoredEntry {
     posted_as: Option<PostedAs>,
     /// The bill it settles, for a payment posted against one.
     settles_entry_id: Option<JournalEntryId>,
+    /// The active payment that settles it, for a bill paid through one.
+    settled_by_entry_id: Option<JournalEntryId>,
 }
 
 impl StoredEntry {
@@ -381,13 +388,17 @@ impl StoredEntry {
 pub(crate) fn load_entry(conn: &Connection, id: JournalEntryId) -> Result<StoredEntry> {
     const OPERATION: &str = "read journal entry";
 
-    let (entry, has_void_link, posted_as, settles_entry_id) = conn
+    let (entry, has_void_link, posted_as, settles_entry_id, settled_by_entry_id) = conn
         .query_row(
-            "
-            SELECT id, entity_id, entry_date, description, reference, status, hidden,
-                   voided_by_entry_id, kind, bill_status, settles_entry_id
-            FROM journal_entries WHERE id = ?1
-            ",
+            &format!(
+                "
+                SELECT je.id, je.entity_id, je.entry_date, je.description, je.reference,
+                       je.status, je.hidden, je.voided_by_entry_id, je.kind, je.bill_status,
+                       je.settles_entry_id, {settled_by}
+                FROM journal_entries je WHERE je.id = ?1
+                ",
+                settled_by = settled_by_sql(),
+            ),
             [id.to_string()],
             |row| {
                 let voided_by: Option<String> = row.get(7)?;
@@ -395,7 +406,8 @@ pub(crate) fn load_entry(conn: &Connection, id: JournalEntryId) -> Result<Stored
                     map_entry_row(OPERATION, row),
                     voided_by.is_some(),
                     stored_posted_as(OPERATION, row, 8),
-                    stored_settles(OPERATION, row, 10),
+                    stored_entry_link(OPERATION, row, 10, SETTLES_COLUMN),
+                    stored_entry_link(OPERATION, row, 11, SETTLED_BY_COLUMN),
                 ))
             },
         )
@@ -406,6 +418,7 @@ pub(crate) fn load_entry(conn: &Connection, id: JournalEntryId) -> Result<Stored
     let entry = entry?;
     let posted_as = posted_as?;
     let settles_entry_id = settles_entry_id?;
+    let settled_by_entry_id = settled_by_entry_id?;
 
     let is_voided = has_void_link || entry_is_void_reverse(conn, entry.id)?;
     let lines = load_lines(conn, entry.id)?;
@@ -416,6 +429,7 @@ pub(crate) fn load_entry(conn: &Connection, id: JournalEntryId) -> Result<Stored
         is_voided,
         posted_as,
         settles_entry_id,
+        settled_by_entry_id,
     })
 }
 
@@ -967,7 +981,8 @@ fn load_listed_headers(conn: &Connection, listed: &ListedEntries) -> Result<Vec<
                     lines: Vec::new(),
                     is_voided: is_voided != 0,
                     posted_as: stored_posted_as(OPERATION, row, 9)?,
-                    settles_entry_id: stored_settles(OPERATION, row, 11)?,
+                    settles_entry_id: stored_entry_link(OPERATION, row, 11, SETTLES_COLUMN)?,
+                    settled_by_entry_id: stored_entry_link(OPERATION, row, 12, SETTLED_BY_COLUMN)?,
                 })
             }))
         })
@@ -976,19 +991,29 @@ fn load_listed_headers(conn: &Connection, listed: &ListedEntries) -> Result<Vec<
     collect_rows(OPERATION, rows)
 }
 
-/// Reads the `journal_entries.settles_entry_id` column at `index`.
+/// The column a damaged `settles_entry_id` is reported under.
+const SETTLES_COLUMN: &str = "journal_entries.settles_entry_id";
+
+/// The column a damaged id of a settling payment is reported under: the
+/// payment's own id.
+const SETTLED_BY_COLUMN: &str = "journal_entries.id";
+
+/// Reads the optional entry id at `index`, which `column` names in a
+/// corruption report: `settles_entry_id`, or the id of the payment
+/// [`settled_by_sql`] selects.
 ///
 /// # Errors
 ///
-/// [`Error::VaultCorrupt`] naming the column when it holds a value that is
-/// not an id.
-fn stored_settles(
+/// [`Error::VaultCorrupt`] naming `column` when it holds a value that is not
+/// an id.
+fn stored_entry_link(
     operation: &'static str,
     row: &rusqlite::Row<'_>,
     index: usize,
+    column: &'static str,
 ) -> Result<Option<JournalEntryId>> {
     read_column::<Option<String>>(operation, row, index)?
-        .map(|text| stored_id("journal_entries.settles_entry_id", &text))
+        .map(|text| stored_id(column, &text))
         .transpose()
 }
 
@@ -1038,7 +1063,8 @@ fn stored_posted_as(
 /// The voided test looks, once per listed entry, for an entry that names it
 /// in `voided_by_entry_id`. The index `idx_entries_voided_by` answers that
 /// lookup; without it each one reads the whole table, and the listing takes
-/// time with the square of the number of entries.
+/// time with the square of the number of entries. The payment that settles
+/// a bill is found the same way, through `idx_entries_settles`.
 fn listed_headers_sql() -> String {
     format!(
         "
@@ -1049,11 +1075,12 @@ fn listed_headers_sql() -> String {
                        SELECT 1 FROM journal_entries voider
                        WHERE voider.voided_by_entry_id = je.id
                    ) AS is_voided,
-               je.kind, je.bill_status, je.settles_entry_id
+               je.kind, je.bill_status, je.settles_entry_id, {settled_by}
         FROM journal_entries je
         WHERE {LISTED_ENTRIES_PREDICATE}
         ORDER BY je.entry_date DESC, je.created_at DESC, je.rowid DESC
-        "
+        ",
+        settled_by = settled_by_sql(),
     )
 }
 
@@ -1383,7 +1410,10 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
     if view.is_voided {
         return Err(ValidationError::EntryAlreadyVoided.into());
     }
-    ensure_not_settled(conn, id)?;
+    // The same value the UI disables Edit and Delete by.
+    if view.settled_by_entry_id.is_some() {
+        return Err(ValidationError::BillSettled.into());
+    }
 
     let reverse_lines: Vec<PostJournalLine> = view
         .lines
@@ -1578,6 +1608,9 @@ mod tests {
     /// The index a lookup by `voided_by_entry_id` must go through.
     const VOID_LINK_INDEX: &str = "idx_entries_voided_by";
 
+    /// The index a lookup by `settles_entry_id` must go through.
+    const SETTLES_INDEX: &str = "idx_entries_settles";
+
     #[test]
     fn listing_entries_finds_the_void_link_through_its_index() {
         let conn = migrated_connection();
@@ -1586,6 +1619,16 @@ mod tests {
         let plan = query_plan(&conn, &listed_headers_sql(), &listed.bound());
 
         assert!(plan.contains(VOID_LINK_INDEX), "{plan}");
+    }
+
+    #[test]
+    fn listing_entries_finds_the_settling_payment_through_its_index() {
+        let conn = migrated_connection();
+        let listed = ListedEntries::new(EntityId::generate(), &EntryFilter::default());
+
+        let plan = query_plan(&conn, &listed_headers_sql(), &listed.bound());
+
+        assert!(plan.contains(SETTLES_INDEX), "{plan}");
     }
 
     #[test]

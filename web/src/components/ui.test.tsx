@@ -20,6 +20,9 @@ import {
   Select,
   TruncatedLabel,
 } from './ui'
+import { copyError } from '../lib/uiError'
+
+const badValue = copyError('date.invalid')
 
 afterEach(() => {
   cleanup()
@@ -27,19 +30,19 @@ afterEach(() => {
 
 describe('ErrorBanner', () => {
   test('renders nothing when there is no message or title', () => {
-    render(<ErrorBanner message={null} />)
+    render(<ErrorBanner error={null} />)
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
   test('announces the message via role="alert" and aria-live="assertive"', () => {
-    render(<ErrorBanner message="Something went wrong." />)
+    render(<ErrorBanner error={copyError('error.unknown')} />)
     const banner = screen.getByRole('alert')
     expect(banner).toHaveAttribute('aria-live', 'assertive')
     expect(banner).toHaveTextContent('Something went wrong.')
   })
 
   test('accepts an id so callers can wire aria-describedby to it', () => {
-    render(<ErrorBanner id="form-error" message="Bad value." />)
+    render(<ErrorBanner id="form-error" error={badValue} />)
     expect(screen.getByRole('alert')).toHaveAttribute('id', 'form-error')
   })
 })
@@ -47,10 +50,10 @@ describe('ErrorBanner', () => {
 describe('ErrorBanner dismissal', () => {
   test('offers a close button only when the owner can clear the message', async () => {
     const onDismiss = vi.fn()
-    const { rerender } = render(<ErrorBanner message="Bad value." />)
+    const { rerender } = render(<ErrorBanner error={badValue} />)
     expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
 
-    rerender(<ErrorBanner message="Bad value." onDismiss={onDismiss} />)
+    rerender(<ErrorBanner error={badValue} onDismiss={onDismiss} />)
     await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
 
     expect(onDismiss).toHaveBeenCalledTimes(1)

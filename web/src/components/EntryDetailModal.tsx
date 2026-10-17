@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import { Download, Eye, Paperclip, Pencil, Plus, Trash2 } from 'lucide-react'
 import {
   api,
@@ -9,7 +9,7 @@ import {
   type DocumentMeta,
   type PostedEntryView,
 } from '../lib/api'
-import { commandErrorMessage } from '../lib/commandError'
+import { commandFailure, copyError, type UiError } from '../lib/uiError'
 import { fileToBase64, formatBytes, mimeFromName } from '../lib/files'
 import { ConfirmDialog } from './ConfirmDialog'
 import { EntryHistory } from './EntryHistory'
@@ -33,9 +33,9 @@ type Props = {
   onEdit: (() => void) | null
   onView: (documentId: string) => void
   onChanged: () => Promise<void>
-  onError: (message: string) => void
+  onError: (error: UiError) => void
   /** The last failure of an action in this dialog, drawn at the top of it. */
-  error?: string | null
+  error?: UiError | null
 }
 
 /** Full journal view: lines with account names plus the attachments list. */
@@ -57,6 +57,7 @@ export function EntryDetailModal({
   const [hideBusy, setHideBusy] = useState(false)
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const settledReasonId = useId()
 
   if (!view) return null
   const entry = view.entry
@@ -71,7 +72,7 @@ export function EntryDetailModal({
     if (anyBusy) return
     // Resource guard only — the backend enforces the same cap.
     if (file.size > 8 * 1024 * 1024) {
-      onError(t('entry.fileTooLarge'))
+      onError(copyError('entry.fileTooLarge'))
       return
     }
     setAttachBusy(true)
@@ -86,7 +87,7 @@ export function EntryDetailModal({
       })
       await onChanged()
     } catch (err) {
-      onError(commandErrorMessage(err, 'entry.attachFailed'))
+      onError(commandFailure(err, 'entry.attachFailed'))
     } finally {
       setAttachBusy(false)
     }
@@ -101,7 +102,7 @@ export function EntryDetailModal({
       setDeleteId(null)
       await onChanged()
     } catch (err) {
-      onError(commandErrorMessage(err, 'entry.deleteFailed'))
+      onError(commandFailure(err, 'entry.deleteFailed'))
     } finally {
       setBusyId(null)
     }
@@ -115,7 +116,7 @@ export function EntryDetailModal({
       await api.entrySetHidden(view.entry.id, hidden)
       await onChanged()
     } catch (err) {
-      onError(commandErrorMessage(err, 'entry.updateFailed'))
+      onError(commandFailure(err, 'entry.updateFailed'))
     } finally {
       setHideBusy(false)
     }
@@ -127,7 +128,7 @@ export function EntryDetailModal({
     try {
       await api.documentExport(id)
     } catch (err) {
-      onError(commandErrorMessage(err, 'entry.exportFailed'))
+      onError(commandFailure(err, 'entry.exportFailed'))
     } finally {
       setBusyId(null)
     }
@@ -282,14 +283,50 @@ export function EntryDetailModal({
         <EntryHistory key={entry.id} entryId={entry.id} />
 
         {onEdit && (
-          <div className="flex justify-end border-t border-[var(--color-border)] pt-4">
-            <Button variant="secondary" disabled={anyBusy} onClick={onEdit}>
-              <Pencil className="size-3.5" />
-              {t('entry.edit')}
-            </Button>
-          </div>
+          <EditFooter
+            settled={view.settled_by_entry_id !== null}
+            reasonId={settledReasonId}
+            disabled={anyBusy}
+            onEdit={onEdit}
+          />
         )}
       </div>
     </Modal>
+  )
+}
+
+/**
+ * The Edit button. A bill a payment settles keeps it, disabled, with the reason
+ * beside it, so the user learns before editing that the payment goes first.
+ */
+function EditFooter({
+  settled,
+  reasonId,
+  disabled,
+  onEdit,
+}: {
+  settled: boolean
+  reasonId: string
+  disabled: boolean
+  onEdit: () => void
+}) {
+  const { t } = useI18n()
+  return (
+    <div className="flex items-center justify-end gap-3 border-t border-[var(--color-border)] pt-4">
+      {settled ? (
+        <p id={reasonId} className="mr-auto text-sm text-[var(--color-muted)]">
+          {t('error.billSettled')}
+        </p>
+      ) : null}
+      <Button
+        variant="secondary"
+        disabled={disabled || settled}
+        aria-describedby={settled ? reasonId : undefined}
+        onClick={onEdit}
+      >
+        <Pencil className="size-3.5" />
+        {t('entry.edit')}
+      </Button>
+    </div>
   )
 }

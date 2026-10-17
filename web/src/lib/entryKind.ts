@@ -10,3 +10,11 @@ export function amountTone(kind: ListedEntryKind): 'in' | 'out' | 'neutral' {
   if (kind === 'income') return 'in'
   return isMoneyOut(kind) ? 'out' : 'neutral'
 }
+
+/**
+ * The catalog key of what an entry is listed as. A bill a payment settles
+ * reads as paid, wherever entries are listed.
+ */
+export function listedKindKey(kind: ListedEntryKind, paid: boolean): string {
+  return paid ? 'entry.paidBill' : `kind.${kind}`
+}

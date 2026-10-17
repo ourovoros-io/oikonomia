@@ -154,7 +154,7 @@ fn posted_entry_view() {
         r#""22222222-2222-4222-8222-222222222222","wallet_account_id":"#,
         r#""66666666-6666-4666-8666-666666666666","payable_account_id":null,"#,
         r#""from_account_id":null,"to_account_id":null},"#,
-        r#""settles_entry_id":null}"#,
+        r#""settles_entry_id":null,"settled_by_entry_id":null}"#,
     ));
 }
 
@@ -351,7 +351,8 @@ fn recurring_post_result() {
         r#"{"entry":{"entry":{"id":"33333333-3333-4333-8333-333333333333","entity_id":"#,
         r#""11111111-1111-4111-8111-111111111111","entry_date":"2026-08-10","description":"#,
         r#""Power","reference":null,"status":"posted","hidden":false},"lines":[],"is_voided":"#,
-        r#"false,"listed_kind":"bill","simple_form":null,"settles_entry_id":null},"#,
+        r#"false,"listed_kind":"bill","simple_form":null,"settles_entry_id":null,"#,
+        r#""settled_by_entry_id":null},"#,
         r#""template":{"id":"#,
         r#""88888888-8888-4888-8888-888888888888","#,
         r#""entity_id":"#,

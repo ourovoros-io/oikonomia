@@ -256,6 +256,7 @@ function entry(
     // The demo never opens the edit form.
     simple_form: null,
     settles_entry_id: null,
+    settled_by_entry_id: null,
   }
 }
 

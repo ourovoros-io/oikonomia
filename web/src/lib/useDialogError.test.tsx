@@ -3,24 +3,29 @@
 import { act, renderHook } from '@testing-library/react'
 import { describe, expect, test } from 'vitest'
 
+import { copyError } from './uiError'
 import { useDialogError } from './useDialogError'
 
+const invalidAmount = copyError('tx.invalidAmount')
+const unreadable = copyError('tx.couldNotReadDoc')
+const saveFailed = copyError('error.saveFailed')
+
 describe('useDialogError', () => {
-  test('shows the message while its dialog is open', () => {
+  test('shows the error while its dialog is open', () => {
     const { result } = renderHook(({ open }) => useDialogError(open), {
       initialProps: { open: 'form' as string | null },
     })
 
-    act(() => result.current[1]('Enter a valid amount'))
+    act(() => result.current[1](invalidAmount))
 
-    expect(result.current[0]).toBe('Enter a valid amount')
+    expect(result.current[0]).toBe(invalidAmount)
   })
 
   test('closing the dialog clears it, and reopening starts clean', () => {
     const { result, rerender } = renderHook(({ open }) => useDialogError(open), {
       initialProps: { open: 'form' as string | null },
     })
-    act(() => result.current[1]('Enter a valid amount'))
+    act(() => result.current[1](invalidAmount))
 
     rerender({ open: null })
     expect(result.current[0]).toBeNull()
@@ -33,8 +38,8 @@ describe('useDialogError', () => {
     const { result, rerender } = renderHook(({ open }) => useDialogError(open), {
       initialProps: { open: null as string | null },
     })
-    act(() => result.current[1]('Could not read the file'))
-    expect(result.current[0]).toBe('Could not read the file')
+    act(() => result.current[1](unreadable))
+    expect(result.current[0]).toBe(unreadable)
 
     rerender({ open: 'form' })
 
@@ -45,11 +50,11 @@ describe('useDialogError', () => {
     const { result, rerender } = renderHook(({ open }) => useDialogError(open), {
       initialProps: { open: null as string | null },
     })
-    act(() => result.current[1]('Could not read the file', 'form'))
+    act(() => result.current[1](unreadable, 'form'))
 
     rerender({ open: 'form' })
 
-    expect(result.current[0]).toBe('Could not read the file')
+    expect(result.current[0]).toBe(unreadable)
   })
 
   test('a failure is shown where the person is looking when it arrives', () => {
@@ -59,8 +64,8 @@ describe('useDialogError', () => {
     const lateReport = result.current[1]
 
     rerender({ open: null })
-    act(() => lateReport('Could not save'))
+    act(() => lateReport(saveFailed))
 
-    expect(result.current[0]).toBe('Could not save')
+    expect(result.current[0]).toBe(saveFailed)
   })
 })

@@ -206,7 +206,7 @@ export default function QuickAddApp() {
         hidePanel()
       }, 1000)
     },
-    [hidePanel],
+    [hidePanel, t],
   )
 
   if (status === null) {

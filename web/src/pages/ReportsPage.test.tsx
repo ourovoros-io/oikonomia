@@ -550,6 +550,7 @@ describe('ReportsPage statements', () => {
       },
       total_assets: 100_00,
       total_liabilities_equity: 100_00,
+      hidden_entry_count: 0,
     }
     vi.mocked(api.reportBalanceSheet).mockResolvedValue(sheet)
     const user = userEvent.setup()
@@ -571,6 +572,7 @@ describe('ReportsPage statements', () => {
       equity: { lines: [], total: 20_00 },
       total_assets: 50_00,
       total_liabilities_equity: 20_00,
+      hidden_entry_count: 0,
     }
     vi.mocked(api.reportBalanceSheet).mockResolvedValue(sheet)
     const user = userEvent.setup()
@@ -591,6 +593,7 @@ describe('ReportsPage statements', () => {
       equity: { lines: [], total: 0 },
       total_assets: 0,
       total_liabilities_equity: 0,
+      hidden_entry_count: 0,
     })
     const user = userEvent.setup()
     render(<ReportsPage entity={entity} />)
@@ -681,6 +684,7 @@ describe('ReportsPage synthetic rows', () => {
       equity: { lines: [retained, netIncome], total: 100_00 },
       total_assets: 100_00,
       total_liabilities_equity: 100_00,
+      hidden_entry_count: 0,
     })
     const user = userEvent.setup()
     render(<ReportsPage entity={entity} />)
