@@ -475,3 +475,266 @@ describe('RecurringPage weekly and yearly start dates', () => {
     expect(screen.getByText('Next date: 14/10/2026')).toBeTruthy()
   })
 })
+
+describe('RecurringPage bill and income status', () => {
+  const withPayables: Account[] = [
+    ...accounts,
+    account({ id: 'bp1', name: 'Bills payable', account_type: 'liability', code: '2050' }),
+    account({ id: 'rcv1', name: 'Receivables', account_type: 'asset', code: '1200' }),
+  ]
+
+  beforeEach(() => {
+    vi.mocked(api.accountList).mockResolvedValue(withPayables)
+    vi.mocked(api.accountDefaults).mockResolvedValue({
+      ...DEFAULTS,
+      bills_payable: 'bp1',
+      receivable: 'rcv1',
+    })
+  })
+
+  async function openNewBill() {
+    await renderPage()
+    await userEvent.click(screen.getAllByRole('button', { name: 'New template' })[0])
+    await userEvent.click(await screen.findByRole('button', { name: 'Bill' }))
+    await userEvent.type(screen.getByPlaceholderText('e.g. Rent'), 'Power')
+    await userEvent.type(screen.getByRole('textbox', { name: /amount/i }), '40')
+  }
+
+  test('a new bill offers three statuses and saves an unpaid one with its payable', async () => {
+    await openNewBill()
+    const status = screen.getByLabelText('Bill status')
+    expect(within(status).getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'Paid now (from bank/card)',
+      'Unpaid — I owe this (bills payable)',
+      'Pay an existing unpaid bill',
+    ])
+
+    await userEvent.selectOptions(status, 'unpaid')
+    expect(screen.getByLabelText('Bills payable account')).toHaveValue('bp1')
+    expect(screen.queryByLabelText('Paid from')).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Save template' }))
+
+    await waitFor(() => {
+      expect(api.recurringCreate).toHaveBeenCalledTimes(1)
+    })
+    expect(vi.mocked(api.recurringCreate).mock.calls[0]?.[0]).toMatchObject({
+      kind: 'bill',
+      bill_status: 'unpaid',
+      category_account_id: 'exp1',
+      payable_account_id: 'bp1',
+    })
+  })
+
+  test('a payment of an existing bill says which bill each post settles', async () => {
+    await openNewBill()
+    await userEvent.selectOptions(screen.getByLabelText('Bill status'), 'pay_existing')
+
+    expect(
+      screen.getByText(/settles the oldest open bill on the bills payable account/),
+    ).toBeInTheDocument()
+    expect(screen.queryByLabelText('Bill category')).toBeNull()
+    expect(screen.getByLabelText('Pay from')).toHaveValue('w1')
+    await userEvent.click(screen.getByRole('button', { name: 'Save template' }))
+
+    await waitFor(() => {
+      expect(api.recurringCreate).toHaveBeenCalledTimes(1)
+    })
+    expect(vi.mocked(api.recurringCreate).mock.calls[0]?.[0]).toMatchObject({
+      kind: 'bill',
+      bill_status: 'pay_existing',
+      wallet_account_id: 'w1',
+      payable_account_id: 'bp1',
+    })
+  })
+
+  test('editing an unpaid bill opens on its stored status and payable', async () => {
+    const owed = template({
+      id: 'r3',
+      name: 'Power',
+      kind: 'bill',
+      bill_status: 'unpaid',
+      category_account_id: 'exp1',
+      wallet_account_id: null,
+      payable_account_id: 'bp1',
+    })
+    vi.mocked(api.recurringList).mockResolvedValue([owed])
+    await renderPage()
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit template' }))
+
+    expect(screen.getByLabelText('Bill status')).toHaveValue('unpaid')
+    expect(screen.getByLabelText('Bills payable account')).toHaveValue('bp1')
+    await userEvent.click(screen.getByRole('button', { name: 'Save template' }))
+
+    await waitFor(() => {
+      expect(api.recurringUpdate).toHaveBeenCalledTimes(1)
+    })
+    expect(vi.mocked(api.recurringUpdate).mock.calls[0]?.[0]).toMatchObject({
+      id: 'r3',
+      kind: 'bill',
+      bill_status: 'unpaid',
+      category_account_id: 'exp1',
+      payable_account_id: 'bp1',
+    })
+  })
+
+  test('editing an income still owed opens on its receivable and keeps it owed', async () => {
+    const invoiced = template({
+      id: 'r4',
+      name: 'Consulting',
+      kind: 'income',
+      bill_status: 'unpaid',
+      category_account_id: 'inc1',
+      wallet_account_id: null,
+      payable_account_id: 'rcv1',
+    })
+    vi.mocked(api.recurringList).mockResolvedValue([invoiced])
+    await renderPage()
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit template' }))
+
+    expect(screen.getByLabelText('Income status')).toHaveValue('unpaid')
+    expect(screen.getByLabelText('Receivable account')).toHaveValue('rcv1')
+    await userEvent.click(screen.getByRole('button', { name: 'Save template' }))
+
+    await waitFor(() => {
+      expect(api.recurringUpdate).toHaveBeenCalledTimes(1)
+    })
+    expect(vi.mocked(api.recurringUpdate).mock.calls[0]?.[0]).toMatchObject({
+      kind: 'income',
+      bill_status: 'unpaid',
+      category_account_id: 'inc1',
+      payable_account_id: 'rcv1',
+    })
+  })
+
+  test('posting a payment of an existing bill says which bill it settles', async () => {
+    const payment = template({
+      id: 'r5',
+      name: 'Power payment',
+      kind: 'bill',
+      bill_status: 'pay_existing',
+      category_account_id: null,
+      wallet_account_id: 'w1',
+      payable_account_id: 'bp1',
+    })
+    vi.mocked(api.recurringList).mockResolvedValue([payment])
+    await renderPage()
+    await userEvent.click(await screen.findByRole('button', { name: 'Post' }))
+
+    const dialog = await screen.findByRole('dialog')
+    expect(
+      within(dialog).getByText(/settles the oldest open bill on the bills payable account/),
+    ).toBeInTheDocument()
+    expect(within(dialog).getByText('Bills payable → Checking')).toBeInTheDocument()
+  })
+})
+
+describe('RecurringPage status fields keep and reset what they hold', () => {
+  const withPayables: Account[] = [
+    ...accounts,
+    account({ id: 'bp1', name: 'Bills payable', account_type: 'liability', code: '2050' }),
+    account({ id: 'rcv1', name: 'Receivables', account_type: 'asset', code: '1200' }),
+  ]
+
+  beforeEach(() => {
+    vi.mocked(api.accountList).mockResolvedValue(withPayables)
+    vi.mocked(api.accountDefaults).mockResolvedValue({
+      ...DEFAULTS,
+      bills_payable: 'bp1',
+      receivable: 'rcv1',
+    })
+  })
+
+  const payment = template({
+    id: 'r6',
+    name: 'Power payment',
+    kind: 'bill',
+    bill_status: 'pay_existing',
+    category_account_id: null,
+    wallet_account_id: 'w1',
+    payable_account_id: 'bp1',
+  })
+
+  test('editing a payment of an existing bill opens on its status and accounts', async () => {
+    vi.mocked(api.recurringList).mockResolvedValue([payment])
+    await renderPage()
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit template' }))
+
+    const status = screen.getByLabelText('Bill status')
+    expect(status).toHaveValue('pay_existing')
+    expect(status).toHaveAccessibleDescription(/settles the oldest open bill/)
+    expect(screen.queryByLabelText('Bill category')).toBeNull()
+    expect(screen.getByLabelText('Pay from')).toHaveValue('w1')
+    expect(screen.getByLabelText('Bills payable account')).toHaveValue('bp1')
+    await userEvent.click(screen.getByRole('button', { name: 'Save template' }))
+
+    await waitFor(() => {
+      expect(api.recurringUpdate).toHaveBeenCalledTimes(1)
+    })
+    expect(vi.mocked(api.recurringUpdate).mock.calls[0]?.[0]).toMatchObject({
+      kind: 'bill',
+      bill_status: 'pay_existing',
+      wallet_account_id: 'w1',
+      payable_account_id: 'bp1',
+    })
+  })
+
+  test('an owed income saves its receivable; received lists assets only', async () => {
+    await renderPage()
+    await userEvent.click(screen.getAllByRole('button', { name: 'New template' })[0])
+    await userEvent.click(await screen.findByRole('button', { name: 'Income' }))
+
+    const receivedInto = screen.getByLabelText('Received into')
+    const offered = within(receivedInto)
+      .getAllByRole('option')
+      .map((option) => option.getAttribute('value'))
+    expect(offered).toEqual(['w1', 'rcv1'])
+
+    await userEvent.selectOptions(screen.getByLabelText('Income status'), 'unpaid')
+    expect(screen.getByLabelText('Receivable account')).toHaveValue('rcv1')
+    await userEvent.type(screen.getByPlaceholderText('e.g. Rent'), 'Consulting')
+    await userEvent.type(screen.getByRole('textbox', { name: /amount/i }), '900')
+    await userEvent.click(screen.getByRole('button', { name: 'Save template' }))
+
+    await waitFor(() => {
+      expect(api.recurringCreate).toHaveBeenCalledTimes(1)
+    })
+    expect(vi.mocked(api.recurringCreate).mock.calls[0]?.[0]).toMatchObject({
+      kind: 'income',
+      bill_status: 'unpaid',
+      category_account_id: 'inc1',
+      payable_account_id: 'rcv1',
+    })
+  })
+
+  test('another kind starts again from its defaults, and so does New after an edit', async () => {
+    vi.mocked(api.recurringList).mockResolvedValue([payment])
+    await renderPage()
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit template' }))
+    expect(screen.getByLabelText('Bill status')).toHaveValue('pay_existing')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Income' }))
+    expect(screen.getByLabelText('Income status')).toHaveValue('received')
+    await userEvent.click(screen.getByRole('button', { name: 'Bill' }))
+    expect(screen.getByLabelText('Bill status')).toHaveValue('paid')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await userEvent.click(screen.getAllByRole('button', { name: 'New template' })[0])
+    await userEvent.click(await screen.findByRole('button', { name: 'Bill' }))
+    expect(screen.getByLabelText('Bill status')).toHaveValue('paid')
+    await userEvent.selectOptions(screen.getByLabelText('Bill status'), 'unpaid')
+    expect(screen.getByLabelText('Bills payable account')).toHaveValue('bp1')
+  })
+
+  test('a book with no liability says how to add a bills payable account', async () => {
+    vi.mocked(api.accountList).mockResolvedValue(accounts)
+    await renderPage()
+    await userEvent.click(screen.getAllByRole('button', { name: 'New template' })[0])
+    await userEvent.click(await screen.findByRole('button', { name: 'Bill' }))
+    await userEvent.selectOptions(screen.getByLabelText('Bill status'), 'unpaid')
+
+    const payable = screen.getByLabelText('Bills payable account')
+    expect(within(payable).getByRole('option', { name: 'No liability accounts — add one' }))
+      .toBeInTheDocument()
+    expect(screen.getByText(/add a liability named “Bills Payable”/)).toBeInTheDocument()
+  })
+})

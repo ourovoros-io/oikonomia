@@ -50,7 +50,15 @@ import { HiddenBadge, HiddenIncludedNote, HideFromExportControl } from '../compo
 import { Modal } from '../components/Modal'
 import { TopBar } from '../components/TopBar'
 import { csvImportAccountDefaults, mappingsEqual } from '../lib/csvImport'
-import { kindDefaultAccounts, lastAccountsMapKey } from '../lib/simpleEntry'
+import {
+  accountsOf,
+  formBillStatus,
+  kindDefaultAccounts,
+  lastAccountsMapKey,
+  type BillStatus,
+  type EntryKind,
+} from '../lib/simpleEntry'
+import { BillStatusFields, IncomeStatusFields } from '../components/StatusFields'
 import {
   AmountPill,
   Button,
@@ -82,11 +90,6 @@ type Props = {
   onNewEntryIntentHandled?: () => void
 }
 
-/** High-level entry kinds so users don't think in debit/credit. */
-type EntryKind = 'expense' | 'income' | 'bill' | 'transfer'
-
-type BillStatus = 'paid' | 'unpaid' | 'pay_existing'
-
 const NO_BILL_CHOICE: BillChoice = { kind: 'unchosen' }
 
 /**
@@ -97,10 +100,6 @@ function storedBillChoice(view: PostedEntryView): BillChoice {
   const form = view.simple_form
   if (form?.kind !== 'bill' || form.bill_status !== 'pay_existing') return NO_BILL_CHOICE
   return view.settles_entry_id ? { kind: 'bill', billId: view.settles_entry_id } : { kind: 'unlinked' }
-}
-
-function accountsOf(accounts: Account[], types: Account['account_type'][]): Account[] {
-  return accounts.filter((a) => a.is_active && types.includes(a.account_type))
 }
 
 export function TransactionsPage({
@@ -648,12 +647,6 @@ export function TransactionsPage({
     setPayableId(bill.payable_account_id)
   }
 
-  /** What the form tells Rust about payment state; only a bill or an unpaid income has one. */
-  function postedBillStatus(): BillStatus | null {
-    if (kind === 'bill') return billStatus
-    return kind === 'income' && incomeUnpaid ? 'unpaid' : null
-  }
-
   // What stops the form from posting, as a catalog key, and whether it is the
   // amount's fault. Native validation is off (its bubbles are English and
   // unstyled), so every required field is checked here.
@@ -695,7 +688,7 @@ export function TransactionsPage({
       const input = {
         entity_id: entity.id,
         kind,
-        bill_status: postedBillStatus(),
+        bill_status: formBillStatus(kind, billStatus, incomeUnpaid),
         entry_date: date,
         description: description.trim(),
         reference: reference.trim() || null,
@@ -1135,62 +1128,25 @@ export function TransactionsPage({
           ) : null}
 
           {kind === 'income' ? (
-            <>
-              <Field label={t('tx.incomeType')}>
-                <Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} required>
-                  {incomeAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} · {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <Field label={t('tx.incomeStatus')} className="sm:col-span-2 lg:col-span-3">
-                <Select
-                  value={incomeUnpaid ? 'unpaid' : 'received'}
-                  onChange={(e) => setIncomeUnpaid(e.target.value === 'unpaid')}
-                >
-                  <option value="received">{t('tx.incomeReceivedNow')}</option>
-                  <option value="unpaid">{t('tx.incomeUnpaid')}</option>
-                </Select>
-              </Field>
-              {incomeUnpaid ? (
-                <Field label={t('tx.receivableAccount')}>
-                  <Select value={payableId} onChange={(e) => setPayableId(e.target.value)} required>
-                    {assetAccounts.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.code} · {a.name}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-              ) : (
-                <Field label={t('tx.receivedInto')}>
-                  <Select value={walletId} onChange={(e) => setWalletId(e.target.value)} required>
-                    {assetAccounts.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.code} · {a.name}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-              )}
-            </>
+            <IncomeStatusFields
+              unpaid={incomeUnpaid}
+              onUnpaid={setIncomeUnpaid}
+              category={{ value: categoryId, onChange: setCategoryId, options: incomeAccounts }}
+              receivable={{ value: payableId, onChange: setPayableId, options: assetAccounts }}
+              wallet={{ value: walletId, onChange: setWalletId, options: assetAccounts }}
+              wide="sm:col-span-2 lg:col-span-3"
+            />
           ) : null}
 
           {kind === 'bill' ? (
-            <>
-              <Field label={t('tx.billStatus')} className="sm:col-span-2 lg:col-span-3">
-                <Select
-                  value={billStatus}
-                  onChange={(e) => chooseBillStatus(e.target.value as BillStatus)}
-                >
-                  <option value="paid">{t('tx.billPaidNow')}</option>
-                  <option value="unpaid">{t('tx.billUnpaid')}</option>
-                  <option value="pay_existing">{t('tx.billPayExisting')}</option>
-                </Select>
-              </Field>
-              {billStatus === 'pay_existing' ? (
+            <BillStatusFields
+              status={billStatus}
+              onStatus={chooseBillStatus}
+              category={{ value: categoryId, onChange: setCategoryId, options: expenseAccounts }}
+              wallet={{ value: walletId, onChange: setWalletId, options: walletAccounts }}
+              payable={{ value: payableId, onChange: setPayableId, options: payableAccounts }}
+              payableLocked={billPicked}
+              payment={
                 <BillPicker
                   entityId={entity.id}
                   correctingPaymentId={editId}
@@ -1200,58 +1156,9 @@ export function TransactionsPage({
                   onPick={pickBill}
                   onError={setError}
                 />
-              ) : null}
-              {billStatus !== 'pay_existing' ? (
-                <Field label={t('tx.billCategory')}>
-                  <Select
-                    value={categoryId}
-                    onChange={(e) => setCategoryId(e.target.value)}
-                    required
-                  >
-                    {expenseAccounts.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.code} · {a.name}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-              ) : null}
-              {billStatus === 'paid' || billStatus === 'pay_existing' ? (
-                <Field label={billStatus === 'paid' ? t('tx.paidFrom') : t('tx.payFrom')}>
-                  <Select value={walletId} onChange={(e) => setWalletId(e.target.value)} required>
-                    {walletAccounts.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.code} · {a.name}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-              ) : null}
-              {billStatus === 'unpaid' || billStatus === 'pay_existing' ? (
-                <Field label={t('tx.billsPayableAccount')}>
-                  <Select
-                    value={payableId}
-                    onChange={(e) => setPayableId(e.target.value)}
-                    disabled={billPicked}
-                    required
-                  >
-                    {payableAccounts.length === 0 ? (
-                      <option value="">{t('tx.noLiability')}</option>
-                    ) : null}
-                    {payableAccounts.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.code} · {a.name}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-              ) : null}
-              {payableAccounts.length === 0 && billStatus !== 'paid' ? (
-                <p className="text-xs text-[var(--color-muted)] sm:col-span-2 lg:col-span-3">
-                  {t('tx.billsPayableTip')}
-                </p>
-              ) : null}
-            </>
+              }
+              wide="sm:col-span-2 lg:col-span-3"
+            />
           ) : null}
 
           {kind === 'transfer' ? (

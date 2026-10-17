@@ -1048,7 +1048,8 @@
       "title": "„{name}“ buchen?",
       "body": "Es wird eine Journalbuchung aus der Vorlage geschrieben. Mehr wird nicht geplant.",
       "confirm": "Buchen",
-      "cancel": "Abbrechen"
+      "cancel": "Abbrechen",
+      "accounts": "Konten"
     },
     "form": {
       "titleNew": "Neue Vorlage",
@@ -1073,7 +1074,8 @@
       "cadenceYearly": "Jährlich",
       "dayOfWeek": "Wochentag",
       "month": "Monat",
-      "nextDate": "Nächstes Datum: {date}"
+      "nextDate": "Nächstes Datum: {date}",
+      "payExistingHint": "Bei jeder Buchung wird die älteste offene Rechnung auf dem Konto für offene Rechnungen beglichen, deren Betrag genau dem gebuchten Betrag entspricht. Gibt es keine, wird gebucht, ohne eine Rechnung zu begleichen."
     },
     "delete": {
       "title": "Vorlage löschen?",

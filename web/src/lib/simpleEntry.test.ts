@@ -3,6 +3,8 @@ import type { AccountDefaults } from './api'
 import { resetI18nForTests } from './i18n'
 import {
   buildSimpleEntryInput,
+  formBillStatus,
+  isBillStatus,
   kindDefaultAccounts,
   lastAccountsMapKey,
   validateTrayAccounts,
@@ -226,5 +228,31 @@ describe('validateTrayAccounts', () => {
         toId: 'a1',
       }),
     ).toBe('quickAdd.pickDifferentAccounts')
+  })
+})
+
+describe('formBillStatus', () => {
+  test('a bill sends its status as chosen', () => {
+    expect(formBillStatus('bill', 'paid', false)).toBe('paid')
+    expect(formBillStatus('bill', 'unpaid', true)).toBe('unpaid')
+    expect(formBillStatus('bill', 'pay_existing', false)).toBe('pay_existing')
+  })
+
+  test('an income sends unpaid only when it is owed, whatever the bill field holds', () => {
+    expect(formBillStatus('income', 'pay_existing', true)).toBe('unpaid')
+    expect(formBillStatus('income', 'unpaid', false)).toBeNull()
+  })
+
+  test('an expense and a transfer send no status', () => {
+    expect(formBillStatus('expense', 'unpaid', true)).toBeNull()
+    expect(formBillStatus('transfer', 'pay_existing', true)).toBeNull()
+  })
+})
+
+describe('isBillStatus', () => {
+  test('accepts the three statuses Rust names and nothing else', () => {
+    expect(['paid', 'unpaid', 'pay_existing'].every(isBillStatus)).toBe(true)
+    expect(isBillStatus('Paid')).toBe(false)
+    expect(isBillStatus('')).toBe(false)
   })
 })
