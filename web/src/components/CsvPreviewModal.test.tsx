@@ -215,7 +215,7 @@ describe('CsvPreviewModal category column', () => {
     const modal = (rows: CsvImportPreview['rows']) => (
       <CsvPreviewModal
         open
-        preview={{ source: 'bank.csv', headers: ['Date', 'Description', 'Amount'], rows }}
+        preview={{ source: 'bank.csv', headers, rows }}
         currency={{ code: 'EUR', decimals: 2 }}
         walletAccounts={[]}
         expenseAccounts={expenseAccounts}
@@ -235,7 +235,7 @@ describe('CsvPreviewModal category column', () => {
   })
 
   test('a re-render with the same preview keeps the picks', () => {
-    const preview = { source: 'bank.csv', headers: ['Date', 'Description', 'Amount'], rows: mixedRows }
+    const preview = { source: 'bank.csv', headers, rows: mixedRows }
     // The parent keeps one identity for its account lists, as TransactionsPage does.
     const wallets: Account[] = []
     const modal = (busy: boolean) => (
