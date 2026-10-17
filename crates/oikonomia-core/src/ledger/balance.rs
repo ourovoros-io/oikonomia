@@ -350,11 +350,11 @@ pub(crate) fn count_hidden_entries_as_of(
 ///
 /// The first set is [`count_hidden_pnl_entries`] over the window, the second
 /// the part of [`count_hidden_entries_as_of`] that reaches the assets total,
-/// so a hidden transfer between two liabilities is left out. Adding the two
-/// counts would count twice an expense paid from an asset in the window, so
-/// one query takes their union. Like the balance sheet's count it includes a
-/// transfer between two asset accounts, whose lines are in the total although
-/// they cancel.
+/// so a hidden transfer between two liabilities is left out. Summing the two
+/// counts would count an expense paid from an asset twice, so one query
+/// takes their union. Like the balance sheet's count it includes a transfer
+/// between two asset accounts, whose lines are in the total although they
+/// cancel.
 ///
 /// # Errors
 ///
@@ -366,27 +366,19 @@ pub(crate) fn count_hidden_dashboard_entries(
     to: Date,
     assets_as_of: Date,
 ) -> Result<usize> {
-    let touches = |account_types: &str| {
-        format!(
-            "EXISTS (
-                SELECT 1 FROM journal_lines jl
-                JOIN accounts a ON a.id = jl.account_id
-                WHERE jl.entry_id = je.id AND a.account_type IN ({account_types})
-            )"
-        )
-    };
-    let touches_pnl = touches("'income', 'expense'");
-    let touches_assets = touches("'asset'");
     let sql = format!(
         "
-        SELECT COUNT(1)
+        SELECT COUNT(DISTINCT je.id)
         FROM journal_entries je
+        JOIN journal_lines jl ON jl.entry_id = je.id
+        JOIN accounts a ON a.id = jl.account_id
         WHERE je.entity_id = ?1
           AND je.hidden = 1
           AND {ACTIVE_ENTRY_PREDICATE}
           AND (
-            (je.entry_date >= ?2 AND je.entry_date <= ?3 AND {touches_pnl})
-            OR (je.entry_date <= ?4 AND {touches_assets})
+            (a.account_type IN ('income', 'expense')
+              AND je.entry_date >= ?2 AND je.entry_date <= ?3)
+            OR (a.account_type = 'asset' AND je.entry_date <= ?4)
           )
         "
     );

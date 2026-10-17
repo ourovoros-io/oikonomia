@@ -215,9 +215,10 @@ pub struct DashboardSummary {
     /// previous net's size; `None` when the previous net is zero, when there
     /// is no previous window, or when the change does not fit in `i64`.
     pub net_vs_previous_bps: Option<i64>,
-    /// Hidden entries the figures above include, which an export leaves out:
-    /// those in the window on an income or expense account, and those
-    /// through the `assets_as_of` date on an asset account, each counted once.
+    /// Hidden entries behind `cash_like_assets`, `income` and `expenses`,
+    /// which an export leaves out: those in the window on an income or
+    /// expense account, and those through the `assets_as_of` date on an asset
+    /// account, each counted once.
     pub hidden_entry_count: usize,
 }
 
