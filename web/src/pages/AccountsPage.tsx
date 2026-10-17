@@ -119,16 +119,17 @@ const SET_BALANCE_CLASS = 'min-w-32 shrink-0'
 /**
  * What a confirmation says, kept as data and worded when drawn
  * (`accountNoticeText`), so a language switch re-words it. The saved balance
- * is kept in minor units, because the number is formatted per language too.
+ * is kept in minor units with its currency, because the number is formatted
+ * per language too.
  */
 type AccountNotice =
   | { kind: 'created'; code: string; name: string }
   | { kind: 'deactivated'; name: string }
   | { kind: 'reactivated'; name: string }
-  | { kind: 'balanceSaved'; name: string; minor: number }
+  | { kind: 'balanceSaved'; name: string; amountMinor: number; currency: Currency }
 
-/** The sentence for `notice` in the current language, with money in `currency`. */
-function accountNoticeText(notice: AccountNotice, currency: Currency): string {
+/** The sentence for `notice` in the current language. */
+function accountNoticeText(notice: AccountNotice): string {
   switch (notice.kind) {
     case 'created':
       return translate('accounts.form.created', { code: notice.code, name: notice.name })
@@ -139,7 +140,7 @@ function accountNoticeText(notice: AccountNotice, currency: Currency): string {
     case 'balanceSaved':
       return translate('accounts.balance.saved', {
         name: notice.name,
-        amount: formatMoney(notice.minor, currency),
+        amount: formatMoney(notice.amountMinor, notice.currency),
       })
   }
 }
@@ -340,7 +341,12 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
     setNotice(null)
     try {
       await api.accountSetOpeningBalance(balanceAccount.id, minor, balanceAsOf)
-      setNotice({ kind: 'balanceSaved', name: balanceAccount.name, minor })
+      setNotice({
+        kind: 'balanceSaved',
+        name: balanceAccount.name,
+        amountMinor: minor,
+        currency: bookCurrency(entity),
+      })
       setBalanceAccount(null)
       await reload()
     } catch (err) {
@@ -459,7 +465,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
       <ToastStack>
         <ErrorBanner className="" error={error} onDismiss={() => setError(null)} />
         <Notice
-          message={notice ? accountNoticeText(notice, bookCurrency(entity)) : null}
+          message={notice ? accountNoticeText(notice) : null}
           onDismiss={() => setNotice(null)}
         />
       </ToastStack>

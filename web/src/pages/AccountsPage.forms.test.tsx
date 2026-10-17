@@ -124,7 +124,7 @@ describe('AccountsPage notices', () => {
     expect(screen.getByRole('status')).toHaveTextContent(greek)
   })
 
-  test('a language switch re-formats the amount in a saved-balance notice', async () => {
+  test('a language switch re-words a saved-balance notice and re-formats its amount', async () => {
     const euro = { code: 'EUR', decimals: 2 }
     vi.mocked(api.accountList).mockResolvedValue([checking])
     vi.mocked(api.accountBalance).mockResolvedValue(0)
@@ -137,13 +137,16 @@ describe('AccountsPage notices', () => {
     const dialog = await screen.findByRole('dialog')
     const amount = within(dialog).getByRole('textbox', { name: /actual balance/i })
     await userEvent.type(amount, '1234.50{Enter}')
-    const english = formatMoney(123450, euro, 'en')
-    expect((await screen.findByRole('status')).textContent).toContain(english)
+    const notice = await screen.findByRole('status')
+    expect(notice.textContent).toContain(formatMoney(123450, euro, 'en'))
+    const english = notice.textContent
 
-    act(() => setLocale('de'))
+    act(() => setLocale('el'))
 
-    const german = formatMoney(123450, euro, 'de')
-    expect(german).not.toBe(english)
-    expect(screen.getByRole('status').textContent).toContain(german)
+    const greekAmount = formatMoney(123450, euro, 'el')
+    const greek = t('accounts.balance.saved', { name: 'Checking', amount: greekAmount })
+    expect(greekAmount).not.toBe(formatMoney(123450, euro, 'en'))
+    expect(greek).not.toBe(english)
+    expect(screen.getByRole('status').textContent).toBe(greek)
   })
 })
