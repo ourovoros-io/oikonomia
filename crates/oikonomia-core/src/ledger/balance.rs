@@ -345,10 +345,12 @@ pub(crate) fn count_hidden_entries_as_of(
 }
 
 /// Counts the hidden active entries a dashboard's figures include: those
-/// dated in `from..=to` that touch an income or expense account, and those
-/// dated through `assets_as_of` that touch an asset account.
+/// dated in `pnl_from..=to` that touch an income or expense account, and
+/// those dated through `assets_as_of` that touch an asset account.
 ///
-/// The first set is [`count_hidden_pnl_entries`] over the window, the second
+/// The dashboard starts `pnl_from` at its previous window's first day, so the
+/// range covers both the window's net and the comparison with the previous
+/// one. The first set is [`count_hidden_pnl_entries`] over that range, the second
 /// the part of [`count_hidden_entries_as_of`] that reaches the assets total,
 /// so a hidden transfer between two liabilities is left out. Summing the two
 /// counts would count an expense paid from an asset twice, so one query
@@ -362,7 +364,7 @@ pub(crate) fn count_hidden_entries_as_of(
 pub(crate) fn count_hidden_dashboard_entries(
     conn: &Connection,
     entity_id: EntityId,
-    from: Date,
+    pnl_from: Date,
     to: Date,
     assets_as_of: Date,
 ) -> Result<usize> {
@@ -388,7 +390,7 @@ pub(crate) fn count_hidden_dashboard_entries(
             &sql,
             rusqlite::params![
                 entity_id.to_string(),
-                format_date(from),
+                format_date(pnl_from),
                 format_date(to),
                 format_date(assets_as_of),
             ],

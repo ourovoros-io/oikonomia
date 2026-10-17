@@ -176,7 +176,7 @@ export type DashboardSummary = {
   top_expense: TopExpense | null
   /** Net against the previous period, in basis points of its size; null when that net is zero. */
   net_vs_previous_bps: number | null
-  /** Hidden entries in the window that the income and expenses include. From core. */
+  /** Hidden entries behind the assets, income, expenses and net vs previous. From core. */
   hidden_entry_count: number
 }
 
