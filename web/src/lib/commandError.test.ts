@@ -295,6 +295,12 @@ describe('command error localization', () => {
     expect(markup).toContain('“<b>posted</b>”')
   })
 
+  it('names the literal status column values a re-import accepts', () => {
+    expect(commandErrorMessage({ code: 'csv_invalid_status', message: 'raw', params: { value: 'void' } })).toBe(
+      '“void” is not a journal status. The “status” column must contain “posted” or “voided”.',
+    )
+  })
+
   it('fills the copy in from the error params', () => {
     expect(
       commandErrorMessage({
