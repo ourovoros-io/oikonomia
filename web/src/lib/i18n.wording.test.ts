@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { flattenMessages } from './i18n'
+import { applyLocale, flattenMessages, resetI18nForTests, t } from './i18n'
 import en from '../locales/en.json' with { type: 'json' }
 import el from '../locales/el.json' with { type: 'json' }
 import fr from '../locales/fr.json' with { type: 'json' }
@@ -18,6 +18,28 @@ describe('settled wording', () => {
     expect(catalogs.el['tx.form.kind.bill']).toBe('Τιμολόγιο')
     expect(catalogs.el['tx.form.kind.bill']).not.toBe(catalogs.el['app.nav.accounts'])
     expect(catalogs.el['kind.bill']).not.toBe(catalogs.el['app.nav.accounts'])
+  })
+
+  test('Greek calls a bill τιμολόγιο, keeping λογαριασμός for accounts', () => {
+    // Strings that also mention an account are left out: λογαριασμός is the right word for
+    // that half. «Πληρωτέοι λογαριασμοί» is the seeded liability account's name, which core
+    // writes, so a string naming that account keeps it.
+    const seededPayableName = /πληρωτέοι λογαριασμοί/giu
+    const billOnly = Object.entries(catalogs.en)
+      .filter(([, text]) => /\bbills?\b/iu.test(text) && !/\baccounts?\b/iu.test(text))
+      .map(([key]) => key)
+
+    applyLocale('el')
+    try {
+      const stray = billOnly.filter((key) =>
+        /λογαριασμ/iu.test(t(key).replace(seededPayableName, '')),
+      )
+
+      expect(billOnly.length).toBeGreaterThan(10)
+      expect(stray).toEqual([])
+    } finally {
+      resetI18nForTests()
+    }
   })
 
   test('German calls ledger rows Buchungen on every screen', () => {
