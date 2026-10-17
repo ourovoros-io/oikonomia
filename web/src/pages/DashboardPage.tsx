@@ -19,7 +19,7 @@ import {
   type PostedEntryView,
 } from '../lib/api'
 import { formatPercentFromBps } from '../lib/arc'
-import { amountTone, isMoneyOut } from '../lib/entryKind'
+import { amountTone, isMoneyOut, listedKindKey } from '../lib/entryKind'
 import { ArcTile } from '../components/Arc'
 import { CashFlowPulse } from '../components/CashFlowPulse'
 import { EntryKindBadge } from '../components/EntryKindBadge'
@@ -52,6 +52,8 @@ type ActivityRow = {
   description: string
   signedMinor: number
   kind: ListedEntryKind
+  /** A bill a payment settles. */
+  paid: boolean
 }
 
 /** One row of Recent activity, labelled with the kind core lists the entry as. */
@@ -64,6 +66,7 @@ function activityRow(view: PostedEntryView, locale: Locale): ActivityRow {
     description: view.entry.description,
     signedMinor: isMoneyOut(kind) ? -amount : amount,
     kind,
+    paid: view.settled_by_entry_id !== null,
   }
 }
 
@@ -293,7 +296,7 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
           <ul className="divide-y divide-[var(--color-border)]">
             {activity.map((row) => (
               <ListRow key={row.id}>
-                <EntryKindBadge kind={row.kind} />
+                <EntryKindBadge kind={row.kind} paid={row.paid} />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium text-[var(--color-fg)]">
                     {row.description}
@@ -301,7 +304,7 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
                   <div className="text-xs text-[var(--color-muted)] tabular-nums">
                     {row.date}
                     <span className="mx-1.5 text-[var(--color-border-strong)]">·</span>
-                    <span>{t(`kind.${row.kind}`)}</span>
+                    <span>{t(listedKindKey(row.kind, row.paid))}</span>
                   </div>
                 </div>
                 <AmountPill tone={amountTone(row.kind)}>

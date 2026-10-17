@@ -550,6 +550,7 @@
     }
   },
   "entry": {
+    "paidBill": "Rechnung, bezahlt",
     "kind": {
       "openingBalance": "Anfangssaldo",
       "other": "Journalbuchung"

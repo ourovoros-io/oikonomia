@@ -280,14 +280,21 @@ export function SettingsPage({
   }, [vaultPresent, archivedVersion, setError])
 
   // App bumps createBookIntent from the five empty-state CTAs. Pop the
-  // create-entity form open and scroll to it — scrollIntoView is undefined
-  // in jsdom, so guard it. Then tell App the intent was consumed, so a later
-  // remount of this page (main's key={active} tears Settings down on every
-  // navigation) does not replay a stale nonzero intent and reopen the
-  // dialog on every subsequent visit.
+  // create-entity form open while rendering, so no frame shows it closed;
+  // the intent is compared with the last one seen, zero included, because App
+  // sets it back to zero once handled and the next bump is 1 again.
+  const [seenIntent, setSeenIntent] = useState(0)
+  if (createBookIntent !== undefined && createBookIntent !== seenIntent) {
+    setSeenIntent(createBookIntent)
+    if (createBookIntent) setShowCreate(true)
+  }
+
+  // Then scroll to the form — scrollIntoView is undefined in jsdom, so guard
+  // it — and tell App the intent was consumed, so a later remount of this page
+  // (main's key={active} tears Settings down on every navigation) does not
+  // replay a stale nonzero intent and reopen the dialog on every visit.
   useEffect(() => {
     if (!createBookIntent) return
-    setShowCreate(true)
     newEntityAnchorRef.current?.scrollIntoView?.({ behavior: 'smooth' })
     onCreateBookIntentHandled?.()
   }, [createBookIntent, onCreateBookIntentHandled])
