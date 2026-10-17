@@ -339,7 +339,7 @@
       "countOne": "1 Buch",
       "countMany": "{n} Bücher",
       "new": "Neues Buch",
-      "emptyBody": "Nutzen Sie oben „Neues Buch“, um Ihr erstes Buch anzulegen.",
+      "emptyBody": "Legen Sie Ihr erstes Buch mit „Neues Buch“ an.",
       "open": "Öffnen",
       "deleteAria": "{name} löschen",
       "deleteTitle": "Löschen",
@@ -404,8 +404,8 @@
     }
   },
   "date": {
-    "placeholder": "TT/MM/JJJJ",
-    "invalid": "Geben Sie ein echtes Datum von 1900 bis 2100 ein, z. B. 25/12/2026.",
+    "placeholder": "TT.MM.JJJJ",
+    "invalid": "Geben Sie ein echtes Datum von 1900 bis 2100 ein, z. B. 25.12.2026.",
     "openCalendar": {
       "aria": "Kalender öffnen",
       "title": "Kalender"
@@ -833,8 +833,8 @@
       "from": "Von",
       "to": "Bis",
       "account": "Konto",
-      "fromAria": "Übersicht ab Datum",
-      "toAria": "Übersicht bis Datum",
+      "fromAria": "Buchungen ab Datum",
+      "toAria": "Buchungen bis Datum",
       "allAccounts": "Alle Konten"
     },
     "summary": {
@@ -902,7 +902,7 @@
       "badge": "Ausgeblendet"
     },
     "export": {
-      "whisper": "Der Export lässt ausgeblendete Zeilen weg. Gelöschte Buchungen sind enthalten, mit dem Status voided."
+      "whisper": "Der Export lässt ausgeblendete Zeilen weg. Gelöschte Buchungen sind enthalten und haben in der Spalte „status“ den Wert „voided“."
     },
     "void": {
       "title": "Buchung löschen?",
@@ -922,7 +922,7 @@
       "body": "Mit Ausgabe erfassen Sie Zahlungen, mit Einnahme das, was reinkommt, und mit Rechnung Strom, Nebenkosten oder offene Rechnungen.",
       "filtered": {
         "title": "Keine passenden Buchungen",
-        "body": "Keine Buchung passt zur Suche oder zu den Filtern."
+        "body": "Keine Buchung passt zur Suche, zum Zeitraum oder zum Konto."
       }
     },
     "row": {
@@ -972,12 +972,15 @@
       "applySelected": "Auf Auswahl anwenden",
       "selectAll": "Alle importierbaren Zeilen auswählen",
       "selectRow": "Zeile {n} auswählen",
+      "rowCategory": "Kategorie für Zeile {n}",
+      "chooseCategory": "Kategorie wählen",
       "col": {
         "date": "Datum",
         "description": "Beschreibung",
         "amount": "Betrag",
         "type": "Art",
-        "note": "Notiz"
+        "note": "Notiz",
+        "category": "Kategorie"
       },
       "kind": {
         "expense": "Ausgabe",
@@ -1101,7 +1104,7 @@
     "csvMissingHeader": "Diese CSV-Datei hat keine Kopfzeile. Die erste Zeile muss die Spalten benennen.",
     "csvJournalExport": "Diese Datei ist ein Journal-Export von Oikonomia. Sie enthält Journalzeilen statt der Umsätze eines Kontos und lässt sich nicht als Kontoauszug importieren. Importieren Sie stattdessen eine CSV-Datei Ihrer Bank.",
     "csvMissingColumn": "Diese Journal-CSV-Datei hat keine Spalte „{column}“. Verwenden Sie eine aus Oikonomia exportierte Datei mit allen ihren Spalten.",
-    "csvInvalidStatus": "„{value}“ ist kein Journalstatus. Der Status muss posted oder voided sein.",
+    "csvInvalidStatus": "„{value}“ ist kein Journalstatus. Die Spalte „status“ muss „posted“ oder „voided“ enthalten.",
     "csvInvalidInteger": "„{value}“ ist keine ganze Zahl. Eine Journal-CSV-Datei enthält Beträge als ganze Zahlen in der kleinsten Währungseinheit (etwa Cent), zum Beispiel 1250 für 12,50.",
     "csvInvalidMapping": "Diese Spaltenauswahl konnte nicht verwendet werden. Prüfen Sie die Spalten und versuchen Sie es erneut.",
     "csvMapping": {

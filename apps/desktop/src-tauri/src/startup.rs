@@ -41,8 +41,9 @@ pub(crate) enum StartupError {
     /// The idle auto-lock thread could not be started.
     #[error("cannot start the auto-lock thread")]
     Watchdog(#[source] std::io::Error),
-    /// The tray or a plugin could not be set up.
-    #[error("cannot set up the tray or a plugin")]
+    /// A plugin could not be set up. A missing tray is not a failed start
+    /// ([`crate::tray::install`]).
+    #[error("cannot set up a plugin")]
     Shell(#[source] tauri::Error),
 }
 

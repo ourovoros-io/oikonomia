@@ -81,6 +81,7 @@ The earlier reviewer flagged these as doubtful.
 | `error.csvJournalExport` | That file is an Oikonomia journal export. It lists journal lines, not one account’s movements, so it cannot be imported as a bank statement. Import a CSV from your bank instead. | Αυτό το αρχείο είναι εξαγωγή ημερολογίου του Oikonomia. Περιέχει γραμμές ημερολογίου και όχι κινήσεις ενός λογαριασμού, οπότε δεν μπορεί να εισαχθεί ως κίνηση τράπεζας. Εισαγάγετε ένα CSV από την τράπεζά σας. | |
 | `error.csvMissingColumn` | That journal CSV has no “{column}” column. Use a file exported from Oikonomia with all its columns. | Αυτό το CSV ημερολογίου δεν έχει στήλη «{column}». Χρησιμοποιήστε ένα αρχείο εξαγωγής του Oikonomia με όλες τις στήλες του. | |
 | `error.csvInvalidInteger` | “{value}” is not a whole number. A journal CSV holds amounts as whole minor units, such as 1250 for 12.50. | Το «{value}» δεν είναι ακέραιος αριθμός. Ένα CSV ημερολογίου περιέχει τα ποσά ως ακέραιες μονάδες υποδιαίρεσης του νομίσματος (π.χ. λεπτά), όπως 1250 για 12,50. | |
+| `error.csvInvalidStatus` | “{value}” is not a journal status. The “status” column must contain “posted” or “voided”. | Το «{value}» δεν είναι κατάσταση ημερολογίου. Η στήλη «status» πρέπει να έχει την τιμή «posted» ή «voided». | |
 | `error.role.receivable` | Receivable account | Λογαριασμός απαιτήσεων | |
 
 ### Other (analyze)
@@ -178,7 +179,7 @@ The earlier reviewer flagged these as doubtful.
 | --- | --- | --- | --- |
 | `tx.form.kind.bill` | Bill | Τιμολόγιο | |
 | `tx.form.referencePlaceholder` | Invoice #, bill #… | Αρ. τιμολογίου… | |
-| `tx.export.whisper` | Export omits hidden rows. Deleted entries are included, marked voided. | Η εξαγωγή παραλείπει τις κρυφές γραμμές. Οι διαγραμμένες εγγραφές περιλαμβάνονται, με την ένδειξη voided. | |
+| `tx.export.whisper` | Export omits hidden rows. Deleted entries are included, with “voided” in the “status” column. | Η εξαγωγή παραλείπει τις κρυφές γραμμές. Οι διαγραμμένες εγγραφές περιλαμβάνονται, με την τιμή «voided» στη στήλη «status». | |
 | `tx.csv.field.direction` | Debit/credit indicator | Ένδειξη Χ/Π | |
 | `tx.csv.field.directionOptional` | Debit/credit indicator (optional) | Ένδειξη Χ/Π (προαιρετικό) | |
 | `tx.csv.otherCurrency` | Some amounts are marked “{marker}”, but this book is in {currency}. Check that the file is in {currency} before you post. | Ορισμένα ποσά φέρουν την ένδειξη «{marker}», ενώ αυτό το βιβλίο είναι σε {currency}. Ελέγξτε ότι το αρχείο είναι σε {currency} πριν την καταχώριση. | |

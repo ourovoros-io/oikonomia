@@ -6,9 +6,10 @@
 //! always-on-top companion for posting one entry without opening the main
 //! window. The tray menu, which the platform shows on a right click, offers
 //! "Open Oikonomia" and "Quit Oikonomia". Closing the main window hides
-//! it (on Linux, minimizes it; `on_window_event` in `lib.rs`), so the menu is
-//! how it comes back and, with the system's own quit shortcut, how the app
-//! exits.
+//! it while the tray is usable ([`is_usable`]; `CloseAction` in `lib.rs`),
+//! so the menu is how it comes back and, with the system's own quit
+//! shortcut, how the app exits. Without a usable tray, closing the main
+//! window quits, except on macOS, where the Dock icon brings it back.
 //!
 //! # Linux
 //!
@@ -32,6 +33,9 @@
 //! and the backup dialog's file filter. They follow the stored language, and
 //! [`apply_locale`] rewords the live tray after a change.
 
+#[cfg(target_os = "linux")]
+mod status_notifier;
+
 use oikonomia_core::prefs::{Locale, load_ui_prefs};
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem};
@@ -43,9 +47,17 @@ use tauri::{AppHandle, Manager, PhysicalPosition, WebviewUrl};
 /// (libayatana-appindicator) only ever shows the menu.
 const TRAY_REPORTS_CLICKS: bool = !cfg!(target_os = "linux");
 
+/// The directory, inside the app's cache directory, that the Linux tray
+/// writes its icon image into.
+#[cfg(target_os = "linux")]
+const TRAY_ICON_DIR: &str = "tray";
+
 /// The window label of the quick-add window. The frontend tells the two
 /// windows apart by it.
 const QUICK_ADD_LABEL: &str = "quick-add";
+
+/// The window label of the main window, from `tauri.conf.json`.
+pub(crate) const MAIN_WINDOW_LABEL: &str = "main";
 
 // Sizes of the quick-add window in logical pixels. The frontend resizes the
 // window between them at runtime with its own copies, the `QUICK_ADD_*`
@@ -244,7 +256,7 @@ pub(crate) fn show_main_window(app: &AppHandle) {
         return;
     }
 
-    let Some(window) = app.get_webview_window("main") else {
+    let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
         return;
     };
 
@@ -488,6 +500,74 @@ pub(crate) fn show_quick_add(app: &AppHandle, click: Option<PhysicalPosition<f64
     }
 }
 
+/// Whether the tray icon was created at start. Managed state, set once by
+/// [`install`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TrayStatus {
+    /// The icon was created.
+    Created,
+    /// Creating the icon failed, and the app runs without one.
+    Missing,
+}
+
+impl TrayStatus {
+    /// Returns the status that the outcome of [`init`] leaves, logging a
+    /// failure as a warning.
+    fn after(outcome: tauri::Result<()>) -> Self {
+        match outcome {
+            Ok(()) => Self::Created,
+            Err(err) => {
+                log::warn!("starting without a tray icon: {err}");
+                Self::Missing
+            }
+        }
+    }
+}
+
+/// Creates the tray icon and records whether it exists as the managed
+/// [`TrayStatus`].
+///
+/// A tray that cannot be created does not stop the start: the main window
+/// does not need it. Creating it returns an error when its menu or icon
+/// cannot be made or, on Linux, its icon file cannot be written. A system
+/// without the appindicator library is not covered: tray-icon panics then
+/// (libappindicator-sys), and the start still fails
+/// (<https://github.com/ourovoros-io/oikonomia/issues/206>).
+pub(crate) fn install(app: &tauri::App, locale: Locale) {
+    app.manage(TrayStatus::after(init(app, locale)));
+}
+
+/// Returns whether the tray can bring a hidden main window back: the icon
+/// was created and the desktop shows it.
+///
+/// Before [`install`] has run, or after a failed start, there is no tray. On
+/// Linux this asks the session bus each time it is called
+/// (`status_notifier`); call it only when the answer is needed.
+pub(crate) fn is_usable(app: &AppHandle) -> bool {
+    let status = app.try_state::<TrayStatus>().map(|status| *status);
+    usable(status, desktop_shows_tray)
+}
+
+/// Returns whether a tray with `status`, `None` when none was installed, is
+/// usable. `desktop_shows_tray` is called only for a tray that was created.
+fn usable(status: Option<TrayStatus>, desktop_shows_tray: impl FnOnce() -> bool) -> bool {
+    status == Some(TrayStatus::Created) && desktop_shows_tray()
+}
+
+/// Returns whether the desktop shows the tray icon: on Linux, whether a
+/// `StatusNotifier` host is registered.
+#[cfg(target_os = "linux")]
+fn desktop_shows_tray() -> bool {
+    status_notifier::host_registered()
+}
+
+/// Returns whether the desktop shows the tray icon: always, on Windows and
+/// macOS.
+#[cfg(not(target_os = "linux"))]
+fn desktop_shows_tray() -> bool {
+    true
+}
+
 /// Creates the tray icon, with its menu and its click handler.
 ///
 /// The menu is worded in `locale`. A left click opens the quick-add window
@@ -496,8 +576,9 @@ pub(crate) fn show_quick_add(app: &AppHandle, click: Option<PhysicalPosition<f64
 /// # Errors
 ///
 /// Returns Tauri's error when the menu, the icon image or the tray itself
-/// cannot be created. The caller fails startup.
-pub(crate) fn init(app: &tauri::App, locale: Locale) -> tauri::Result<()> {
+/// cannot be created, or when the system names no cache directory for the
+/// Linux icon file.
+fn init(app: &tauri::App, locale: Locale) -> tauri::Result<()> {
     let menu = build_menu(app, locale)?;
 
     let tray = TrayIconBuilder::with_id("main")
@@ -535,6 +616,12 @@ pub(crate) fn init(app: &tauri::App, locale: Locale) -> tauri::Result<()> {
         tray
     };
 
+    // The Linux tray reads its icon from a file. Without a directory of its
+    // own, tray-icon writes it to `$XDG_RUNTIME_DIR/tray-icon`, else to the
+    // shared `/tmp/tray-icon`, which another user may already own.
+    #[cfg(target_os = "linux")]
+    let tray = tray.temp_dir_path(app.path().app_cache_dir()?.join(TRAY_ICON_DIR));
+
     tray.build(app)?;
 
     Ok(())
@@ -569,6 +656,37 @@ mod tests {
         assert_eq!(tray_tooltip(Locale::El), "Oikonomia");
         assert_eq!(tray_tooltip(Locale::Fr), "Oikonomia");
         assert_eq!(tray_tooltip(Locale::De), "Oikonomia");
+    }
+
+    #[test]
+    fn a_tray_that_cannot_be_created_is_recorded_as_missing_not_raised() {
+        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+
+        assert_eq!(
+            TrayStatus::after(Err(tauri::Error::Io(denied))),
+            TrayStatus::Missing
+        );
+        assert_eq!(TrayStatus::after(Ok(())), TrayStatus::Created);
+    }
+
+    #[test]
+    fn only_a_created_tray_the_desktop_shows_is_usable() {
+        assert!(usable(Some(TrayStatus::Created), || true));
+        assert!(!usable(Some(TrayStatus::Created), || false));
+    }
+
+    #[test]
+    fn a_missing_or_never_installed_tray_is_not_usable_and_the_desktop_is_not_asked() {
+        for status in [None, Some(TrayStatus::Missing)] {
+            let asked = std::cell::Cell::new(false);
+            let is_usable = usable(status, || {
+                asked.set(true);
+                true
+            });
+
+            assert!(!is_usable, "{status:?}");
+            assert!(!asked.get(), "{status:?}");
+        }
     }
 
     /// Returns the number in the web source's `export const <name> = <number>`

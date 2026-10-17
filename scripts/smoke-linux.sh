@@ -6,8 +6,7 @@
 #   - the app starts and draws a real window;
 #   - typing a password creates the encrypted vault, owner-only;
 #   - a second launch exits and leaves one process (single instance);
-#   - closing the window takes it off screen (minimized on Linux) and keeps the app alive;
-#   - launching again brings the hidden window back;
+#   - with no tray to bring it back, closing the window quits the app;
 #   - the vault directory is created owner-only under XDG_DATA_HOME, with the vault.
 #
 # Needs: xvfb, openbox, xdotool, wmctrl, imagemagick, dbus-x11.
@@ -84,13 +83,7 @@ window_is_painted() {
   colours="$(identify -format '%k' "$screenshot" 2>/dev/null)" || return 1
   [ "$colours" -ge "$MIN_DISTINCT_COLOURS" ]
 }
-window_is_hidden() { [ -z "$(visible_window)" ]; }
 app_has_exited() { [ "$(process_count)" -eq 0 ]; }
-
-stop_app() {
-  pkill -x "$PROCESS_NAME" 2>/dev/null || true
-  wait_until "the app has exited" app_has_exited
-}
 
 # smoke <name> <launch command...>
 smoke() {
@@ -148,17 +141,11 @@ smoke() {
   [ "$(process_count)" -eq 1 ] \
     || fail "$name: expected one process after a second launch, found $(process_count)"
 
+  # The private session bus has no StatusNotifier watcher, so no tray is
+  # shown and nothing could bring a hidden window back: closing must quit.
   wmctrl -c 'Oikonomia'
-  wait_until "$name takes its window off screen on close" window_is_hidden
-  [ "$(process_count)" -eq 1 ] || fail "$name quit when its window was closed"
+  wait_until "$name quits when its window is closed with no tray" app_has_exited
 
-  timeout "$LAUNCH_TIMEOUT" "$@" >"$out/$name-reopen.log" 2>&1 \
-    || fail "$name: the reopening launch did not exit cleanly"
-  wait_until "$name shows its window again" window_is_visible
-  [ "$(process_count)" -eq 1 ] \
-    || fail "$name: expected one process after reopening, found $(process_count)"
-
-  stop_app
   echo "$name ok"
 }
 
@@ -182,4 +169,4 @@ chmod +x "${appimages[0]}"
 export APPIMAGE_EXTRACT_AND_RUN=1
 smoke appimage "$PWD/${appimages[0]}"
 
-echo "smoke ok: the .deb and the AppImage start, draw, stay single, and come back from hidden"
+echo "smoke ok: the .deb and the AppImage start, draw, stay single, and quit on close with no tray"

@@ -67,5 +67,11 @@ tauri = { version = "2.11.2", features = ["test"] }
 [target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2.5.2"
 
+# Asks the session bus whether the desktop shows tray icons
+# (`tray/status_notifier.rs`). tauri-plugin-single-instance already builds
+# zbus with its default features on Linux, so this adds no crate.
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = "=5.19.0"
+
 [lints]
 workspace = true

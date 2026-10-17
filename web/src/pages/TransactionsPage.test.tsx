@@ -296,6 +296,16 @@ beforeEach(() => {
   vi.mocked(api.cashFlowSeries).mockReset().mockResolvedValue(series)
 })
 
+/** Stands in for Rust's date predicates over the August pair of entries. */
+function datedEntryList() {
+  vi.mocked(api.entryList).mockImplementation(async (_entityId, opts) =>
+    [postedEntry, incomeEntry].filter(
+      ({ entry }) =>
+        (!opts?.from || entry.entry_date >= opts.from) && (!opts?.to || entry.entry_date <= opts.to),
+    ),
+  )
+}
+
 async function renderReady() {
   render(<TransactionsPage entity={entity} />)
   await waitFor(() => {
@@ -466,6 +476,42 @@ describe('TransactionsPage CSV toolbar', () => {
     expect(amountField).not.toHaveAttribute('aria-invalid')
   })
 
+  test('switching the type clears the error but keeps what was typed', async () => {
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'New Entry' }))
+    const amountField = await screen.findByRole('textbox', { name: /amount/i })
+    await userEvent.type(screen.getByLabelText(/description/i), 'Coffee')
+    await userEvent.type(amountField, '0')
+    await userEvent.click(screen.getByRole('button', { name: 'Save entry' }))
+    await waitFor(() => {
+      expect(amountField).toHaveAttribute('aria-invalid', 'true')
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Transfer' }))
+
+    expect(screen.queryByText('The amount must be greater than zero.')).toBeNull()
+    expect(amountField).not.toHaveAttribute('aria-invalid')
+    expect(amountField).toHaveValue('0')
+    expect(screen.getByLabelText(/description/i)).toHaveValue('Coffee')
+  })
+
+  test('clicking the type already chosen keeps the error', async () => {
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'New Entry' }))
+    const amountField = await screen.findByRole('textbox', { name: /amount/i })
+    await userEvent.type(screen.getByLabelText(/description/i), 'Coffee')
+    await userEvent.type(amountField, '0')
+    await userEvent.click(screen.getByRole('button', { name: 'Save entry' }))
+    await waitFor(() => {
+      expect(amountField).toHaveAttribute('aria-invalid', 'true')
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Expense' }))
+
+    expect(amountField).toHaveAttribute('aria-invalid', 'true')
+    expect(amountField).toHaveAccessibleDescription('The amount must be greater than zero.')
+  })
+
   test('a failed save is explained inside the dialog and gone after Cancel', async () => {
     await renderReady()
     await userEvent.click(screen.getByRole('button', { name: 'New Entry' }))
@@ -531,7 +577,7 @@ describe('TransactionsPage hidden paint', () => {
     vi.mocked(api.entryList).mockResolvedValue([postedEntry, hiddenEntry])
     await renderReady()
     expect(screen.getByText('1 posted · 1 hidden · EUR')).toBeTruthy()
-    expect(screen.getByText('Export omits hidden rows. Deleted entries are included, marked voided.')).toBeTruthy()
+    expect(screen.getByText('Export omits hidden rows. Deleted entries are included, with “voided” in the “status” column.')).toBeTruthy()
     expect(screen.getByText('Hidden')).toBeTruthy()
     expect(screen.getByText('ATM cash')).toBeTruthy()
     expect(screen.queryByRole('checkbox', { name: /include hidden/i })).toBeNull()
@@ -547,7 +593,7 @@ describe('TransactionsPage hidden paint', () => {
       expect(screen.getByText('Κρυφή')).toBeTruthy()
     })
     expect(screen.getByText('0 καταχωρισμένα · 1 κρυφά · EUR')).toBeTruthy()
-    expect(screen.getByText('Η εξαγωγή παραλείπει τις κρυφές γραμμές. Οι διαγραμμένες εγγραφές περιλαμβάνονται, με την ένδειξη voided.')).toBeTruthy()
+    expect(screen.getByText('Η εξαγωγή παραλείπει τις κρυφές γραμμές. Οι διαγραμμένες εγγραφές περιλαμβάνονται, με την τιμή «voided» στη στήλη «status».')).toBeTruthy()
   })
 
   test('detail Hide checkbox calls entry_set_hidden', async () => {
@@ -1286,7 +1332,7 @@ describe('TransactionsPage summary', () => {
   test('the dates narrow the summary', async () => {
     await renderReady()
 
-    await userEvent.type(screen.getByLabelText('Summary from date'), '01/08/2026')
+    await userEvent.type(screen.getByLabelText('Entries from date'), '01/08/2026')
     await userEvent.tab()
 
     await waitFor(() => {
@@ -1294,30 +1340,112 @@ describe('TransactionsPage summary', () => {
     })
   })
 
-  test('the dates leave the entry list whole, and do not fetch it again', async () => {
-    vi.mocked(api.entryList).mockResolvedValue([])
+  test('the dates narrow the entry list, and fetch the summary once', async () => {
+    datedEntryList()
     await renderReady()
-    await waitFor(() => expect(api.entryList).toHaveBeenCalled())
-    const listFetches = vi.mocked(api.entryList).mock.calls.length
+    await screen.findByText('CLIENT INVOICE')
+    const summaryFetches = vi.mocked(api.cashFlowSeries).mock.calls.length
 
-    await userEvent.type(screen.getByLabelText('Summary from date'), '01/08/2026')
+    await userEvent.type(screen.getByLabelText('Entries from date'), '12/08/2026')
     await userEvent.tab()
 
     await waitFor(() => {
-      expect(api.cashFlowSeries).toHaveBeenLastCalledWith('e1', '2026-08-01', null)
+      expect(api.entryList).toHaveBeenLastCalledWith('e1', expect.objectContaining({ from: '2026-08-12', to: undefined }))
     })
-    expect(api.entryList).toHaveBeenCalledTimes(listFetches)
-    for (const [, filters] of vi.mocked(api.entryList).mock.calls) {
-      expect(filters?.from).toBeUndefined()
-      expect(filters?.to).toBeUndefined()
-    }
-    // An empty book under a date choice is still an empty book, not a failed search.
-    expect(screen.queryByText('No matching entries')).toBeNull()
+    await waitFor(() => expect(screen.queryByText('CLIENT INVOICE')).toBeNull())
+    expect(screen.getByText('Alpha supermarket')).toBeInTheDocument()
+    expect(screen.getByText('1 posted · 0 hidden · EUR')).toBeInTheDocument()
+    expect(api.cashFlowSeries).toHaveBeenCalledTimes(summaryFetches + 1)
+    // The search and account note would wrongly say the dates leave the summary whole.
+    expect(screen.queryByText("The account and search filters don’t change this summary.")).toBeNull()
+  })
+
+  test('a window with no entries says no entry matches, not that the book is empty', async () => {
+    datedEntryList()
+    await renderReady()
+    await screen.findByText('CLIENT INVOICE')
+
+    await userEvent.type(screen.getByLabelText('Entries from date'), '01/10/2026')
+    await userEvent.tab()
+    await userEvent.type(screen.getByLabelText('Entries to date'), '31/10/2026')
+    await userEvent.tab()
+
+    await waitFor(() => {
+      expect(api.entryList).toHaveBeenLastCalledWith('e1', expect.objectContaining({ from: '2026-10-01', to: '2026-10-31' }))
+    })
+    expect(await screen.findByText('No matching entries')).toBeInTheDocument()
+    expect(screen.queryByText('Alpha supermarket')).toBeNull()
+  })
+
+  test('clearing the dates brings the whole list back', async () => {
+    datedEntryList()
+    await renderReady()
+    await screen.findByText('CLIENT INVOICE')
+    const from = screen.getByLabelText('Entries from date')
+    await userEvent.type(from, '12/08/2026')
+    await userEvent.tab()
+    await waitFor(() => expect(screen.queryByText('CLIENT INVOICE')).toBeNull())
+
+    await userEvent.clear(from)
+    await userEvent.tab()
+
+    expect(await screen.findByText('CLIENT INVOICE')).toBeInTheDocument()
+    expect(api.entryList).toHaveBeenLastCalledWith('e1', expect.objectContaining({ from: undefined, to: undefined }))
+  })
+
+  test('a slow list for an older date choice never replaces the newer one', async () => {
+    datedEntryList()
+    await renderReady()
+    await screen.findByText('CLIENT INVOICE')
+    let finishStale: (views: PostedEntryView[]) => void = () => undefined
+    vi.mocked(api.entryList).mockImplementationOnce(
+      () => new Promise((resolve) => (finishStale = resolve)),
+    )
+    const from = screen.getByLabelText('Entries from date')
+    await userEvent.type(from, '12/08/2026')
+    await userEvent.tab()
+    await userEvent.clear(from)
+    await userEvent.tab()
+    await waitFor(() => {
+      expect(api.entryList).toHaveBeenLastCalledWith('e1', expect.objectContaining({ from: undefined }))
+    })
+    // Let the newer list land first, so the stale one truly arrives last.
+    await act(async () => {})
+
+    await act(async () => finishStale([postedEntry]))
+
+    expect(screen.getByText('CLIENT INVOICE')).toBeInTheDocument()
+  })
+
+  test('a failure of an overtaken list request shows no error', async () => {
+    datedEntryList()
+    await renderReady()
+    await screen.findByText('CLIENT INVOICE')
+    let failStale: (reason: unknown) => void = () => undefined
+    vi.mocked(api.entryList).mockImplementationOnce(
+      () => new Promise((_resolve, reject) => (failStale = reject)),
+    )
+    const from = screen.getByLabelText('Entries from date')
+    await userEvent.type(from, '12/08/2026')
+    await userEvent.tab()
+    await userEvent.clear(from)
+    await userEvent.tab()
+    await waitFor(() => {
+      expect(api.entryList).toHaveBeenLastCalledWith('e1', expect.objectContaining({ from: undefined }))
+    })
+    await act(async () => {})
+
+    await act(async () => failStale({ code: 'io', message: 'disk' }))
+
+    expect(screen.queryByText(commandErrorMessage({ code: 'io', message: 'disk' }))).toBeNull()
+    expect(screen.getByText('CLIENT INVOICE')).toBeInTheDocument()
   })
 
   test('the account filter leaves the summary whole, and says so', async () => {
     await renderReady()
     const select = screen.getByRole('combobox', { name: 'Account' }) as HTMLSelectElement
+    // The empty state shows Import CSV before the accounts have loaded.
+    await screen.findByRole('option', { name: '1000 · Checking' })
 
     await userEvent.selectOptions(select, select.options[1]?.value ?? '')
 
@@ -1337,14 +1465,19 @@ describe('TransactionsPage summary', () => {
     })
     await renderReady()
 
-    await userEvent.type(screen.getByLabelText('Summary from date'), '31/08/2026')
+    await userEvent.type(screen.getByLabelText('Entries from date'), '31/08/2026')
     await userEvent.tab()
-    await userEvent.type(screen.getByLabelText('Summary to date'), '01/08/2026')
+    await userEvent.type(screen.getByLabelText('Entries to date'), '01/08/2026')
     await userEvent.tab()
 
     expect(await screen.findByText('The From date must be on or before the To date.')).toBeInTheDocument()
     const alert = screen.queryByRole('alert')
     expect(alert?.textContent ?? '').not.toContain('from date must be on or before to')
+    // The list is not asked for a window that holds nothing, and shows nothing.
+    expect(await screen.findByText('No matching entries')).toBeInTheDocument()
+    for (const [, filters] of vi.mocked(api.entryList).mock.calls) {
+      expect(filters?.to).not.toBe('2026-08-01')
+    }
   })
 
   test('a failing summary never stops the list from refreshing', async () => {

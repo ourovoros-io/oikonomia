@@ -202,10 +202,10 @@ describe('renderUiText', () => {
     const long = 'x'.repeat(FILE_TEXT_LIMIT * 3)
 
     expect(renderUiText({ code: 'csv_invalid_amount', params: { value: long } }, EUR)).toBe(
-      `"${'x'.repeat(FILE_TEXT_LIMIT)}…" is not a valid amount.`,
+      `“${'x'.repeat(FILE_TEXT_LIMIT)}…” is not a valid amount.`,
     )
     expect(renderUiText({ code: 'csv_invalid_type', params: { value: '<i>in</i>' } }, EUR)).toBe(
-      '"<i>in</i>" is not a recognized type.',
+      '“<i>in</i>” is not a recognized type.',
     )
   })
 

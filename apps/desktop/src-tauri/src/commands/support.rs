@@ -737,10 +737,13 @@ pub(crate) mod ipc_test_support {
                 .invoke_handler(handler)
                 .build(mock_context(noop_assets()))
                 .unwrap();
-            let webview =
-                tauri::WebviewWindowBuilder::new(&app, "main", tauri::WebviewUrl::default())
-                    .build()
-                    .unwrap();
+            let webview = tauri::WebviewWindowBuilder::new(
+                &app,
+                crate::tray::MAIN_WINDOW_LABEL,
+                tauri::WebviewUrl::default(),
+            )
+            .build()
+            .unwrap();
 
             let app = Self {
                 app,

@@ -39,7 +39,7 @@ import {
 import { cn } from '../lib/cn'
 import { commandErrorMessage } from '../lib/commandError'
 import { useI18n } from '../lib/I18nProvider'
-import { tn } from '../lib/i18n'
+import { tn, type Locale } from '../lib/i18n'
 
 type Props = { entity: Entity | null; onCreateBook?: () => void }
 
@@ -53,7 +53,11 @@ type ActivityRow = {
   kind: 'income' | 'expense' | 'transfer' | 'other'
 }
 
-function inferActivity(view: PostedEntryView, accounts: Account[]): ActivityRow {
+function inferActivity(
+  view: PostedEntryView,
+  accounts: Account[],
+  locale: Locale,
+): ActivityRow {
   const map = new Map(accounts.map((a) => [a.id, a]))
   const types = view.lines.map((l) => map.get(l.account_id)?.account_type)
   const amount = view.lines.reduce((s, l) => s + l.debit.amount_minor, 0)
@@ -70,7 +74,7 @@ function inferActivity(view: PostedEntryView, accounts: Account[]): ActivityRow 
   }
   return {
     id: view.entry.id,
-    date: formatDate(view.entry.entry_date),
+    date: formatDate(view.entry.entry_date, locale),
     description: view.entry.description,
     signedMinor: signed,
     kind,
@@ -157,8 +161,8 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
     return entries
       .filter((e) => !e.is_voided)
       .slice(0, 8)
-      .map((e) => inferActivity(e, accounts))
-  }, [entries, accounts])
+      .map((e) => inferActivity(e, accounts, locale))
+  }, [entries, accounts, locale])
 
   if (!entity) {
     return (
@@ -261,7 +265,9 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
         />
       </Hero>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* Four across only from xl: below it a tile leaves its label a column
+          too narrow for one Greek or French word. */}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <ArcTile
           label={t('dashboard.arc.savings.label')}
           hint={t('dashboard.arc.savings.hint')}

@@ -256,6 +256,21 @@ export function applyBulkAccounts(
 }
 
 /**
+ * The categories a preview row may post to, by its kind. Only expense and
+ * income rows get a list, matching `applyBulkAccounts`: an income row must
+ * never be pointed at an expense account, and bills or transfers carry no
+ * category the preview edits.
+ */
+export function rowCategoryOptions<A extends AccountLike>(
+  kind: SimpleEntryInput['kind'],
+  lists: { expense: readonly A[]; income: readonly A[] },
+): readonly A[] {
+  if (kind === 'expense') return lists.expense
+  if (kind === 'income') return lists.income
+  return []
+}
+
+/**
  * The wallet and category the bulk selectors open on: the accounts the
  * preview rows will post to, so a selector does not show one account while
  * the rows go to another. Falls back to the first listed account when no row

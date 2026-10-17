@@ -23,9 +23,10 @@ type Props = {
 }
 
 /**
- * European date field: types as dd/mm/yyyy with a Monday-first calendar
- * popover. Native date inputs order their segments by OS region and cannot be
- * forced to day-month-year, so this control replaces them.
+ * Day-month-year date field with a Monday-first calendar popover. It shows the
+ * separator of the app language and reads any of them. Native date inputs
+ * order their segments by OS region and cannot be forced to day-month-year,
+ * so this control replaces them.
  */
 export function DateInput({
   value,
@@ -34,8 +35,8 @@ export function DateInput({
   disabled = false,
   'aria-label': ariaLabel,
 }: Props) {
-  const { t } = useI18n()
-  const [text, setText] = useState(value ? formatDate(value) : '')
+  const { t, locale } = useI18n()
+  const [text, setText] = useState(value ? formatDate(value, locale) : '')
   const [invalid, setInvalid] = useState(false)
   const [open, setOpen] = useState(false)
   const [view, setView] = useState<YearMonth>(() => viewFromIso(value))
@@ -44,12 +45,15 @@ export function DateInput({
   const messageId = useId()
 
   // The parent commits values only through onChange, so an external value
-  // change (prefill, reset) can safely overwrite the draft text.
+  // change (prefill, reset) can safely overwrite the draft text. A language
+  // change rewrites it too, so the field takes the new separator; a draft
+  // lost that way is acceptable, since the language changes from Settings or
+  // at startup, not while someone is typing a date.
   useEffect(() => {
-    setText(value ? formatDate(value) : '')
+    setText(value ? formatDate(value, locale) : '')
     setInvalid(false)
     setView(viewFromIso(value))
-  }, [value])
+  }, [value, locale])
 
   useEffect(() => {
     if (disabled) setOpen(false)
@@ -67,7 +71,7 @@ export function DateInput({
     const iso = parseEuropeanDateToISO(trimmed)
     if (iso) {
       setInvalid(false)
-      setText(formatDate(iso))
+      setText(formatDate(iso, locale))
       if (iso !== value) onChange(iso)
     } else {
       // An unreadable date is cleared, not left as the previous value: the
@@ -90,7 +94,7 @@ export function DateInput({
     setInvalid(false)
     setOpen(false)
     if (iso !== value) onChange(iso)
-    else setText(formatDate(iso))
+    else setText(formatDate(iso, locale))
   }
 
   function shiftMonth(delta: number) {
