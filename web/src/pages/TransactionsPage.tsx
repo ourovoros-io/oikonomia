@@ -181,6 +181,7 @@ export function TransactionsPage({
   const busyRef = useRef(false)
   const csvBusyRef = useRef(false)
   const seriesRequestRef = useRef(0)
+  const listRequestRef = useRef(0)
 
   const accountMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts])
 
@@ -216,8 +217,11 @@ export function TransactionsPage({
     [visibleEntries, detailId],
   )
 
-  /** Search and account narrow the list and leave the summary whole; the dates do the reverse. */
-  const filtersNarrowList = Boolean(debouncedSearch.trim() || accountFilter)
+  /** Search and account narrow the list and leave the summary whole; the dates narrow both. */
+  const listOnlyFilters = Boolean(debouncedSearch.trim() || accountFilter)
+  const filtersNarrowList = listOnlyFilters || Boolean(fromDate || toDate)
+  // ISO dates order as strings. Rust words the inverted window for the summary.
+  const datesInverted = Boolean(fromDate && toDate && fromDate > toDate)
 
   const expenseAccounts = useMemo(() => accountsOf(accounts, ['expense']), [accounts])
   const incomeAccounts = useMemo(() => accountsOf(accounts, ['income']), [accounts])
@@ -269,18 +273,29 @@ export function TransactionsPage({
     )
   }
 
-  /** The entry list and what its rows are drawn from. The dates play no part in it. */
+  /**
+   * The entry list and what its rows are drawn from. An inverted date window
+   * matches no entry, so it is not asked for; a response that a newer filter
+   * choice has overtaken is dropped.
+   */
   async function loadList() {
     if (!entity) return
+    const requestId = listRequestRef.current + 1
+    listRequestRef.current = requestId
     const [e, a, d, roles] = await Promise.all([
-      api.entryList(entity.id, {
-        search: debouncedSearch.trim() || undefined,
-        accountId: accountFilter || undefined,
-      }),
+      datesInverted
+        ? []
+        : api.entryList(entity.id, {
+            from: fromDate || undefined,
+            to: toDate || undefined,
+            search: debouncedSearch.trim() || undefined,
+            accountId: accountFilter || undefined,
+          }),
       api.accountList(entity.id),
       api.documentList(entity.id),
       api.accountDefaults(entity.id),
     ])
+    if (listRequestRef.current !== requestId) return
     setEntries(e)
     setAccounts(a)
     setDefaults(roles)
@@ -461,6 +476,8 @@ export function TransactionsPage({
       setDefaults(null)
       setDocs([])
       prevEntityId.current = null
+      // A list still in flight belongs to the book that went away.
+      listRequestRef.current += 1
       return
     }
     if (prevEntityId.current !== entity.id) {
@@ -474,23 +491,23 @@ export function TransactionsPage({
       // book 300 ms later.
       setSearch('')
       setDebouncedSearch('')
-      // The summary's effect below runs again on these, for the new book.
+      // Both effects run again on these, for the new book.
       setFromDate('')
       setToDate('')
       // Gate the early return on tracked deps only: resetting `search`
       // alone changes no dependency, and returning then would skip the
       // reload and leave the old book's entries on screen.
-      if (debouncedSearch || accountFilter) {
+      if (debouncedSearch || accountFilter || fromDate || toDate) {
         setAccountFilter('')
         return
       }
     }
     void loadList().catch((err) => setError(commandErrorMessage(err)))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entity?.id, debouncedSearch, accountFilter])
+  }, [entity?.id, debouncedSearch, accountFilter, fromDate, toDate])
 
-  // The dates scope the summary and nothing else, so a date change fetches
-  // the summary alone: it neither waits for the list nor fails with it.
+  // The summary has its own effect so it neither waits for the list nor
+  // fails with it. Search and account play no part in it.
   useEffect(() => {
     loadSeries()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -867,7 +884,7 @@ export function TransactionsPage({
                 <p className="mt-1.5 text-xs text-[var(--color-danger)]">{t('tx.summary.invalidRange')}</p>
               ) : seriesError ? (
                 <p className="mt-1.5 text-xs text-[var(--color-danger)]">{commandErrorMessage(seriesError)}</p>
-              ) : filtersNarrowList ? (
+              ) : listOnlyFilters ? (
                 <p className="mt-1.5 text-xs text-[var(--color-muted)]">{t('tx.summary.wholeBook')}</p>
               ) : null}
               <HiddenIncludedNote count={series?.hidden_entry_count ?? 0} className="mt-1.5" />
@@ -1255,7 +1272,7 @@ export function TransactionsPage({
       />
 
       {visibleEntries.length === 0 && filtersNarrowList ? (
-        // The header buttons stay: Recurring, Import and Export do not depend on the search.
+        // The header buttons stay: Recurring, Import and Export do not depend on the filters.
         <Panel
           title={t('tx.allEntries')}
           description={`${t('tx.list.meta.counts', { posted: postedCount, hidden: hiddenCount })} · ${ccy}`}

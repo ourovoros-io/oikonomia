@@ -833,8 +833,8 @@
       "from": "Du",
       "to": "Au",
       "account": "Compte",
-      "fromAria": "Date de début du résumé",
-      "toAria": "Date de fin du résumé",
+      "fromAria": "Date de début des écritures",
+      "toAria": "Date de fin des écritures",
       "allAccounts": "Tous les comptes"
     },
     "summary": {
@@ -922,7 +922,7 @@
       "body": "Utilisez Dépense pour les sorties, Recette pour les rentrées, et Facture pour les charges ou les factures à suivre.",
       "filtered": {
         "title": "Aucune écriture correspondante",
-        "body": "Aucune écriture ne correspond à la recherche ou aux filtres."
+        "body": "Aucune écriture ne correspond à la recherche, aux dates ou au compte."
       }
     },
     "row": {
