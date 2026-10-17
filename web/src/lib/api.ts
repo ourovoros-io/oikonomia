@@ -699,6 +699,17 @@ export type DonationAddress = {
   address: string
 }
 
+/**
+ * One column of a bank CSV (Rust `CsvHeader`). `name` is unique and never
+ * empty, and is what a `CsvColumnMapping` sends back. `label` is set when Rust
+ * made the name up for an empty or repeated header; the UI shows the worded
+ * label then, and `name` (the file's own text) otherwise.
+ */
+export type CsvHeader = {
+  name: string
+  label?: UiText | null
+}
+
 /** A column no statement can be read without (Rust `CsvRequiredColumn`). */
 export type CsvRequiredColumn = 'date' | 'amount'
 
@@ -706,7 +717,7 @@ export type CsvRequiredColumn = 'date' | 'amount'
 export type CsvImportPreview = {
   source: string
   /** Present once Rust returns the header row (Map columns selects). */
-  headers?: string[]
+  headers?: CsvHeader[]
   /** Auto-detect pre-fill; present even when the caller passed `mapping`. */
   detected_mapping?: CsvColumnMapping
   /**

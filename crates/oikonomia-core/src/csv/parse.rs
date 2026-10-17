@@ -89,9 +89,15 @@
 //! | Money out | `d`, `dr`, `debit`, `withdrawal`, `expense`, `out`     |
 //! | Money in  | `c`, `cr`, `credit`, `deposit`, `income`, `in`         |
 //!
-//! An explicit mapping replaces all of this: its header names are matched
-//! whole, without regard to ASCII case, and a column it leaves out is not
-//! read. It needs what detection needs: a date column, and an amount column
+//! An explicit mapping replaces all of this: its names are matched whole,
+//! without regard to ASCII case, against the column names of
+//! [`ParsedBankCsv::headers`], and a column it leaves out is not read. A
+//! column's name is its header, or for an empty or repeated header a name
+//! made up for it (`Column 3`, `Amount (2)`; the `csv/header.rs` module doc
+//! has the rule), so every column can be mapped. Detection reads the headers
+//! as written, so a made-up name changes nothing it finds.
+//!
+//! A mapping needs what detection needs: a date column, and an amount column
 //! or at least one of debit and credit, never an amount column beside one of
 //! those. The description column is optional either way: a row of a file
 //! without one gets an empty description, which the ledger accepts.
@@ -165,9 +171,10 @@ use time::{Date, Month};
 use crate::csv::amount::parse_book_amount;
 use crate::csv::currency_marker::first_other_currency;
 use crate::csv::export::{CREDIT_MINOR_COLUMN, DEBIT_MINOR_COLUMN};
+use crate::csv::header::name_columns;
 use crate::csv::{
-    CsvColumnMapping, CsvError, CsvMappingProblem, CsvRequiredColumn, CsvRowOutcome, MAX_CSV_BYTES,
-    ParsedBankRow,
+    CsvColumnMapping, CsvError, CsvHeader, CsvMappingProblem, CsvRequiredColumn, CsvRowOutcome,
+    MAX_CSV_BYTES, ParsedBankRow,
 };
 use crate::domain::CurrencyCode;
 use crate::error::{Error, IoContext, PrivateDetail};
@@ -180,8 +187,9 @@ type CsvResult<T> = std::result::Result<T, CsvError>;
 /// Parsed bank CSV plus header metadata for the Map columns UI.
 #[derive(Debug, Clone)]
 pub struct ParsedBankCsv {
-    /// Trimmed header names, file order.
-    pub headers: Vec<String>,
+    /// One name per column, file order: the trimmed header, or a name made
+    /// up for an empty or repeated one ([`CsvHeader`]).
+    pub headers: Vec<CsvHeader>,
     /// Auto-detected mapping, from the header aliases and for the direction
     /// column from its values, even when the caller overrode columns.
     pub detected_mapping: CsvColumnMapping,
@@ -291,7 +299,7 @@ const YEAR_DIGITS: usize = 4;
 /// the header row cannot be read, [`CsvError::MissingHeader`] when it has no
 /// name in it, [`CsvError::JournalExport`] when it is the header of
 /// Oikonomia's own journal export, and [`CsvError::InvalidMapping`] when `mapping` is
-/// incomplete, contradictory or names a header the file does not have.
+/// incomplete, contradictory or names a column the file does not have.
 ///
 /// A malformed **row** is not an error. It is returned as
 /// [`CsvRowOutcome::Invalid`] in its place among the rows.
@@ -330,16 +338,17 @@ pub fn parse_bank_csv(
     // at most `MAX_CSV_BYTES`.
     let records: Vec<csv::Result<StringRecord>> = reader.records().collect();
 
+    let named = name_columns(&headers);
     let detected = auto_map_headers(&headers, &records);
-    let (missing_columns, columns) = columns_to_read(&headers, detected, mapping)?;
+    let (missing_columns, columns) = columns_to_read(&named, detected, mapping)?;
     let other_currency = columns.and_then(|columns| other_currency(&records, columns, currency));
     let rows = columns.map_or_else(Vec::new, |columns| {
         parse_records(records, columns, currency)
     });
 
     Ok(ParsedBankCsv {
-        headers: headers.iter().map(str::to_owned).collect(),
-        detected_mapping: mapping_from_headers(&headers, detected),
+        detected_mapping: mapping_from_headers(&named, detected),
+        headers: named,
         missing_columns,
         other_currency,
         rows,
@@ -356,7 +365,7 @@ pub fn parse_bank_csv(
 ///
 /// [`CsvError::InvalidMapping`] as [`resolve_user_mapping`] gives it.
 fn columns_to_read(
-    headers: &StringRecord,
+    headers: &[CsvHeader],
     detected: ColumnMap,
     mapping: Option<&CsvColumnMapping>,
 ) -> crate::error::Result<(Vec<CsvRequiredColumn>, Option<ColumnMap>)> {
@@ -598,9 +607,14 @@ fn missing_required_columns(map: ColumnMap) -> Vec<CsvRequiredColumn> {
 
 /// Turns a map of cell indexes back into header names, for the UI to show
 /// what was detected.
-fn mapping_from_headers(headers: &StringRecord, map: ColumnMap) -> CsvColumnMapping {
-    let name =
-        |column: Option<usize>| column.map(|index| headers.get(index).unwrap_or("").to_owned());
+fn mapping_from_headers(headers: &[CsvHeader], map: ColumnMap) -> CsvColumnMapping {
+    let name = |column: Option<usize>| {
+        column.map(|index| {
+            headers
+                .get(index)
+                .map_or_else(String::new, |header| header.name.clone())
+        })
+    };
     CsvColumnMapping {
         date: name(map.date),
         description: name(map.description),
@@ -619,17 +633,18 @@ fn trimmed_nonempty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|text| !text.is_empty())
 }
 
-/// Returns the index of the first header equal to `name`, ignoring ASCII
-/// case and surrounding whitespace.
+/// Returns the index of the column named `name` ([`CsvHeader::name`]),
+/// ignoring ASCII case and surrounding whitespace. Names are unique, so no
+/// other column matches.
 ///
 /// # Errors
 ///
-/// [`CsvError::InvalidMapping`] naming the header when the file has none.
-fn header_index(headers: &StringRecord, name: &str) -> CsvResult<usize> {
+/// [`CsvError::InvalidMapping`] carrying `name` when no column has it.
+fn header_index(headers: &[CsvHeader], name: &str) -> CsvResult<usize> {
     let needle = name.trim();
     headers
         .iter()
-        .position(|header| header.eq_ignore_ascii_case(needle))
+        .position(|header| header.name.eq_ignore_ascii_case(needle))
         .ok_or_else(|| {
             CsvError::InvalidMapping(CsvMappingProblem::UnknownColumn {
                 name: name.to_owned(),
@@ -643,9 +658,9 @@ fn header_index(headers: &StringRecord, name: &str) -> CsvResult<usize> {
 ///
 /// [`Error::Csv`] with [`CsvError::InvalidMapping`] when the mapping
 /// has no date, sets both an amount and a debit or credit column, sets none
-/// of amount, debit and credit, or names a header the file does not have.
+/// of amount, debit and credit, or names a column the file does not have.
 fn resolve_user_mapping(
-    headers: &StringRecord,
+    headers: &[CsvHeader],
     mapping: &CsvColumnMapping,
 ) -> crate::error::Result<ColumnMap> {
     let Some(date) = trimmed_nonempty(mapping.date.as_deref()) else {
@@ -1127,7 +1142,7 @@ mod tests {
         "EUR".parse().expect("a currency code")
     }
 
-    /// The problem of a mapping that names a header the file does not have.
+    /// The problem of a mapping that names a column the file does not have.
     fn unknown_column(name: &str) -> CsvMappingProblem {
         CsvMappingProblem::UnknownColumn {
             name: name.to_owned(),
@@ -1787,11 +1802,10 @@ mod tests {
         .expect("auto");
         assert_eq!(
             parsed.headers,
-            vec![
-                "Date".to_owned(),
-                "Description".to_owned(),
-                "Amount".to_owned()
-            ]
+            ["Date", "Description", "Amount"].map(|name| CsvHeader {
+                name: name.to_owned(),
+                label: None,
+            })
         );
         assert_eq!(parsed.detected_mapping.date.as_deref(), Some("Date"));
         assert_eq!(
@@ -1825,6 +1839,56 @@ mod tests {
         };
         assert_eq!(row.description, "ignored notes");
         assert_eq!(row.signed_amount_minor, -350);
+    }
+
+    #[test]
+    fn an_empty_or_repeated_header_is_mapped_by_its_made_up_name() {
+        let csv = "Date,,Amount,amount\n2026-03-15,Coffee,-1.00,-3.50\n";
+        let auto = parse_bank_csv(csv, eur(), None).expect("auto");
+
+        assert_eq!(
+            auto.headers
+                .iter()
+                .map(|header| header.name.as_str())
+                .collect::<Vec<_>>(),
+            ["Date", "Column 2", "Amount", "amount (2)"]
+        );
+        // Detection reads the headers as written: the leftmost amount wins.
+        assert_eq!(auto.detected_mapping.amount.as_deref(), Some("Amount"));
+
+        let mapping = column_mapping("date", "column 2", Some("AMOUNT (2)"), None, None);
+        let mapped = parse_bank_csv(csv, eur(), Some(&mapping)).expect("mapped");
+        let CsvRowOutcome::Parsed(row) = &mapped.rows[0] else {
+            panic!("mapped row");
+        };
+        assert_eq!(row.description, "Coffee");
+        assert_eq!(row.signed_amount_minor, -350);
+
+        // The header as written still names the leftmost column of that name.
+        let mapping = column_mapping("Date", "Column 2", Some("AMOUNT"), None, None);
+        let mapped = parse_bank_csv(csv, eur(), Some(&mapping)).expect("mapped");
+        let CsvRowOutcome::Parsed(row) = &mapped.rows[0] else {
+            panic!("mapped row");
+        };
+        assert_eq!(row.signed_amount_minor, -100);
+    }
+
+    /// Detection can pass over a header and take a later one equal to it; the
+    /// detected mapping then names that later column, so sending it back as
+    /// the mapping reads the same column.
+    #[test]
+    fn a_detected_repeated_header_maps_back_to_its_own_column() {
+        let csv = "Date,Type,Amount,Type\n2026-03-15,Fee,1.00,D\n";
+        let auto = parse_bank_csv(csv, eur(), None).expect("auto");
+
+        assert_eq!(auto.detected_mapping.direction.as_deref(), Some("Type (2)"));
+
+        let again = parse_bank_csv(csv, eur(), Some(&auto.detected_mapping)).expect("mapped");
+        assert_eq!(again.rows, auto.rows);
+        let CsvRowOutcome::Parsed(row) = &again.rows[0] else {
+            panic!("mapped row");
+        };
+        assert_eq!(row.signed_amount_minor, -100);
     }
 
     #[test]
@@ -2112,9 +2176,9 @@ mod tests {
             "../../../../web/src/lib/csvMappingVerdicts.json"
         ))
         .expect("csvMappingVerdicts.json parses");
-        let headers = StringRecord::from(vec![
+        let headers = name_columns(&StringRecord::from(vec![
             "Date", "Memo", "Amount", "Debit", "Credit", "Ref", "Type",
-        ]);
+        ]));
 
         assert!(!cases.is_empty());
         for case in cases {

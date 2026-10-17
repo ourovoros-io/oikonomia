@@ -277,7 +277,11 @@ mod ipc_tests {
             preview,
             serde_json::json!({
                 "source": null,
-                "headers": ["When", "Memo", "Paid"],
+                "headers": [
+                    { "name": "When", "label": null },
+                    { "name": "Memo", "label": null },
+                    { "name": "Paid", "label": null },
+                ],
                 "detected_mapping": {
                     "date": null,
                     "description": "Memo",

@@ -5,7 +5,7 @@
 mod common;
 
 use oikonomia_core::csv::{
-    CsvColumnMapping, CsvError, CsvImportAccounts, CsvImportPreview, CsvRequiredColumn,
+    CsvColumnMapping, CsvError, CsvHeader, CsvImportAccounts, CsvImportPreview, CsvRequiredColumn,
     JournalCsvStatus, export_journal_csv, parse_journal_export, post_import_rows, preview_bank_csv,
     preview_bank_csv_file, write_journal_csv_file,
 };
@@ -19,6 +19,18 @@ use oikonomia_core::ledger::{
 use oikonomia_core::prefs::Locale;
 use oikonomia_core::ui_text::{UiText, UiTextCode};
 use rusqlite::Connection;
+
+/// The headers of a file whose header row is clean: each column named as
+/// written, with no label.
+fn clean_headers(names: &[&str]) -> Vec<CsvHeader> {
+    names
+        .iter()
+        .map(|name| CsvHeader {
+            name: (*name).to_owned(),
+            label: None,
+        })
+        .collect()
+}
 
 struct Accounts {
     checking: AccountId,
@@ -70,7 +82,10 @@ fn preview_does_not_post() {
     assert_eq!(preview.rows.len(), 1);
     assert!(!preview.rows[0].duplicate);
     assert!(preview.rows[0].error.is_none());
-    assert_eq!(preview.headers, ["Date", "Description", "Amount"]);
+    assert_eq!(
+        preview.headers,
+        clean_headers(&["Date", "Description", "Amount"])
+    );
     assert_eq!(preview.detected_mapping.amount.as_deref(), Some("Amount"));
     assert_eq!(
         preview.rows[0].suggested.as_ref().map(|s| s.kind),
@@ -808,7 +823,10 @@ fn preview_mapping_override_and_auto_detect() {
 
     let csv = "Date,Payee,Notes,Amount\n2026-03-15,Coffee,ignored notes,-3.50\n";
     let auto = preview_bank_csv(conn, entity_id, roles(&acc), csv, None).expect("auto");
-    assert_eq!(auto.headers, ["Date", "Payee", "Notes", "Amount"]);
+    assert_eq!(
+        auto.headers,
+        clean_headers(&["Date", "Payee", "Notes", "Amount"])
+    );
     assert_eq!(auto.detected_mapping.date.as_deref(), Some("Date"));
     assert_eq!(auto.detected_mapping.description.as_deref(), Some("Payee"));
     assert_eq!(auto.detected_mapping.amount.as_deref(), Some("Amount"));
@@ -957,7 +975,7 @@ fn a_file_with_no_detectable_date_column_previews_as_needing_a_mapping() {
     let preview = preview_in_a_new_book("When,Memo,Amount\n2026-03-15,Rent,-800.00\n", None);
 
     assert_eq!(preview.missing_columns, [CsvRequiredColumn::Date]);
-    assert_eq!(preview.headers, ["When", "Memo", "Amount"]);
+    assert_eq!(preview.headers, clean_headers(&["When", "Memo", "Amount"]));
     assert_eq!(preview.detected_mapping.date, None);
     assert_eq!(preview.detected_mapping.amount.as_deref(), Some("Amount"));
     assert_eq!(
@@ -972,7 +990,7 @@ fn a_file_with_no_detectable_amount_column_previews_as_needing_a_mapping() {
     let preview = preview_in_a_new_book("Date,Memo,Paid\n2026-03-15,Rent,-800.00\n", None);
 
     assert_eq!(preview.missing_columns, [CsvRequiredColumn::Amount]);
-    assert_eq!(preview.headers, ["Date", "Memo", "Paid"]);
+    assert_eq!(preview.headers, clean_headers(&["Date", "Memo", "Paid"]));
     assert_eq!(preview.detected_mapping.date.as_deref(), Some("Date"));
     assert_eq!(preview.detected_mapping.amount, None);
     assert_eq!(preview.detected_mapping.debit, None);
@@ -988,7 +1006,7 @@ fn a_file_with_neither_column_detectable_names_both_date_first() {
         preview.missing_columns,
         [CsvRequiredColumn::Date, CsvRequiredColumn::Amount]
     );
-    assert_eq!(preview.headers, ["When", "Memo", "Paid"]);
+    assert_eq!(preview.headers, clean_headers(&["When", "Memo", "Paid"]));
     assert_eq!(
         preview.detected_mapping.description.as_deref(),
         Some("Memo")

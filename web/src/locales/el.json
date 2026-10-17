@@ -998,6 +998,11 @@
         "amountOverflow": "Το ποσό είναι πολύ μεγάλο.",
         "unreadable": "Δεν ήταν δυνατή η ανάγνωση αυτής της γραμμής."
       },
+      "column": {
+        "unnamed": "Στήλη {position}",
+        "unnamedRepeated": "Στήλη {position} ({occurrence})",
+        "repeated": "{name} ({occurrence})"
+      },
       "duplicate": "Πιθανό διπλότυπο",
       "postSelected": "Καταχώριση {n} επιλεγμένων"
     },

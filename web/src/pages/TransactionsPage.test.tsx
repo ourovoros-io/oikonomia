@@ -137,7 +137,7 @@ const salary: SimpleEntryInput = {
 
 const preview: CsvImportPreview = {
   source: '/tmp/bank.csv',
-  headers: ['Date', 'Payee', 'Notes', 'Amount'],
+  headers: ['Date', 'Payee', 'Notes', 'Amount'].map((name) => ({ name })),
   detected_mapping: {
     date: 'Date',
     description: 'Payee',
@@ -784,7 +784,7 @@ describe('TransactionsPage CSV import of a file whose columns were not detected'
   /** What Rust returns for `When,Memo,Paid`: the headers, no date, no amount, no rows. */
   const undetected: CsvImportPreview = {
     source: '/tmp/bank.csv',
-    headers: ['When', 'Memo', 'Paid'],
+    headers: ['When', 'Memo', 'Paid'].map((name) => ({ name })),
     detected_mapping: {
       date: null,
       description: 'Memo',
@@ -833,6 +833,55 @@ describe('TransactionsPage CSV import of a file whose columns were not detected'
     await openMapping({ ...preview, missing_columns: [] })
 
     expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  test('an empty and a repeated header are offered by label and mapped by name', async () => {
+    // What Rust returns for `When,,Paid,Paid`.
+    const unclean: CsvImportPreview = {
+      ...undetected,
+      headers: [
+        { name: 'When', label: null },
+        { name: 'Column 2', label: { code: 'csv_unnamed_column', params: { position: '2' } } },
+        { name: 'Paid', label: null },
+        {
+          name: 'Paid (2)',
+          label: { code: 'csv_repeated_column', params: { name: 'Paid', occurrence: '2' } },
+        },
+      ],
+      detected_mapping: { ...undetected.detected_mapping, description: null },
+    }
+    vi.mocked(api.csvImportPreview)
+      .mockResolvedValueOnce(unclean)
+      .mockResolvedValueOnce({ ...preview, headers: unclean.headers ?? [] })
+    await renderReady()
+    await userEvent.click(screen.getByRole('button', { name: 'Import CSV' }))
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: 'Date source column' })).toBeTruthy()
+    })
+
+    const amount = screen.getByRole('combobox', { name: 'Amount source column' })
+    expect(within(amount).getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'Not mapped',
+      'When',
+      'Column 2',
+      'Paid',
+      'Paid (2)',
+    ])
+
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Date source column' }), 'When')
+    await userEvent.selectOptions(amount, 'Paid (2)')
+    await userEvent.selectOptions(
+      screen.getByRole('combobox', { name: 'Description source column' }),
+      'Column 2',
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Continue to preview' }))
+
+    await waitFor(() => {
+      expect(api.csvImportPreview).toHaveBeenCalledTimes(2)
+    })
+    expect(api.csvImportPreview.mock.calls[1]?.[0]).toMatchObject({
+      mapping: { date: 'When', description: 'Column 2', amount: 'Paid (2)' },
+    })
   })
 
   test('continuing with a complete mapping previews the file again with the chosen columns', async () => {
@@ -897,7 +946,7 @@ describe('TransactionsPage CSV import of a file with one debit column', () => {
   /** What Rust detects for `Date,Memo,Notes,Debit`: money out only, no credit column. */
   const debitOnly: CsvImportPreview = {
     ...preview,
-    headers: ['Date', 'Memo', 'Notes', 'Debit'],
+    headers: ['Date', 'Memo', 'Notes', 'Debit'].map((name) => ({ name })),
     detected_mapping: {
       date: 'Date',
       description: 'Memo',
@@ -960,7 +1009,7 @@ describe('TransactionsPage CSV import of a file without a description column', (
   /** What Rust returns for `Date,Amount`: read in full, with no description detected. */
   const noDescription: CsvImportPreview = {
     ...preview,
-    headers: ['Date', 'Amount'],
+    headers: ['Date', 'Amount'].map((name) => ({ name })),
     detected_mapping: {
       date: 'Date',
       description: null,
@@ -1025,7 +1074,7 @@ describe('TransactionsPage CSV direction column', () => {
   /** A statement with unsigned amounts and a column that says which way each went. */
   const withDirection: CsvImportPreview = {
     ...preview,
-    headers: ['Date', 'Payee', 'Amount', 'Type', 'Way'],
+    headers: ['Date', 'Payee', 'Amount', 'Type', 'Way'].map((name) => ({ name })),
     detected_mapping: { ...preview.detected_mapping, direction: 'Type' },
     missing_columns: [],
   }

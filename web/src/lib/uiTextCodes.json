@@ -30,7 +30,10 @@
     "csv_missing_amount",
     "csv_zero_amount",
     "csv_amount_overflow",
-    "csv_unreadable_row"
+    "csv_unreadable_row",
+    "csv_unnamed_column",
+    "csv_unnamed_repeated_column",
+    "csv_repeated_column"
   ],
   "hints": ["ready", "models_missing"],
   "syntheticLines": ["retained_earnings", "net_income"]
