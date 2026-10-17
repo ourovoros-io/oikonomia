@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useEffectEvent, useMemo, useRef, useState, type FormEvent } from 'react'
 import {
   Banknote,
   CircleOff,
@@ -155,10 +155,16 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
     setBalances(new Map(pairs))
   }
 
-  useEffect(() => {
-    if (!entity) return
+  // An effect event: it reads the current book, but only a change of book reloads.
+  const loadBook = useEffectEvent(() => {
     void reload().catch((err) => setError(commandErrorMessage(err)))
-  }, [entity?.id])
+  })
+  const entityId = entity?.id
+  useEffect(() => {
+    // Reads the accounts from the backend; state is set once it answers.
+    // eslint-disable-next-line react/set-state-in-effect
+    if (entityId) loadBook()
+  }, [entityId])
 
   const sortedAccounts = useMemo(() => [...accounts].sort(byCode), [accounts])
 
@@ -262,15 +268,15 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
     setRegisterAccount(account)
     setRegisterLines([])
     setRegisterError(null)
+    setRegisterBusy(true)
   }
 
+  const registerId = registerAccount?.id
   useEffect(() => {
-    if (!registerAccount) return
+    if (!registerId) return
     let cancelled = false
-    setRegisterBusy(true)
-    setRegisterError(null)
     void api
-      .accountRegister(registerAccount.id)
+      .accountRegister(registerId)
       .then((lines) => {
         if (!cancelled) setRegisterLines(lines)
       })
@@ -283,7 +289,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
     return () => {
       cancelled = true
     }
-  }, [registerAccount?.id])
+  }, [registerId])
 
   async function onSetBalance(ev: FormEvent) {
     ev.preventDefault()

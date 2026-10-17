@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useState } from 'react'
+import { useCallback, useId, useState } from 'react'
 import { CalendarDays } from 'lucide-react'
 import { cn } from '../lib/cn'
 import { formatDate, parseEuropeanDateToISO } from '../lib/money'
@@ -43,21 +43,23 @@ export function DateInput({
   // State, not a ref: the calendar is drawn from the field's element.
   const [field, setField] = useState<HTMLDivElement | null>(null)
   const messageId = useId()
+  const [shown, setShown] = useState({ value, locale })
 
   // The parent commits values only through onChange, so an external value
   // change (prefill, reset) can safely overwrite the draft text. A language
   // change rewrites it too, so the field takes the new separator; a draft
   // lost that way is acceptable, since the language changes from Settings or
-  // at startup, not while someone is typing a date.
-  useEffect(() => {
+  // at startup, not while someone is typing a date. Adjusted while rendering,
+  // so no frame shows the old text.
+  if (shown.value !== value || shown.locale !== locale) {
+    setShown({ value, locale })
     setText(value ? formatDate(value, locale) : '')
     setInvalid(false)
     setView(viewFromIso(value))
-  }, [value, locale])
+  }
 
-  useEffect(() => {
-    if (disabled) setOpen(false)
-  }, [disabled])
+  // Disabling the field closes its calendar for good, not until it is enabled again.
+  if (disabled && open) setOpen(false)
 
   const closeCalendar = useCallback(() => setOpen(false), [])
 

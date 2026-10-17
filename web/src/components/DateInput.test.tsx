@@ -176,6 +176,32 @@ describe('DateInput', () => {
     expect(toggle).toHaveFocus()
   })
 
+  test('a new value from the parent replaces the draft in the same render', async () => {
+    const { rerender } = render(
+      <DateInput value="2026-10-08" onChange={vi.fn()} aria-label="Date" />,
+    )
+    await userEvent.clear(screen.getByLabelText('Date'))
+    await userEvent.type(screen.getByLabelText('Date'), '31/31')
+
+    rerender(<DateInput value="2026-01-02" onChange={vi.fn()} aria-label="Date" />)
+
+    expect(screen.getByLabelText('Date')).toHaveValue('02/01/2026')
+  })
+
+  test('disabling the field closes its calendar, and enabling it does not reopen it', async () => {
+    const { rerender } = render(
+      <DateInput value="2026-10-08" onChange={vi.fn()} aria-label="Date" />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Open calendar' }))
+    expect(screen.getByRole('dialog', { name: 'Calendar' })).toBeInTheDocument()
+
+    rerender(<DateInput value="2026-10-08" onChange={vi.fn()} aria-label="Date" disabled />)
+    expect(screen.queryByRole('dialog', { name: 'Calendar' })).toBeNull()
+
+    rerender(<DateInput value="2026-10-08" onChange={vi.fn()} aria-label="Date" />)
+    expect(screen.queryByRole('dialog', { name: 'Calendar' })).toBeNull()
+  })
+
   test('typing a date closes the calendar', async () => {
     render(<DateInput value="2026-10-08" onChange={vi.fn()} aria-label="Date" />)
     await userEvent.click(screen.getByRole('button', { name: 'Open calendar' }))

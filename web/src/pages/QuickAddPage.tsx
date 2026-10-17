@@ -236,7 +236,11 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
     [entities, entityId],
   )
 
-  bookCurrencyRef.current = entity ? bookCurrency(entity) : null
+  // Read by applySuggestion, which an analysis started earlier calls once it
+  // answers; written after render, which is long before any answer arrives.
+  useEffect(() => {
+    bookCurrencyRef.current = entity ? bookCurrency(entity) : null
+  }, [entity])
 
   const roleSetters = useMemo(
     () => ({ setCategoryId, setWalletId, setPayableId, setFromId, setToId }),
@@ -318,10 +322,10 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
     setError(null)
   }, [])
 
+  // Runs once: loadAccountsFor keeps one identity. `loading` starts true and
+  // the error empty, so nothing is reset before the read.
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
-    setError(null)
     void (async () => {
       try {
         const [ents, uiPrefs] = await Promise.all([api.entityList(), api.getUiPrefs()])
@@ -566,7 +570,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
       cancelled = true
       unlisten?.()
     }
-  }, [entityId, loading, processPath])
+  }, [entityId, loading, processPath, t])
 
   function onHtmlDrop(e: DragEvent) {
     e.preventDefault()

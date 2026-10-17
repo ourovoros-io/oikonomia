@@ -176,6 +176,8 @@ export default function App() {
   }, [loadEntities, noteDamagedPrefs])
 
   useEffect(() => {
+    // Reads the vault state from the backend; state is set once it answers.
+    // eslint-disable-next-line react/set-state-in-effect
     void refresh()
   }, [refresh])
 

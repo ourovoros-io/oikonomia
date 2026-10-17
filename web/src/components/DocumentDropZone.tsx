@@ -131,7 +131,7 @@ export function DocumentDropZone({ entityId, disabled, onSuggestion, onError }: 
       cancelled = true
       unlisten?.()
     }
-  }, [disabled, processPath])
+  }, [disabled, processPath, t])
 
   function onHtmlDrop(e: DragEvent) {
     e.preventDefault()
