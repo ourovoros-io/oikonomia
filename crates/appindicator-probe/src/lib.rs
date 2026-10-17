@@ -36,10 +36,27 @@ pub struct NotFound {
 /// Returns the first of [`LIBRARY_NAMES`] that `load` accepts, trying them in
 /// order and stopping at the first success.
 ///
+/// Public, rather than private to `load`, so that the order and the error
+/// are tested on every platform, not only where the library can exist.
+///
 /// # Errors
 ///
 /// Returns [`NotFound`], with every failure's reason, when `load` rejects
 /// all of them.
+///
+/// # Examples
+///
+/// ```
+/// let found = appindicator_probe::first_loadable(|name| {
+///     if name.starts_with("libappindicator") {
+///         Ok(())
+///     } else {
+///         Err(format!("{name}: not installed"))
+///     }
+/// });
+///
+/// assert_eq!(found.unwrap(), "libappindicator3.so.1");
+/// ```
 pub fn first_loadable<E: Display>(
     mut load: impl FnMut(&'static str) -> Result<(), E>,
 ) -> Result<&'static str, NotFound> {
@@ -58,34 +75,48 @@ pub fn first_loadable<E: Display>(
 /// Loads the appindicator library the tray will use and returns its name.
 ///
 /// The library stays loaded for the life of the process, as it does once
-/// libappindicator-sys opens it: unloading it would run its termination
-/// routines, which the tray never does.
+/// libappindicator-sys opens it. A later call returns the name the first
+/// successful one loaded and opens nothing.
 ///
 /// # Errors
 ///
-/// Returns [`NotFound`] when no appindicator library can be loaded, the case
-/// in which libappindicator-sys would panic.
+/// Returns [`NotFound`] when no appindicator library can be loaded, one case
+/// in which libappindicator-sys panics. A library that loads but lacks a
+/// function the tray calls still panics there, later; that is not checked.
 #[cfg(target_os = "linux")]
 pub fn load() -> Result<&'static str, NotFound> {
-    use std::sync::OnceLock;
+    use std::sync::{Mutex, PoisonError};
 
-    static LOADED: OnceLock<libloading::Library> = OnceLock::new();
+    // The library a call loaded, kept so it is never unloaded. The lock is
+    // held across the probe, so two calls cannot both open a library and
+    // drop one of the handles.
+    static LOADED: Mutex<Option<(&'static str, libloading::Library)>> = Mutex::new(None);
 
-    first_loadable(|name| {
-        let library = open(name)?;
+    let mut loaded = LOADED.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((name, _)) = &*loaded {
+        return Ok(name);
+    }
 
-        // A second call opens a library that the first one already keeps:
-        // dropping this extra handle only lowers the count of `dlopen`
-        // handles, and the library stays loaded.
-        drop(LOADED.set(library));
+    let mut library = None;
+    let name = first_loadable(|name| open(name).map(|opened| library = Some(opened)))?;
+    *loaded = library.map(|library| (name, library));
 
-        Ok::<(), libloading::Error>(())
-    })
+    Ok(name)
 }
 
-/// Opens the library `name` the way libappindicator-sys 0.9.0 does.
+/// Opens `name`, one of [`LIBRARY_NAMES`], the way libappindicator-sys 0.9.0
+/// does.
+///
+/// # Errors
+///
+/// Returns why the library did not open, or that `name` is not one of
+/// [`LIBRARY_NAMES`]: the safety argument below holds for those only.
 #[cfg(target_os = "linux")]
-fn open(name: &str) -> Result<libloading::Library, libloading::Error> {
+fn open(name: &str) -> Result<libloading::Library, String> {
+    if !LIBRARY_NAMES.contains(&name) {
+        return Err(format!("{name} is not an appindicator library name"));
+    }
+
     #[expect(
         unsafe_code,
         reason = "opening a shared library runs its initialisation routines, \
@@ -93,14 +124,16 @@ fn open(name: &str) -> Result<libloading::Library, libloading::Error> {
     )]
     // SAFETY: libloading 0.7.4 (`Library::new`, "# Safety") asks the caller
     // to make sure the library's initialisation routines, and its
-    // termination routines on unload, are safe to run. `name` is one of
-    // `LIBRARY_NAMES`, the libraries libappindicator-sys opens with this same
-    // call when the tray is created, so their initialisation would run in
-    // this process anyway, only later. A loaded library is kept in `load`'s
-    // `LOADED` and never unloaded, so no termination routine runs.
-    unsafe {
-        libloading::Library::new(name)
-    }
+    // termination routines when it is unloaded, are safe to run. `name` is
+    // one of `LIBRARY_NAMES`, checked above: the libraries
+    // libappindicator-sys 0.9.0 opens with this same call when the tray is
+    // created, so their initialisation runs in this process either way, here
+    // only earlier. `load` keeps the one handle this returns on success for
+    // the life of the process, so this crate never unloads the library; it
+    // is finalised at exit, as libappindicator-sys's own handle is.
+    let opened = unsafe { libloading::Library::new(name) };
+
+    opened.map_err(|err| err.to_string())
 }
 
 #[cfg(test)]

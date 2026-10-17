@@ -516,11 +516,15 @@ impl TrayStatus {
     fn after(outcome: tauri::Result<()>) -> Self {
         match outcome {
             Ok(()) => Self::Created,
-            Err(err) => {
-                log::warn!("starting without a tray icon: {err}");
-                Self::Missing
-            }
+            Err(err) => Self::missing(err),
         }
+    }
+
+    /// Returns [`TrayStatus::Missing`], logging `reason` as a warning. The
+    /// Linux smoke test (`scripts/smoke-linux.sh`) looks for this wording.
+    fn missing(reason: impl std::fmt::Display) -> Self {
+        log::warn!("starting without a tray icon: {reason}");
+        Self::Missing
     }
 }
 
@@ -546,10 +550,7 @@ fn create<E: std::fmt::Display>(
 ) -> TrayStatus {
     match library {
         Ok(()) => TrayStatus::after(init()),
-        Err(err) => {
-            log::warn!("starting without a tray icon: {err}");
-            TrayStatus::Missing
-        }
+        Err(err) => TrayStatus::missing(err),
     }
 }
 

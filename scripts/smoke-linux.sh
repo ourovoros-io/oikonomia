@@ -189,8 +189,9 @@ sleep 2
 # Tauri's bundler adds the appindicator library to Depends only when the build
 # machine has its development package; the tray needs it at run time.
 readonly TRAY_LIBRARY_PACKAGE='libayatana-appindicator3-1'
-dpkg-deb --field "${debs[0]}" Depends | grep -qw "$TRAY_LIBRARY_PACKAGE" \
-  || fail "the .deb does not depend on $TRAY_LIBRARY_PACKAGE"
+depends="$(dpkg-deb --field "${debs[0]}" Depends)"
+grep -qw "$TRAY_LIBRARY_PACKAGE" <<<"$depends" \
+  || fail "the .deb does not depend on $TRAY_LIBRARY_PACKAGE: $depends"
 
 # Installing with apt proves the package's declared dependencies resolve.
 sudo apt-get install -y "./${debs[0]}"
@@ -198,6 +199,8 @@ smoke deb "$PROCESS_NAME"
 
 # Removing only the library, against the dependency, stands in for a system
 # that lacks it. Reinstalling it repairs the package state for the removal.
+# The runner has no other appindicator library (no libappindicator3-1); if it
+# had one, the app would load that and the check below would fail.
 sudo dpkg --remove --force-depends "$TRAY_LIBRARY_PACKAGE"
 smoke_without_tray_library
 sudo apt-get install -y "$TRAY_LIBRARY_PACKAGE"
