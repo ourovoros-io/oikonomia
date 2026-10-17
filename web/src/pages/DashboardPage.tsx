@@ -38,7 +38,7 @@ import {
   ToastStack,
 } from '../components/ui'
 import { cn } from '../lib/cn'
-import { commandErrorMessage } from '../lib/commandError'
+import { commandFailure, type UiError } from '../lib/uiError'
 import { useI18n } from '../lib/I18nProvider'
 import { tn, type Locale } from '../lib/i18n'
 
@@ -82,7 +82,7 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
   const [data, setData] = useState<DashboardSummary | null>(null)
   const [series, setSeries] = useState<CashFlowSeries | null>(null)
   const [entries, setEntries] = useState<PostedEntryView[]>([])
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<UiError | null>(null)
   const [loading, setLoading] = useState(false)
   const [period, setPeriod] = useState<Period>('month')
 
@@ -122,7 +122,7 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
           setError(null)
         }
       } catch (err) {
-        if (!cancelled) setError(commandErrorMessage(err))
+        if (!cancelled) setError(commandFailure(err))
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -189,7 +189,7 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
       />
 
       <ToastStack>
-        <ErrorBanner className="" message={error} onDismiss={() => setError(null)} />
+        <ErrorBanner className="" error={error} onDismiss={() => setError(null)} />
       </ToastStack>
 
       <Hero>

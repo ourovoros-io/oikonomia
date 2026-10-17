@@ -29,7 +29,8 @@ import {
   vaultRestore,
   type AppInfo,
 } from '../lib/tauri'
-import { asCommandError, commandErrorMessage } from '../lib/commandError'
+import { asCommandError } from '../lib/commandError'
+import { commandFailure, copyError, type UiError } from '../lib/uiError'
 import { cn } from '../lib/cn'
 import { CURRENCIES } from '../lib/currencies'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -49,8 +50,8 @@ import {
   ToastStack,
 } from '../components/ui'
 import {
-  backupCommandError,
-  restoreCommandError,
+  backupFailure,
+  restoreFailure,
   canBackupVault,
   restoreConfirm,
   vaultBackupAvailability,
@@ -190,11 +191,11 @@ export function SettingsPage({
   const [passwordBusy, setPasswordBusy] = useState(false)
   // Drawn inside the password form, beside the field it names, not at the top of the page.
   const [passwordProblem, setPasswordProblem] = useState<{
-    text: string
+    error: UiError
     field: 'current' | 'new' | 'confirm' | null
   } | null>(null)
-  function setPageError(message: string | null) {
-    setError(message)
+  function setPageError(next: UiError | null) {
+    setError(next)
   }
   const [backupBusy, setBackupBusy] = useState(false)
   const [restoreOpen, setRestoreOpen] = useState(false)
@@ -271,7 +272,7 @@ export function SettingsPage({
         if (!cancelled) setArchived(books)
       } catch (err) {
         if (cancelled) return
-        setError(commandErrorMessage(err, 'settings.entities.archived.loadError'))
+        setError(commandFailure(err, 'settings.entities.archived.loadError'))
       }
     }
     void loadArchived()
@@ -297,7 +298,7 @@ export function SettingsPage({
   async function onCreate(ev: FormEvent) {
     ev.preventDefault()
     if (!name.trim()) {
-      setPageError(t('error.nameRequired'))
+      setPageError(copyError('error.nameRequired'))
       return
     }
     setBusy(true)
@@ -322,7 +323,7 @@ export function SettingsPage({
       setAddedBookId(entity.id)
       setAddedNotice({ key: 'settings.entities.created', name: entity.name })
     } catch (err) {
-      setPageError(commandErrorMessage(err))
+      setPageError(commandFailure(err))
     } finally {
       setBusy(false)
     }
@@ -337,7 +338,7 @@ export function SettingsPage({
       setPendingDelete(null)
       await onEntitiesChange()
     } catch (err) {
-      setPageError(commandErrorMessage(err, 'settings.deleteFailed'))
+      setPageError(commandFailure(err, 'settings.deleteFailed'))
     } finally {
       setDeleteBusy(false)
     }
@@ -355,7 +356,7 @@ export function SettingsPage({
       await api.entityArchive(pendingArchive.id)
       await onEntitiesChange()
     } catch (err) {
-      setPageError(commandErrorMessage(err, 'settings.entities.archiveError'))
+      setPageError(commandFailure(err, 'settings.entities.archiveError'))
     } finally {
       // Closed on failure too, so the error is not behind the dialog.
       setPendingArchive(null)
@@ -381,8 +382,8 @@ export function SettingsPage({
       // an archived book cannot do: it is read-only.
       setPageError(
         cmd.code === 'name_taken'
-          ? t('settings.entities.restoreNameTaken', { name: book.name })
-          : commandErrorMessage(cmd, 'settings.entities.restoreError'),
+          ? copyError('settings.entities.restoreNameTaken', { name: book.name })
+          : commandFailure(cmd, 'settings.entities.restoreError'),
       )
     } finally {
       setRestoringId(null)
@@ -399,7 +400,7 @@ export function SettingsPage({
       setPrefsUnreadable(prefs.unreadable)
       if (!prefs.unreadable) setNoticeKey('settings.prefs.resetDone')
     } catch (err) {
-      setPageError(commandErrorMessage(err, 'settings.prefs.resetFailed'))
+      setPageError(commandFailure(err, 'settings.prefs.resetFailed'))
     } finally {
       setPrefsResetBusy(false)
     }
@@ -407,7 +408,7 @@ export function SettingsPage({
 
   async function saveLock(mins: number) {
     if (!Number.isFinite(mins) || mins < 1) {
-      setPageError(t('settings.lockTimeoutMin'))
+      setPageError(copyError('settings.lockTimeoutMin'))
       return
     }
     setLockBusy(true)
@@ -419,7 +420,7 @@ export function SettingsPage({
       setNoticeKey('settings.lock.saved')
       onLockTimeoutChange?.(secs)
     } catch (err) {
-      setPageError(commandErrorMessage(err))
+      setPageError(commandFailure(err))
     } finally {
       setLockBusy(false)
     }
@@ -437,13 +438,13 @@ export function SettingsPage({
 
     if (!oldPassword || !newPassword) {
       setPasswordProblem({
-        text: t('form.fieldRequired'),
+        error: copyError('form.fieldRequired'),
         field: oldPassword ? 'new' : 'current',
       })
       return
     }
     if (newPassword !== confirmPassword) {
-      setPasswordProblem({ text: t('settings.passwordsMismatch'), field: 'confirm' })
+      setPasswordProblem({ error: copyError('settings.passwordsMismatch'), field: 'confirm' })
       return
     }
     // Password strength rules live in Rust; its Validation error surfaces below.
@@ -459,10 +460,10 @@ export function SettingsPage({
       // A rejection can be anything, including nothing.
       const cmd = asCommandError(err)
       setPasswordProblem({
-        text:
+        error:
           cmd.code === 'invalid_password'
-            ? t('settings.currentPasswordIncorrect')
-            : commandErrorMessage(cmd, 'settings.changePasswordFailed'),
+            ? copyError('settings.currentPasswordIncorrect')
+            : commandFailure(cmd, 'settings.changePasswordFailed'),
         field: passwordFieldForCode(cmd.code),
       })
     } finally {
@@ -478,7 +479,7 @@ export function SettingsPage({
     } catch {
       // No associated mail client, or the OS refused. The address is on
       // screen already, so the fallback copy just points at it.
-      setPageError(t('settings.support.openFailed', { email: appInfo.support_email }))
+      setPageError(copyError('settings.support.openFailed', { email: appInfo.support_email }))
     }
   }
 
@@ -490,7 +491,7 @@ export function SettingsPage({
     try {
       await vaultBackup()
     } catch (err) {
-      setPageError(backupCommandError(err))
+      setPageError(backupFailure(err))
     } finally {
       setBackupBusy(false)
     }
@@ -506,7 +507,7 @@ export function SettingsPage({
       setRestorePath(path)
       setRestoreOpen(true)
     } catch (err) {
-      setPageError(restoreCommandError(err))
+      setPageError(restoreFailure(err))
     } finally {
       setRestorePicking(false)
     }
@@ -526,7 +527,7 @@ export function SettingsPage({
       setRestoreOpen(false)
       setRestorePath(undefined)
     } catch (err) {
-      setPageError(restoreCommandError(err))
+      setPageError(restoreFailure(err))
       setRestoreOpen(false)
       setRestorePath(undefined)
     } finally {
@@ -539,7 +540,7 @@ export function SettingsPage({
       <TopBar title={t('settings.title')} subtitle={t('settings.description')} />
 
       <ToastStack>
-        <ErrorBanner className="" message={openDialog ? null : error} onDismiss={dismissError} />
+        <ErrorBanner className="" error={openDialog ? null : error} onDismiss={dismissError} />
         <Notice
           message={noticeKey ? t(noticeKey) : null}
           onDismiss={() => setNoticeKey(null)}
@@ -581,7 +582,7 @@ export function SettingsPage({
         onConfirm={() => void confirmDelete()}
       >
         <ErrorBanner
-          message={openDialog === 'delete' ? error : null}
+          error={openDialog === 'delete' ? error : null}
           className=""
           onDismiss={dismissError}
         />
@@ -745,7 +746,7 @@ export function SettingsPage({
           <div className="sm:col-span-3">
             <ErrorBanner
               id={errorBannerId}
-              message={passwordProblem?.text ?? null}
+              error={passwordProblem?.error ?? null}
               className="mb-4"
               onDismiss={() => setPasswordProblem(null)}
             />
@@ -765,7 +766,7 @@ export function SettingsPage({
         {backupBanner ? (
           <ErrorBanner
             title={backupBanner.title}
-            message={backupBanner.body}
+            error={backupBanner.body}
             className="mb-4"
           />
         ) : null}

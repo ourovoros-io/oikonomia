@@ -2,7 +2,6 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
-  useMemo,
   useRef,
   useState,
   type FormEvent,
@@ -20,9 +19,9 @@ import {
   vaultStatus,
   vaultUnlock,
 } from '../lib/tauri'
-import { asCommandError, commandErrorMessage } from '../lib/commandError'
-import { restoreCommandError, restoreConfirm } from '../lib/vaultBackupUi'
-import { t as translate, type MessageKey } from '../lib/i18n'
+import { asCommandError } from '../lib/commandError'
+import { restoreConfirm, restoreFailure } from '../lib/vaultBackupUi'
+import { commandFailure, copyError, type UiError } from '../lib/uiError'
 import { useI18n } from '../lib/I18nProvider'
 import { LanguagePill } from './LanguagePill'
 import { UnlockUpdateDialog } from './UnlockUpdateDialog'
@@ -55,15 +54,8 @@ const fieldIcon = [
 
 type PasswordField = 'password' | 'confirm'
 
-/**
- * The banner's error kept as data, not as a sentence, so it is worded in the
- * language on screen now: switching language while it shows re-words it.
- * `fields` are the inputs it is about; editing one of them clears it.
- */
-type UnlockError =
-  | { kind: 'copy'; key: MessageKey; fields: readonly PasswordField[] }
-  | { kind: 'submit'; error: CommandError; fields: readonly PasswordField[] }
-  | { kind: 'restore'; error: unknown; fields: readonly PasswordField[] }
+/** The banner's error, and the inputs it is about: editing one of them clears it. */
+type UnlockError = { reason: UiError; fields: readonly PasswordField[] }
 
 /**
  * Codes that a new password entry can fix. Any other failure (a vault too new
@@ -74,30 +66,17 @@ const PASSWORD_CODES: ReadonlySet<string> = new Set(['invalid_password', 'passwo
 
 function submitFailure(error: CommandError): UnlockError {
   const fields: readonly PasswordField[] = PASSWORD_CODES.has(error.code) ? ['password'] : []
-  return { kind: 'submit', error, fields }
+  const reason =
+    error.code === 'invalid_password'
+      ? copyError('unlock.incorrectPassword')
+      : commandFailure(error, 'unlock.unlockFailed')
+
+  return { reason, fields }
 }
 
-/**
- * The banner's sentence for `error`, in the current language. Module-level `t`
- * because this runs outside the component; the caller re-runs it on a language
- * change.
- */
-function unlockErrorText(error: UnlockError): string {
-  switch (error.kind) {
-    case 'copy':
-      return translate(error.key)
-    case 'submit':
-      return error.error.code === 'invalid_password'
-        ? translate('unlock.incorrectPassword')
-        : commandErrorMessage(error.error, 'unlock.unlockFailed')
-    case 'restore':
-      return restoreCommandError(error.error)
-  }
-}
-
-function restoreFailure(err: unknown): UnlockError {
+function restoreProblem(err: unknown): UnlockError {
   // Not about the password fields, so typing in them leaves it up.
-  return { kind: 'restore', error: err, fields: [] }
+  return { reason: restoreFailure(err), fields: [] }
 }
 
 export function UnlockScreen({
@@ -169,16 +148,6 @@ export function UnlockScreen({
     dialogWasOpen.current = dialogOpen
   }, [dialogOpen])
 
-  // Worded when the error or the language changes, not on every keystroke: a
-  // vague command error is logged each time it is worded.
-  const errorText = useMemo(
-    () => (error ? unlockErrorText(error) : null),
-    // The wording reads the current language from the catalog, not from a
-    // value this hook can see, so the language is listed by hand.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [error, locale],
-  )
-
   /** Marks the fields as wrong, shakes the card and puts the caret in `field`. */
   function rejectInput(reason: UnlockError, field: PasswordField) {
     setError(reason)
@@ -202,14 +171,13 @@ export function UnlockScreen({
     setPasswordInvalid(false)
 
     if (!password) {
-      rejectInput({ kind: 'copy', key: 'form.passwordRequired', fields: ['password'] }, 'password')
+      rejectInput({ reason: copyError('form.passwordRequired'), fields: ['password'] }, 'password')
       return
     }
     if (isSetup && password !== confirm) {
       // Either entry may be the mistyped one.
       const mismatch: UnlockError = {
-        kind: 'copy',
-        key: 'unlock.passwordsMismatch',
+        reason: copyError('unlock.passwordsMismatch'),
         fields: ['password', 'confirm'],
       }
       rejectInput(mismatch, 'confirm')
@@ -249,7 +217,7 @@ export function UnlockScreen({
       setRestorePath(path)
       setRestoreOpen(true)
     } catch (err) {
-      setError(restoreFailure(err))
+      setError(restoreProblem(err))
     } finally {
       setRestorePicking(false)
     }
@@ -272,7 +240,7 @@ export function UnlockScreen({
       setRestorePath(undefined)
       onUnlocked(next)
     } catch (err) {
-      setError(restoreFailure(err))
+      setError(restoreProblem(err))
       setRestoreOpen(false)
       setRestorePath(undefined)
     } finally {
@@ -389,7 +357,7 @@ export function UnlockScreen({
           <div className="absolute inset-x-0 top-full mt-3">
             <ErrorBanner
               id={errorId}
-              message={errorText}
+              error={error?.reason ?? null}
               className="text-center"
               onDismiss={() => setError(null)}
             />

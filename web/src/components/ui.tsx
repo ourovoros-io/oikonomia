@@ -1,5 +1,5 @@
 import { ChevronDown, CircleAlert, Loader2, X } from 'lucide-react'
-import { Children, isValidElement, useEffect, useRef, useState } from 'react'
+import { Children, isValidElement, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   ButtonHTMLAttributes,
   ComponentProps,
@@ -9,6 +9,7 @@ import type {
 
 import { cn } from '../lib/cn'
 import { useI18n } from '../lib/I18nProvider'
+import { uiErrorText, type UiError } from '../lib/uiError'
 
 /**
  * The shared control look. `ui-control` is a styling hook, not decoration:
@@ -402,22 +403,34 @@ export function Field({
  * An error or notice that stays until the problem is fixed. With `onDismiss`
  * it can also be closed; without it, the owner clears it. It scrolls itself
  * into view when it appears, so a failure above the fold is never silent.
+ *
+ * `error` is worded here, in the language on screen, so a language switch
+ * re-words a banner that is up.
  */
 export function ErrorBanner({
-  message,
+  error,
   title,
   className = 'mb-4',
   id,
   onDismiss,
 }: {
-  message: string | null
+  error: UiError | null
   title?: string
   className?: string
   id?: string
   onDismiss?: () => void
 }) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const ref = useRef<HTMLDivElement>(null)
+  // Worded once per error and language, not on every render of the page
+  // around it: wording analysis notes warns about codes it cannot word.
+  const message = useMemo(
+    () => (error ? uiErrorText(error) : null),
+    // The wording reads the current language from the catalog, not from a
+    // value this hook can see, so the language is listed by hand.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [error, locale],
+  )
   const visible = Boolean(message || title)
 
   useEffect(() => {

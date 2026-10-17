@@ -324,8 +324,7 @@ function installingCopy(t: Translate): DialogRegions {
  * The sentence under "Couldn't check": the copy mapped from the failure's
  * code, or the dialog's own sentence when this build has no sentence for it.
  *
- * Read from the map here, not through `commandErrorMessage`: that logs, and
- * this runs on every render of the dialog.
+ * Read from the map here: the dialog keeps only the failure's code.
  */
 function updateFailureBody(code: string | undefined, t: Translate): string {
   const fallback = t('unlock.update.failed.body')

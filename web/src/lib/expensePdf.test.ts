@@ -12,11 +12,14 @@ import {
   buildExpenseReportSvg,
   bytesToBase64,
   formatPdfPeriod,
-  pdfExportErrorMessage,
+  pdfExportFailure,
   roundedRectPath,
   suggestedExpensePdfName,
 } from './expensePdf'
 import { LOCALES, resetI18nForTests, setLocale, t, type Locale } from './i18n'
+import { uiErrorText } from './uiError'
+
+const pdfExportText = (err: unknown) => uiErrorText(pdfExportFailure(err))
 
 // The production code fetches the bundled fonts by URL, which does not resolve
 // in the node test environment. Serve the real .ttf files from disk instead so
@@ -330,8 +333,8 @@ describe('pdfExportErrorMessage', () => {
   test('logs the raw cause of an export failure, which the sentence hides', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
-    pdfExportErrorMessage({ code: 'save_failed', message: 'ENOSPC /tmp/x.pdf' })
-    pdfExportErrorMessage({ code: 'io', message: 'EACCES /tmp/y.pdf' })
+    pdfExportText({ code: 'save_failed', message: 'ENOSPC /tmp/x.pdf' })
+    pdfExportText({ code: 'io', message: 'EACCES /tmp/y.pdf' })
 
     expect(warn).toHaveBeenCalledTimes(2)
     expect(warn.mock.calls[0][0]).toContain('ENOSPC /tmp/x.pdf')
@@ -339,21 +342,21 @@ describe('pdfExportErrorMessage', () => {
   })
 
   test('maps io by code only', () => {
-    expect(pdfExportErrorMessage({ code: 'io', message: 'EACCES /tmp/x.pdf' })).toBe(
+    expect(pdfExportText({ code: 'io', message: 'EACCES /tmp/x.pdf' })).toBe(
       'Could not export the PDF.',
     )
     for (const code of ['save_location_invalid', 'save_failed', 'file_data_invalid', 'file_too_large']) {
-      expect(pdfExportErrorMessage({ code, message: 'invalid file data' })).toBe(
+      expect(pdfExportText({ code, message: 'invalid file data' })).toBe(
         'Could not export the PDF.',
       )
     }
-    expect(pdfExportErrorMessage({ code: 'vault_locked', message: 'Vault is locked' })).toBe(
+    expect(pdfExportText({ code: 'vault_locked', message: 'Vault is locked' })).toBe(
       'The vault is locked.',
     )
   })
 
   test('an unknown code shows the PDF fallback, never the raw message', () => {
-    expect(pdfExportErrorMessage({ code: 'brand_new', message: 'EACCES /tmp/x.pdf' })).toBe(
+    expect(pdfExportText({ code: 'brand_new', message: 'EACCES /tmp/x.pdf' })).toBe(
       'Could not export the PDF.',
     )
   })

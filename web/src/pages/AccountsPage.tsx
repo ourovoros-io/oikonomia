@@ -48,7 +48,7 @@ import {
   ToastStack,
 } from '../components/ui'
 import { cn } from '../lib/cn'
-import { commandErrorMessage } from '../lib/commandError'
+import { commandFailure, copyError, type UiError } from '../lib/uiError'
 import { useI18n } from '../lib/I18nProvider'
 
 type Props = { entity: Entity | null; onCreateBook?: () => void }
@@ -118,7 +118,7 @@ const SET_BALANCE_CLASS = 'min-w-32 shrink-0'
 export function AccountsPage({ entity, onCreateBook }: Props) {
   const { t } = useI18n()
   const [accounts, setAccounts] = useState<Account[]>([])
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<UiError | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [balances, setBalances] = useState<Map<string, number>>(new Map())
   const [renameTarget, setRenameTarget] = useState<Account | null>(null)
@@ -127,7 +127,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
   const codeInputRef = useRef<HTMLInputElement>(null)
   const [showForm, setShowForm] = useState(false)
   // Drawn inside the Add account card, where the person is looking.
-  const [formError, setFormError] = useState<string | null>(null)
+  const [formError, setFormError] = useState<UiError | null>(null)
   const [code, setCode] = useState('')
   const [name, setName] = useState('')
   const [accountType, setAccountType] = useState<AccountType>('expense')
@@ -136,11 +136,11 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
   const [balanceAmount, setBalanceAmount] = useState('')
   const [balanceAsOf, setBalanceAsOf] = useState(todayISO())
   const [balanceCurrent, setBalanceCurrent] = useState<number | null>(null)
-  const [balanceError, setBalanceError] = useState<string | null>(null)
+  const [balanceError, setBalanceError] = useState<UiError | null>(null)
   const [balanceBusy, setBalanceBusy] = useState(false)
   const [registerAccount, setRegisterAccount] = useState<Account | null>(null)
   const [registerLines, setRegisterLines] = useState<RegisterLine[]>([])
-  const [registerError, setRegisterError] = useState<string | null>(null)
+  const [registerError, setRegisterError] = useState<UiError | null>(null)
   const [registerBusy, setRegisterBusy] = useState(false)
 
   async function reload() {
@@ -157,7 +157,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
 
   useEffect(() => {
     if (!entity) return
-    void reload().catch((err) => setError(commandErrorMessage(err)))
+    void reload().catch((err) => setError(commandFailure(err)))
   }, [entity?.id])
 
   const sortedAccounts = useMemo(() => [...accounts].sort(byCode), [accounts])
@@ -193,7 +193,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
       codeInputRef.current?.focus()
       await reload()
     } catch (err) {
-      setFormError(commandErrorMessage(err))
+      setFormError(commandFailure(err))
     } finally {
       setBusy(false)
     }
@@ -209,7 +209,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
       setNotice(t('accounts.deactivate.done', { name: deactivateTarget.name }))
       await reload()
     } catch (err) {
-      setError(commandErrorMessage(err))
+      setError(commandFailure(err))
     } finally {
       // Closed on failure too, so the error is not behind the dialog.
       setDeactivateTarget(null)
@@ -231,7 +231,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
       setNotice(t('accounts.reactivate.done', { name: account.name }))
       await reload()
     } catch (err) {
-      setError(commandErrorMessage(err))
+      setError(commandFailure(err))
     }
   }
 
@@ -275,7 +275,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
         if (!cancelled) setRegisterLines(lines)
       })
       .catch((err) => {
-        if (!cancelled) setRegisterError(commandErrorMessage(err))
+        if (!cancelled) setRegisterError(commandFailure(err))
       })
       .finally(() => {
         if (!cancelled) setRegisterBusy(false)
@@ -290,14 +290,18 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
     if (!balanceAccount || !entity) return
 
     if (!balanceAsOf) {
-      setBalanceError(t('date.invalid'))
+      setBalanceError(copyError('date.invalid'))
       return
     }
 
     const minor = parseMajorToMinor(balanceAmount, bookCurrency(entity))
     if (minor === null) {
       setBalanceError(
-        t(balanceAccount.account_type === 'liability' ? 'accounts.balance.error.invalidOwed' : 'acct.invalidAmount'),
+        copyError(
+          balanceAccount.account_type === 'liability'
+            ? 'accounts.balance.error.invalidOwed'
+            : 'acct.invalidAmount',
+        ),
       )
       return
     }
@@ -316,7 +320,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
       setBalanceAccount(null)
       await reload()
     } catch (err) {
-      setBalanceError(commandErrorMessage(err))
+      setBalanceError(commandFailure(err))
     } finally {
       setBalanceBusy(false)
     }
@@ -351,7 +355,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
         />
 
         <ToastStack>
-          <ErrorBanner className="" message={registerError} onDismiss={() => setRegisterError(null)} />
+          <ErrorBanner className="" error={registerError} onDismiss={() => setRegisterError(null)} />
         </ToastStack>
 
         <Panel title={registerAccount.name} icon={<Receipt className="size-4" />}>
@@ -429,7 +433,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
       />
 
       <ToastStack>
-        <ErrorBanner className="" message={error} onDismiss={() => setError(null)} />
+        <ErrorBanner className="" error={error} onDismiss={() => setError(null)} />
         <Notice message={notice} onDismiss={() => setNotice(null)} />
       </ToastStack>
 
@@ -503,7 +507,7 @@ export function AccountsPage({ entity, onCreateBook }: Props) {
               </Select>
             </Field>
             <div className="sm:col-span-3">
-              <ErrorBanner message={formError} onDismiss={() => setFormError(null)} />
+              <ErrorBanner error={formError} onDismiss={() => setFormError(null)} />
               <Button type="submit" busy={busy}>
                 {busy ? t('common.saving') : t('acct.createAccount')}
               </Button>

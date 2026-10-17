@@ -1,5 +1,6 @@
-import { asCommandError, commandErrorMessage } from './commandError'
+import { asCommandError } from './commandError'
 import { t } from './i18n'
+import { commandFailure, copyError, type UiError } from './uiError'
 
 export type VaultBackupAvailability = 'ready' | 'empty' | 'missing'
 
@@ -26,18 +27,18 @@ export function canBackupVault(availability: VaultBackupAvailability): boolean {
 
 export function vaultBackupBanner(availability: VaultBackupAvailability): {
   title: string
-  body: string
+  body: UiError
 } | null {
   switch (availability) {
     case 'empty':
       return {
         title: t('settings.vaultBackup.emptyTitle'),
-        body: t('settings.vaultBackup.emptyBody'),
+        body: copyError('settings.vaultBackup.emptyBody'),
       }
     case 'missing':
       return {
         title: t('settings.vaultBackup.missingTitle'),
-        body: t('settings.vaultBackup.missingBody'),
+        body: copyError('settings.vaultBackup.missingBody'),
       }
     case 'ready':
       return null
@@ -76,32 +77,32 @@ export function restoreConfirm(kind: RestoreConfirmKind): {
  * read as one about making a backup.
  * Takes `unknown` because a rejection can be anything, including nothing.
  */
-function vaultCommandError(err: unknown, fallbackKey: string): string {
+function vaultFailure(err: unknown, fallbackKey: string): UiError {
   switch (asCommandError(err).code) {
     case 'vault_uninitialized':
-      return t('settings.vaultBackup.errUninitialized')
+      return copyError('settings.vaultBackup.errUninitialized')
     case 'restore_would_overwrite':
-      return t('settings.vaultBackup.errOverwrite')
+      return copyError('settings.vaultBackup.errOverwrite')
     case 'backup_invalid':
-      return t('settings.vaultBackup.errInvalid')
+      return copyError('settings.vaultBackup.errInvalid')
     case 'not_found':
-      return t('settings.vaultBackup.errNotFound')
+      return copyError('settings.vaultBackup.errNotFound')
     case 'io':
     case 'database':
     case 'serialization':
       // The shared rule keeps this sentence over the generic file one and logs the cause.
-      return commandErrorMessage(err, 'settings.vaultBackup.errIo')
+      return commandFailure(err, 'settings.vaultBackup.errIo')
     default:
-      return commandErrorMessage(err, fallbackKey)
+      return commandFailure(err, fallbackKey)
   }
 }
 
-/** The sentence for a failure while making a backup. */
-export function backupCommandError(err: unknown): string {
-  return vaultCommandError(err, 'settings.vaultBackup.errDefault')
+/** The error for a failure while making a backup. */
+export function backupFailure(err: unknown): UiError {
+  return vaultFailure(err, 'settings.vaultBackup.errDefault')
 }
 
-/** The sentence for a failure while restoring a backup, or choosing the file to restore. */
-export function restoreCommandError(err: unknown): string {
-  return vaultCommandError(err, 'settings.vaultBackup.errRestoreDefault')
+/** The error for a failure while restoring a backup, or choosing the file to restore. */
+export function restoreFailure(err: unknown): UiError {
+  return vaultFailure(err, 'settings.vaultBackup.errRestoreDefault')
 }

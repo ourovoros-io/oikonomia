@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Download, Loader2 } from 'lucide-react'
 import { api, type DocumentMeta } from '../lib/api'
-import { commandErrorMessage } from '../lib/commandError'
+import { commandFailure, type UiError } from '../lib/uiError'
 import { formatBytes } from '../lib/files'
 import { Modal } from './Modal'
 import { Button } from './ui'
@@ -18,9 +18,9 @@ type Props = {
   /** Non-null id opens the viewer for that document. */
   documentId: string | null
   onClose: () => void
-  onError: (message: string) => void
+  onError: (error: UiError) => void
   /** The last failure of an action in this dialog, drawn at the top of it. */
-  error?: string | null
+  error?: UiError | null
 }
 
 /**
@@ -53,7 +53,7 @@ export function DocumentViewerModal({ documentId, onClose, onError, error = null
       })
       .catch((err) => {
         if (cancelled) return
-        onError(commandErrorMessage(err, 'viewer.openFailed'))
+        onError(commandFailure(err, 'viewer.openFailed'))
         onClose()
       })
     return () => {
@@ -82,7 +82,7 @@ export function DocumentViewerModal({ documentId, onClose, onError, error = null
     try {
       await api.documentExport(documentId)
     } catch (err) {
-      onError(commandErrorMessage(err, 'viewer.exportFailed'))
+      onError(commandFailure(err, 'viewer.exportFailed'))
     } finally {
       setExporting(false)
     }

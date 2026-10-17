@@ -1,5 +1,4 @@
 import type { AccountDefaults, SimpleEntryInput } from './api'
-import { t } from './i18n'
 
 export type EntryKind = 'expense' | 'income' | 'bill' | 'transfer'
 export type BillStatusTray = 'paid' | 'unpaid'
@@ -115,7 +114,10 @@ export function buildSimpleEntryInput(args: {
   }
 }
 
-/** Validate role-account selections for the tray quick-add form. */
+/**
+ * Validate role-account selections for the tray quick-add form: the catalog key
+ * of what is missing, or null. A key, not a sentence, so the banner words it.
+ */
 export function validateTrayAccounts(args: {
   kind: EntryKind
   billStatus: BillStatusTray
@@ -127,20 +129,20 @@ export function validateTrayAccounts(args: {
 }): string | null {
   const { kind, billStatus, categoryId, walletId, payableId, fromId, toId } = args
   if (kind === 'expense' && (!categoryId || !walletId)) {
-    return t('quickAdd.pickAccounts')
+    return 'quickAdd.pickAccounts'
   }
   if (kind === 'income') {
     // An unpaid income is debited to the receivable account, not a wallet.
     const holder = billStatus === 'unpaid' ? payableId : walletId
-    if (!categoryId || !holder) return t('quickAdd.pickAccounts')
+    if (!categoryId || !holder) return 'quickAdd.pickAccounts'
   }
   if (kind === 'bill') {
-    if (!categoryId) return t('quickAdd.pickCategory')
-    if (billStatus === 'paid' && !walletId) return t('quickAdd.pickWallet')
-    if (billStatus === 'unpaid' && !payableId) return t('quickAdd.pickPayable')
+    if (!categoryId) return 'quickAdd.pickCategory'
+    if (billStatus === 'paid' && !walletId) return 'quickAdd.pickWallet'
+    if (billStatus === 'unpaid' && !payableId) return 'quickAdd.pickPayable'
   }
   if (kind === 'transfer') {
-    if (!fromId || !toId || fromId === toId) return t('quickAdd.pickDifferentAccounts')
+    if (!fromId || !toId || fromId === toId) return 'quickAdd.pickDifferentAccounts'
   }
   return null
 }

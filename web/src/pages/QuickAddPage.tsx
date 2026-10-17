@@ -36,7 +36,7 @@ import {
   setQuickAddHeight,
 } from '../lib/quickAddWindow'
 import { isTauri } from '../lib/tauri'
-import { commandErrorMessage } from '../lib/commandError'
+import { commandFailure, copyError, uiErrorText, type UiError } from '../lib/uiError'
 import { beginExclusive } from '../lib/guards'
 import { HideFromExportControl } from '../components/hiddenUi'
 import { Button } from '../components/ui'
@@ -198,7 +198,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
   const [defaults, setDefaults] = useState<AccountDefaults | null>(null)
   const [prefs, setPrefs] = useState<UiPrefs | null>(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<UiError | null>(null)
 
   const [step, setStep] = useState<Step>('kind')
   const [leaving, setLeaving] = useState<Step | null>(null)
@@ -343,7 +343,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
         // Book step only when multiple books exist.
         setStep(ents.length > 1 ? 'entity' : 'kind')
       } catch (err) {
-        if (!cancelled) setError(commandErrorMessage(err))
+        if (!cancelled) setError(commandFailure(err))
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -371,7 +371,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
       if (gen !== accountsGenRef.current) return
       rollTo('kind', 1)
     } catch (err) {
-      if (gen === accountsGenRef.current) setError(commandErrorMessage(err))
+      if (gen === accountsGenRef.current) setError(commandFailure(err))
     }
   }
 
@@ -464,7 +464,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
     async (file: File, entId: string) => {
       if (busyRef.current || rollingRef.current) return
       if (file.size > MAX_DOC_BYTES) {
-        setError(t('quickAdd.fileTooLarge'))
+        setError(copyError('quickAdd.fileTooLarge'))
         return
       }
       const gen = analyzeGenRef.current + 1
@@ -487,7 +487,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
         applySuggestion(suggestion, { kind: 'file', file })
       } catch (err) {
         if (analyzeGenRef.current !== gen) return
-        setError(commandErrorMessage(err, 'quickAdd.couldNotAnalyze'))
+        setError(commandFailure(err, 'quickAdd.couldNotAnalyze'))
         setPendingDoc(null)
         setPendingAnalysis(null)
       } finally {
@@ -499,7 +499,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
         setDragOver(false)
       }
     },
-    [rollTo, t],
+    [rollTo],
   )
 
   const processPath = useCallback(
@@ -518,7 +518,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
         applySuggestion(suggestion, { kind: 'path', path })
       } catch (err) {
         if (analyzeGenRef.current !== gen) return
-        setError(commandErrorMessage(err, 'quickAdd.couldNotAnalyze'))
+        setError(commandFailure(err, 'quickAdd.couldNotAnalyze'))
         setPendingDoc(null)
         setPendingAnalysis(null)
       } finally {
@@ -555,7 +555,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
             setDragOver(false)
             const path = payload.paths[0]
             if (path) void processPath(path, entId)
-            else setError(t('quickAdd.noFilePath'))
+            else setError(copyError('quickAdd.noFilePath'))
           }
         })
       } catch {
@@ -588,10 +588,10 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
       busyRef.current = false
       if (step !== 'amount') rollTo('amount', -1)
       // After the roll, which clears the error of the step it leaves.
-      setError(t(amountKey ?? 'quickAdd.invalidAmount'))
+      setError(copyError(amountKey ?? 'quickAdd.invalidAmount'))
       return
     }
-    const accountErr = validateTrayAccounts({
+    const accountProblem = validateTrayAccounts({
       kind,
       billStatus: entryStatus,
       categoryId,
@@ -600,9 +600,9 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
       fromId,
       toId,
     })
-    if (accountErr) {
+    if (accountProblem) {
       busyRef.current = false
-      setError(accountErr)
+      setError(copyError(accountProblem))
       if (step === 'save') rollTo('accounts', -1)
       return
     }
@@ -679,7 +679,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
       onBusyChange?.(false)
       onPosted({ kind, amountMinor: minor, currency: bookCurrency(entity) })
     } catch (err) {
-      setError(commandErrorMessage(err))
+      setError(commandFailure(err))
       setBusy(false)
       busyRef.current = false
     }
@@ -692,7 +692,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
       'quickAdd.invalidAmount',
     )
     if (amountKey) {
-      setError(t(amountKey))
+      setError(copyError(amountKey))
       amountRef.current?.focus()
       return
     }
@@ -700,7 +700,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
   }
 
   function advanceFromAccounts() {
-    const accountErr = validateTrayAccounts({
+    const accountProblem = validateTrayAccounts({
       kind,
       billStatus: entryStatus,
       categoryId,
@@ -709,8 +709,8 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
       fromId,
       toId,
     })
-    if (accountErr) {
-      setError(accountErr)
+    if (accountProblem) {
+      setError(copyError(accountProblem))
       return
     }
     rollTo('save', 1)
@@ -1108,7 +1108,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
           className="pointer-events-none absolute inset-x-6 bottom-1 truncate text-center text-[11px] leading-none text-[var(--color-danger)]"
           role="alert"
         >
-          {error}
+          {uiErrorText(error)}
         </p>
       ) : null}
     </div>

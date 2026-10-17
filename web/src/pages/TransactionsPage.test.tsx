@@ -65,7 +65,7 @@ vi.mock('../lib/api', async (importOriginal) => {
 })
 
 import { api } from '../lib/api'
-import { commandErrorMessage } from '../lib/commandError'
+import { commandErrorText } from '../lib/commandError'
 import { resetI18nForTests } from '../lib/i18n'
 import { formatMoney } from '../lib/money'
 import { TransactionsPage } from './TransactionsPage'
@@ -1424,7 +1424,7 @@ describe('TransactionsPage summary', () => {
 
     await act(async () => failStale({ code: 'io', message: 'disk' }))
 
-    expect(screen.queryByText(commandErrorMessage({ code: 'io', message: 'disk' }))).toBeNull()
+    expect(screen.queryByText(commandErrorText({ code: 'io', message: 'disk' }))).toBeNull()
     expect(screen.getByText('CLIENT INVOICE')).toBeInTheDocument()
   })
 
@@ -1482,7 +1482,7 @@ describe('TransactionsPage summary', () => {
     await waitFor(() => {
       expect(pane?.querySelector('[data-net]')).toHaveTextContent('—')
     })
-    expect(pane).toHaveTextContent(commandErrorMessage({ code: 'io', message: 'disk' }))
+    expect(pane).toHaveTextContent(commandErrorText({ code: 'io', message: 'disk' }))
   })
 
   test('a failing summary with an unknown code never shows the raw message', async () => {
