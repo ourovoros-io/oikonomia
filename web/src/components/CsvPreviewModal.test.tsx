@@ -16,7 +16,7 @@ afterEach(() => {
 function previewWith(error: { code: string; params?: Record<string, string> }): CsvImportPreview {
   return {
     source: 'bank.csv',
-    headers: ['Date', 'Description', 'Amount'],
+    headers: ['Date', 'Description', 'Amount'].map((name) => ({ name })),
     rows: [
       {
         source_row: 2,

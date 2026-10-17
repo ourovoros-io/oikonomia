@@ -1,12 +1,14 @@
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { AccountDefaults, CsvColumnMapping, CsvImportPreviewRow, SimpleEntryInput } from './api'
 import mappingVerdicts from './csvMappingVerdicts.json'
+import { resetI18nForTests, setLocale } from './i18n'
 import {
   applyBulkAccounts,
   csvImportAccountDefaults,
   defaultChecked,
   draftFromDetected,
   draftToMapping,
+  headerLabel,
   initialBulkAccounts,
   mapNeededKey,
   mappingProblemKey,
@@ -194,7 +196,7 @@ describe('initialBulkAccounts', () => {
 })
 
 describe('column mapping helpers', () => {
-  const headers = ['Date', 'Payee', 'Notes', 'Amount']
+  const headers = ['Date', 'Payee', 'Notes', 'Amount'].map((name) => ({ name }))
   const detected: CsvColumnMapping = {
     date: 'Date',
     description: 'Payee',
@@ -258,7 +260,7 @@ describe('column mapping helpers', () => {
   })
 
   test('an edited mapping keeps the detected direction column', () => {
-    const typed = [...headers, 'Type']
+    const typed = [...headers, { name: 'Type' }]
     const draft = draftFromDetected(typed, { ...detected, direction: 'type' })
     expect(draft.direction).toBe('Type')
 
@@ -268,7 +270,7 @@ describe('column mapping helpers', () => {
   })
 
   test('debit and credit columns drop the direction column', () => {
-    const draft = draftFromDetected([...headers, 'Type'], { ...detected, direction: 'Type' })
+    const draft = draftFromDetected([...headers, { name: 'Type' }], { ...detected, direction: 'Type' })
     const mapping = draftToMapping({
       ...draft,
       amountMode: 'debit_credit',
@@ -290,7 +292,7 @@ describe('column mapping helpers', () => {
   })
 
   test('previewHasColumnMap is false until headers exist', () => {
-    expect(previewHasColumnMap({ headers: ['Date'] })).toBe(true)
+    expect(previewHasColumnMap({ headers: [{ name: 'Date' }] })).toBe(true)
     expect(previewHasColumnMap({ headers: [] })).toBe(false)
     expect(previewHasColumnMap({})).toBe(false)
   })
@@ -308,5 +310,40 @@ describe('mapNeededKey', () => {
     expect(mapNeededKey([])).toBeNull()
     expect(mapNeededKey(undefined)).toBeNull()
     expect(mapNeededKey(null)).toBeNull()
+  })
+})
+
+describe('headerLabel', () => {
+  afterEach(() => {
+    resetI18nForTests()
+    vi.restoreAllMocks()
+  })
+
+  const unnamed = {
+    name: 'Column 2',
+    label: { code: 'csv_unnamed_column', params: { position: '2' } },
+  }
+  const repeated = {
+    name: 'Amount (2)',
+    label: { code: 'csv_repeated_column', params: { name: 'Amount', occurrence: '2' } },
+  }
+
+  test('a clean header is shown as written', () => {
+    expect(headerLabel({ name: 'Ποσό' })).toBe('Ποσό')
+    expect(headerLabel({ name: 'Date', label: null })).toBe('Date')
+  })
+
+  test('a made-up name is shown in the user language, not as Rust spelled it', () => {
+    setLocale('el')
+    expect(headerLabel(unnamed)).toBe('Στήλη 2')
+    expect(headerLabel(repeated)).toBe('Amount (2)')
+
+    setLocale('de')
+    expect(headerLabel(unnamed)).toBe('Spalte 2')
+  })
+
+  test('a label this UI cannot word falls back to the name', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(headerLabel({ name: 'Column 2', label: { code: 'csv_future_label' } })).toBe('Column 2')
   })
 })
