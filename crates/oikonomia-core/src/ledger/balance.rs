@@ -344,6 +344,69 @@ pub(crate) fn count_hidden_entries_as_of(
     Ok(usize::try_from(count).unwrap_or(0))
 }
 
+/// Counts the hidden active entries a dashboard's figures include: those
+/// dated in `from..=to` that touch an income or expense account, and those
+/// dated through `assets_as_of` that touch an asset account.
+///
+/// The first set is [`count_hidden_pnl_entries`] over the window, the second
+/// the part of [`count_hidden_entries_as_of`] that reaches the assets total,
+/// so a hidden transfer between two liabilities is left out. Adding the two
+/// counts would count twice an expense paid from an asset in the window, so
+/// one query takes their union. Like the balance sheet's count it includes a
+/// transfer between two asset accounts, whose lines are in the total although
+/// they cancel.
+///
+/// # Errors
+///
+/// [`Error::Database`] when the query fails.
+pub(crate) fn count_hidden_dashboard_entries(
+    conn: &Connection,
+    entity_id: EntityId,
+    from: Date,
+    to: Date,
+    assets_as_of: Date,
+) -> Result<usize> {
+    let touches = |account_types: &str| {
+        format!(
+            "EXISTS (
+                SELECT 1 FROM journal_lines jl
+                JOIN accounts a ON a.id = jl.account_id
+                WHERE jl.entry_id = je.id AND a.account_type IN ({account_types})
+            )"
+        )
+    };
+    let touches_pnl = touches("'income', 'expense'");
+    let touches_assets = touches("'asset'");
+    let sql = format!(
+        "
+        SELECT COUNT(1)
+        FROM journal_entries je
+        WHERE je.entity_id = ?1
+          AND je.hidden = 1
+          AND {ACTIVE_ENTRY_PREDICATE}
+          AND (
+            (je.entry_date >= ?2 AND je.entry_date <= ?3 AND {touches_pnl})
+            OR (je.entry_date <= ?4 AND {touches_assets})
+          )
+        "
+    );
+
+    let count: i64 = conn
+        .query_row(
+            &sql,
+            rusqlite::params![
+                entity_id.to_string(),
+                format_date(from),
+                format_date(to),
+                format_date(assets_as_of),
+            ],
+            |row| row.get(0),
+        )
+        .database("count hidden dashboard entries")?;
+
+    Ok(usize::try_from(count).unwrap_or(0))
+}
+
 /// Parses the text [`AccountType::identifier`] writes into
 /// `accounts.account_type`.
 ///

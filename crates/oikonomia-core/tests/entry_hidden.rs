@@ -295,6 +295,46 @@ fn the_balance_sheet_counts_a_hidden_transfer_and_the_pnl_does_not() {
     );
 }
 
+/// The dashboard's note covers its assets figure as well as its net: a hidden
+/// entry on an asset account through the assets date counts, once even when
+/// it also moves the net, and one that reaches neither figure does not.
+#[test]
+fn the_dashboard_counts_hidden_entries_behind_its_assets_figure() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = create_book(conn, "Personal", ChartTemplate::Personal);
+    let savings = common::account(conn, book.entity_id, "1020");
+    let hide = |id| set_entry_hidden(conn, id, true).expect("hide");
+
+    hidden_transfer(conn, &book, savings, "2026-02-10");
+    hidden_transfer(conn, &book, savings, "2026-03-05");
+    hidden_transfer(conn, &book, savings, "2026-04-02");
+    let voided = hidden_transfer(conn, &book, savings, "2026-03-06");
+    void_entry(conn, voided, Locale::En).expect("void");
+    hide(
+        common::post_two_line(conn, book.entity_id, "2026-03-07", ("2000", "2100"), 900)
+            .entry
+            .id,
+    );
+    hide(
+        common::post_two_line(conn, book.entity_id, "2026-03-08", ("3100", "2000"), 900)
+            .entry
+            .id,
+    );
+    let paid = post_simple_entry(conn, &expense(&book, "2026-03-09", "Both", 300)).expect("post");
+    hide(paid.entry.id);
+
+    let (march_1, march_31) = (common::date("2026-03-01"), common::date("2026-03-31"));
+    let summary =
+        dashboard_summary(conn, book.entity_id, march_1, march_31, march_31).expect("dashboard");
+
+    assert_eq!(
+        summary.hidden_entry_count, 3,
+        "the February and March transfers and the expense once; not April, the voided one, \
+         or the two that touch no asset, income or expense account"
+    );
+}
+
 #[test]
 fn voiding_hidden_entry_omits_original_and_reverse_from_export() {
     let (_dir, vault) = common::vault();
