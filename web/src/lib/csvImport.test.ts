@@ -17,6 +17,7 @@ import {
   previewHasColumnMap,
   previewSubtitle,
   rowCategoryOptions,
+  rowNeedsCategory,
   rowSelectable,
 } from './csvImport'
 
@@ -93,6 +94,30 @@ describe('rowCategoryOptions', () => {
   test('bills and transfers get no list', () => {
     expect(rowCategoryOptions('bill', lists)).toEqual([])
     expect(rowCategoryOptions('transfer', lists)).toEqual([])
+  })
+})
+
+describe('rowNeedsCategory', () => {
+  const lists = {
+    expense: [{ id: 'exp1', name: 'Groceries', account_type: 'expense', is_active: true }],
+    income: [{ id: 'inc1', name: 'Salary', account_type: 'income', is_active: true }],
+  } as const
+
+  test('a row booked to a listed account of its kind needs nothing', () => {
+    expect(rowNeedsCategory(suggested('expense'), lists)).toBe(false)
+    expect(rowNeedsCategory(suggested('income'), lists)).toBe(false)
+  })
+
+  test('a row with no category, an unlisted one or one of the other kind needs one', () => {
+    expect(rowNeedsCategory({ kind: 'expense', category_account_id: null }, lists)).toBe(true)
+    expect(rowNeedsCategory({ kind: 'expense', category_account_id: 'archived' }, lists)).toBe(true)
+    expect(rowNeedsCategory({ kind: 'income', category_account_id: 'exp1' }, lists)).toBe(true)
+  })
+
+  test('bills, transfers and unreadable rows are not asked for one', () => {
+    expect(rowNeedsCategory({ kind: 'bill', category_account_id: null }, lists)).toBe(false)
+    expect(rowNeedsCategory({ kind: 'transfer', category_account_id: null }, lists)).toBe(false)
+    expect(rowNeedsCategory(null, lists)).toBe(false)
   })
 })
 

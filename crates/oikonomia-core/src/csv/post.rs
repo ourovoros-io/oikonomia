@@ -10,8 +10,13 @@
 //!
 //! A post is all or nothing: one row the ledger refuses rolls back every
 //! row of the batch. A skipped duplicate is not a refusal.
+//!
+//! An expense or income row is posted only to a category the preview lists
+//! for its kind ([`ensure_listed_categories`]). The ledger would refuse most
+//! such rows too, one at a time and in its own words; checking the batch
+//! first reports every such row with one code before any row is posted.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use rusqlite::Connection;
@@ -23,11 +28,12 @@ use crate::csv::{
     CsvImportPreviewRow, CsvRowOutcome, normalize_description, suggested_entry,
 };
 use crate::db::{collect_rows, read_column, stored_date};
-use crate::domain::{AccountId, EntityId};
+use crate::domain::{AccountId, AccountType, EntityId};
 use crate::error::{DatabaseContext, Error, Result, ValidationError};
 use crate::ledger::{
     ACTIVE_ENTRY_PREDICATE, PostSimpleEntryRequest, PostedEntryView, SimpleBillStatus,
-    SimpleEntryKind, ensure_writable_entity, get_account, get_entity, post_simple_entry_unchecked,
+    SimpleEntryKind, ensure_writable_entity, get_account, get_entity, list_accounts,
+    post_simple_entry_unchecked,
 };
 use crate::util::parse_date;
 
@@ -116,6 +122,10 @@ pub fn preview_bank_csv_file(
 /// - [`ValidationError::InvalidDate`] for a row whose `entry_date` is not a
 ///   `YYYY-MM-DD` date. The date is read before the duplicate rule is
 ///   applied, so this is reported for any row.
+/// - [`ValidationError::ImportCategoryRequired`], with how many, when
+///   expense or income rows that are to be posted have no listed category,
+///   as the module doc says. This is checked for the whole batch before any
+///   row is converted.
 /// - [`ValidationError::AmountNotPositive`],
 ///   [`ValidationError::BillStatusRequired`] or
 ///   [`ValidationError::AccountRequired`] for a row that is to be posted and
@@ -149,37 +159,137 @@ pub fn post_import_rows(
     ensure_writable_entity(conn, entity_id)?;
 
     let transaction = conn.unchecked_transaction().database("begin CSV import")?;
-    let mut seen = load_active_movements(&transaction, entity_id)?;
-    let mut posted: Vec<PostedEntryView> = Vec::new();
-    let mut skipped_duplicate_count = 0u32;
+    let kept = rows_to_post(&transaction, entity_id, rows, include_duplicates)?;
+    ensure_listed_categories(
+        &transaction,
+        entity_id,
+        kept.rows.iter().map(|row| row.request),
+    )?;
 
-    for row in rows {
-        // The date is read first because the duplicate rule needs it. The
-        // rest of the row is checked only once it is known to be posted, so
-        // a skipped duplicate is never refused for what else it holds. The
-        // conversion below takes the date parsed here.
-        let entry_date = parse_date(&row.entry_date)?;
-        let movement = Movement::new(
-            entry_date,
-            row.amount_minor,
-            Flow::of_request(row),
-            &row.description,
-        );
-        if !include_duplicates && seen.contains(&movement) {
-            skipped_duplicate_count = skipped_duplicate_count.saturating_add(1);
-            continue;
-        }
-        let entry = row.dated(entry_date)?;
-        let view = post_simple_entry_unchecked(&transaction, &entry)?;
-        seen.record(&movement);
-        posted.push(view);
+    let mut posted: Vec<PostedEntryView> = Vec::with_capacity(kept.rows.len());
+    for row in kept.rows {
+        let entry = row.request.dated(row.entry_date)?;
+        posted.push(post_simple_entry_unchecked(&transaction, &entry)?);
     }
 
     transaction.commit().database("commit CSV import")?;
     Ok(CsvImportPostResult {
         posted,
-        skipped_duplicate_count,
+        skipped_duplicate_count: kept.skipped_duplicate_count,
     })
+}
+
+/// The rows of a batch that are to be posted, once duplicates are skipped.
+#[derive(Debug)]
+struct KeptRows<'a> {
+    /// The rows to post, in batch order.
+    rows: Vec<KeptRow<'a>>,
+    /// How many rows were skipped as duplicates.
+    skipped_duplicate_count: u32,
+}
+
+/// One row to post, with the date the duplicate rule already parsed.
+#[derive(Debug)]
+struct KeptRow<'a> {
+    /// The row as the caller sent it.
+    request: &'a PostSimpleEntryRequest,
+    /// Its parsed `entry_date`.
+    entry_date: Date,
+}
+
+/// Parses the date of every row and drops the ones the duplicate rule skips.
+///
+/// The date is read first because the duplicate rule needs it. The rest of
+/// a row is checked only once it is known to be posted, so a skipped
+/// duplicate is never refused for what else it holds. A kept row counts as
+/// seen at once: if any later step refuses, the whole batch rolls back, so
+/// for the rows after it a kept row is as good as posted.
+///
+/// # Errors
+///
+/// - [`ValidationError::InvalidDate`] for a row whose date does not parse.
+/// - [`Error::VaultCorrupt`] for a stored entry date that does not parse.
+/// - [`Error::Database`] on database errors.
+fn rows_to_post<'a>(
+    conn: &Connection,
+    entity_id: EntityId,
+    rows: &'a [PostSimpleEntryRequest],
+    include_duplicates: bool,
+) -> Result<KeptRows<'a>> {
+    let mut seen = load_active_movements(conn, entity_id)?;
+    let mut kept = KeptRows {
+        rows: Vec::with_capacity(rows.len()),
+        skipped_duplicate_count: 0,
+    };
+
+    for request in rows {
+        let entry_date = parse_date(&request.entry_date)?;
+        let movement = Movement::new(
+            entry_date,
+            request.amount_minor,
+            Flow::of_request(request),
+            &request.description,
+        );
+        if !include_duplicates && seen.contains(&movement) {
+            kept.skipped_duplicate_count = kept.skipped_duplicate_count.saturating_add(1);
+            continue;
+        }
+        seen.record(&movement);
+        kept.rows.push(KeptRow {
+            request,
+            entry_date,
+        });
+    }
+    Ok(kept)
+}
+
+/// Checks that every expense and income row is booked to a category the
+/// preview lists for its kind: an active expense account of the book for an
+/// expense, an active income account for an income.
+///
+/// Bills and transfers are left to the ledger: the preview does not edit
+/// their accounts.
+///
+/// # Errors
+///
+/// - [`ValidationError::ImportCategoryRequired`], with how many rows, when
+///   any row has no listed category.
+/// - [`Error::VaultCorrupt`] for a stored account that does not parse.
+/// - [`Error::Database`] on database errors.
+fn ensure_listed_categories<'a>(
+    conn: &Connection,
+    entity_id: EntityId,
+    rows: impl Iterator<Item = &'a PostSimpleEntryRequest>,
+) -> Result<()> {
+    let listed: HashMap<AccountId, AccountType> = list_accounts(conn, entity_id)?
+        .into_iter()
+        .filter(|account| account.is_active)
+        .map(|account| (account.id, account.account_type))
+        .collect();
+
+    let count = rows
+        .filter(|row| !has_listed_category(row, &listed))
+        .count();
+    if count > 0 {
+        return Err(ValidationError::ImportCategoryRequired { count }.into());
+    }
+    Ok(())
+}
+
+/// Returns whether `row` needs no category check, or names an account in
+/// `listed` of the type its kind posts to.
+fn has_listed_category(
+    row: &PostSimpleEntryRequest,
+    listed: &HashMap<AccountId, AccountType>,
+) -> bool {
+    let wanted = match row.kind {
+        SimpleEntryKind::Expense => AccountType::Expense,
+        SimpleEntryKind::Income => AccountType::Income,
+        SimpleEntryKind::Bill | SimpleEntryKind::Transfer => return true,
+    };
+    row.category_account_id
+        .and_then(|id| listed.get(&id))
+        .is_some_and(|account_type| *account_type == wanted)
 }
 
 /// Which way an entry moves money, as a bank statement signs it.

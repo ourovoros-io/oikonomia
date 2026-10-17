@@ -45,6 +45,7 @@
   "account_inactive",
   "account_required",
   "account_wrong_type",
+  "import_category_required",
   "same_account",
   "amount_not_positive",
   "bill_status_required",

@@ -974,6 +974,9 @@
       "selectRow": "Zeile {n} auswählen",
       "rowCategory": "Kategorie für Zeile {n}",
       "chooseCategory": "Kategorie wählen",
+      "needsCategory": "Kategorie fehlt",
+      "needsCategoryOne": "Wählen Sie vor dem Import eine Kategorie für 1 ausgewählte Zeile.",
+      "needsCategoryMany": "Wählen Sie vor dem Import eine Kategorie für {n} ausgewählte Zeilen.",
       "col": {
         "date": "Datum",
         "description": "Beschreibung",
@@ -1118,6 +1121,7 @@
     "accountRequired": "Wählen Sie ein Konto für „{role}“ aus.",
     "accountRequiredGeneric": "Wählen Sie für jedes Feld, das die Buchung benötigt, ein Konto aus.",
     "accountWrongType": "Das Konto {code} kann nicht für „{role}“ verwendet werden. Wählen Sie ein anderes Konto.",
+    "importCategoryRequired": "Einige zu importierende Zeilen haben keine Kategorie ({count}). Wählen Sie für jede eine Kategorie, bevor Sie importieren.",
     "accountWrongTypeGeneric": "Der Kontotyp von {code} passt nicht zu dieser Buchung. Wählen Sie ein anderes Konto.",
     "sameAccount": "Eine Buchung braucht zwei verschiedene Konten. Ändern Sie eines davon.",
     "amountNotPositive": "Der Betrag muss größer als null sein.",

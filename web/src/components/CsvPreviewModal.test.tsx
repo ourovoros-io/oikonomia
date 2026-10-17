@@ -228,3 +228,68 @@ describe('CsvPreviewModal category column', () => {
     expect(rowCategory(3)).toHaveDisplayValue('Choose a category')
   })
 })
+
+describe('CsvPreviewModal rows that need a category', () => {
+  const postButton = (n: number) => screen.getByRole('button', { name: `Post ${n} selected` })
+
+  test('flags each such row and keeps Import disabled, saying why', () => {
+    const onConfirm = vi.fn<(input: { rows: SimpleEntryInput[] }) => void>()
+    renderCategoryPreview(
+      [
+        suggestedRow(2, 'expense', null),
+        suggestedRow(3, 'income', 'gone'),
+        suggestedRow(4, 'expense'),
+      ],
+      onConfirm,
+    )
+
+    expect(screen.getAllByText('Needs a category')).toHaveLength(2)
+    expect(postButton(3)).toBeDisabled()
+    expect(postButton(3)).toHaveAccessibleDescription(
+      'Choose a category for 2 selected rows before you import.',
+    )
+    fireEvent.click(postButton(3))
+    expect(onConfirm).not.toHaveBeenCalled()
+  })
+
+  test('an income row pointed at an expense account needs a category too', () => {
+    renderCategoryPreview([suggestedRow(2, 'income', 'exp1')])
+
+    expect(screen.getByText('Needs a category')).toBeInTheDocument()
+    expect(
+      screen.getByText('Choose a category for 1 selected row before you import.'),
+    ).toBeInTheDocument()
+  })
+
+  test('choosing a category for each row enables Import and clears the message', () => {
+    const onConfirm = vi.fn<(input: { rows: SimpleEntryInput[] }) => void>()
+    renderCategoryPreview([suggestedRow(2, 'expense', null), suggestedRow(3, 'expense')], onConfirm)
+
+    fireEvent.change(rowCategory(2), { target: { value: 'exp2' } })
+
+    expect(screen.queryByText('Needs a category')).toBeNull()
+    expect(screen.queryByText(/before you import/)).toBeNull()
+    expect(postButton(2)).toBeEnabled()
+    fireEvent.click(postButton(2))
+    expect(onConfirm).toHaveBeenCalledOnce()
+  })
+
+  test('a row left out of the import does not block it, but stays flagged', () => {
+    renderCategoryPreview([suggestedRow(2, 'expense', null), suggestedRow(3, 'expense')])
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select row 2' }))
+
+    expect(screen.getByText('Needs a category')).toBeInTheDocument()
+    expect(postButton(1)).toBeEnabled()
+  })
+
+  test('says so in Greek', () => {
+    setLocale('el')
+    renderCategoryPreview([suggestedRow(2, 'expense', null)])
+
+    expect(screen.getByText('Χρειάζεται κατηγορία')).toBeInTheDocument()
+    expect(
+      screen.getByText('Επιλέξτε κατηγορία για 1 επιλεγμένη γραμμή πριν από την εισαγωγή.'),
+    ).toBeInTheDocument()
+  })
+})
