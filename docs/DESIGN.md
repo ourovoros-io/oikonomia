@@ -317,10 +317,11 @@ with its reason so that it is not raised again without something new to say.
   entries posted line by line and opening balances do not, so the list
   classifies them from their lines (`ListedEntryKind` in
   `ledger/entry_kind.rs`): an older bill paid at once lists as an expense, and
-  an opening balance in a blank book, which has no system Opening Balances
-  account, lists as a journal entry. Storing an opening-balance kind would mean
-  widening the column's `CHECK`, which `SQLite` can only do by rebuilding
-  `journal_entries`, for a label only.
+  any entry on the account opening balances post against lists as an opening
+  balance. In a blank book that account is its first active equity account, so
+  reordering or archiving its equity accounts can relabel older entries.
+  Storing an opening-balance kind would mean widening the column's `CHECK`,
+  which `SQLite` can only do by rebuilding `journal_entries`, for a label only.
 - **The app's own journal CSV export cannot be imported.** The import refuses
   it with a clear message (`csv_journal_export`). A journal line has no wallet
   side, so importing two-line entries as bank rows would create unrelated

@@ -431,12 +431,11 @@ fn a_journal_entry_on_other_equity_is_other() {
 }
 
 #[test]
-fn a_blank_book_has_no_system_equity_so_its_opening_balances_are_other() {
+fn a_blank_book_lists_entries_on_its_first_equity_account_as_opening_balances() {
     let (_dir, vault) = common::vault();
     let conn = vault.connection().expect("conn");
     let entity_id = common::book(conn, "Blank", ChartTemplate::Blank);
-    let mut created = Vec::new();
-    for (code, account_type) in [("1000", AccountType::Asset), ("3000", AccountType::Equity)] {
+    let create = |code: &str, account_type| {
         let input = CreateAccount {
             entity_id,
             code: code.into(),
@@ -444,19 +443,32 @@ fn a_blank_book_has_no_system_equity_so_its_opening_balances_are_other() {
             account_type,
             sort_order: None,
         };
-        created.push(create_account(conn, &input).expect("account").id);
-    }
+        create_account(conn, &input).expect("account")
+    };
+    let checking = create("1000", AccountType::Asset);
+    let opening_equity = create("3000", AccountType::Equity);
+    create("3100", AccountType::Equity);
 
     let opening = set_account_opening_balance(
         conn,
-        created[0],
+        checking.id,
         5_000,
         common::date("2026-01-01"),
         Locale::En,
     )
     .expect("opening balance");
+    let contribution =
+        common::post_two_line(conn, entity_id, "2026-03-02", ("1000", "3100"), 50_000);
 
-    assert_listed_as(conn, &opening, ListedEntryKind::Other);
+    assert!(
+        opening
+            .lines
+            .iter()
+            .any(|line| line.account_id == opening_equity.id),
+        "the opening balance posts against the first equity account"
+    );
+    assert_listed_as(conn, &opening, ListedEntryKind::OpeningBalance);
+    assert_listed_as(conn, &contribution, ListedEntryKind::Other);
 }
 
 #[test]

@@ -5,7 +5,7 @@ use crate::coa::default_role_codes;
 use crate::db::{collect_rows, read_column, stored_id};
 use crate::domain::{AccountId, AccountType, EntityId, JournalLine};
 use crate::error::{AccountRole, DatabaseContext, Result};
-use crate::ledger::accounts::list_accounts;
+use crate::ledger::accounts::{list_accounts, opening_balance_account};
 use crate::ledger::entities::get_entity;
 use crate::ledger::simple_entry::SimpleEntryKind;
 use rusqlite::Connection;
@@ -35,7 +35,7 @@ use std::collections::{HashMap, HashSet};
 /// balances and the reversals of such entries store no kind. They are
 /// classified from their lines, in this order:
 ///
-/// 1. A line on the book's system equity account: an opening balance.
+/// 1. A line on the book's opening balance account: an opening balance.
 /// 2. A line on a bill account: a bill. That is an unpaid bill or the payment
 ///    of one; a bill paid at once has no such line and is an expense here.
 /// 3. A line on an expense account: an expense.
@@ -43,15 +43,13 @@ use std::collections::{HashMap, HashSet};
 /// 5. Every line on an asset or a liability: a transfer.
 /// 6. Anything else, such as an owner's contribution against equity: other.
 ///
-/// The system equity account is the template's Opening Balances: the only
-/// system account a template seeds (no other account can be made one), and
-/// the one
+/// The opening balance account is the equity account
 /// [`set_account_opening_balance`](crate::ledger::set_account_opening_balance)
-/// posts against. It comes first so that an opening balance of the bills
-/// payable account is not a bill. A blank book has no system account, so its
-/// opening balances, posted against one of its own equity accounts, are
-/// listed as other: telling them from an owner's contribution would need the
-/// kind stored, and the v10 `CHECK` does not allow a fifth one.
+/// posts against, picked by the same function: the template's Opening
+/// Balances, or in a blank book its first active equity account. It comes
+/// first so that an opening balance of the bills payable account is not a
+/// bill, and any other entry with a line on it, a hand-posted correction
+/// included, is listed as an opening balance too.
 ///
 /// A bill account is an account the book is set up to hold bills on: the
 /// template's bills payable account, found by its code and type whether or
@@ -99,9 +97,9 @@ impl From<SimpleEntryKind> for ListedEntryKind {
 pub(crate) struct KindFallback {
     /// The type of every account of the book, archived ones included.
     account_types: HashMap<AccountId, AccountType>,
-    /// The accounts a line on which makes an entry an opening balance: the
-    /// book's system equity account, if it has one.
-    opening_balance_accounts: HashSet<AccountId>,
+    /// The account a line on which makes an entry an opening balance, if
+    /// the book has an active equity account.
+    opening_balance_account: Option<AccountId>,
     /// The accounts a line on which makes an entry a bill.
     bill_accounts: HashSet<AccountId>,
 }
@@ -134,18 +132,14 @@ impl KindFallback {
                 .map(|account| account.id),
         );
 
-        let opening_balance_accounts = accounts
-            .iter()
-            .filter(|account| account.is_system && account.account_type == AccountType::Equity)
-            .map(|account| account.id)
-            .collect();
+        let opening_balance_account = opening_balance_account(&accounts).map(|account| account.id);
         let account_types = accounts
             .iter()
             .map(|account| (account.id, account.account_type))
             .collect();
         Ok(Self {
             account_types,
-            opening_balance_accounts,
+            opening_balance_account,
             bill_accounts,
         })
     }
@@ -153,13 +147,16 @@ impl KindFallback {
     /// Classifies an entry that stores no kind from its lines, by the rules
     /// on [`ListedEntryKind`].
     pub(crate) fn classify(&self, lines: &[JournalLine]) -> ListedEntryKind {
-        let has_line_on = |accounts: &HashSet<AccountId>| {
-            lines.iter().any(|line| accounts.contains(&line.account_id))
-        };
-        if has_line_on(&self.opening_balance_accounts) {
+        if lines
+            .iter()
+            .any(|line| Some(line.account_id) == self.opening_balance_account)
+        {
             return ListedEntryKind::OpeningBalance;
         }
-        if has_line_on(&self.bill_accounts) {
+        if lines
+            .iter()
+            .any(|line| self.bill_accounts.contains(&line.account_id))
+        {
             return ListedEntryKind::Bill;
         }
 
@@ -237,7 +234,7 @@ mod tests {
     }
 
     /// A book of one account of each type, with `bills` as its bill account
-    /// and `opening` as its system equity account.
+    /// and `opening` as its opening balance account.
     struct Book {
         fallback: KindFallback,
         asset: AccountId,
@@ -264,7 +261,7 @@ mod tests {
         Book {
             fallback: KindFallback {
                 account_types,
-                opening_balance_accounts: HashSet::from([opening]),
+                opening_balance_account: Some(opening),
                 bill_accounts: HashSet::from([bills]),
             },
             asset,
@@ -297,7 +294,7 @@ mod tests {
     }
 
     #[test]
-    fn a_line_on_the_system_equity_account_makes_an_opening_balance() {
+    fn a_line_on_the_opening_balance_account_makes_an_opening_balance() {
         let book = book();
 
         assert_eq!(
