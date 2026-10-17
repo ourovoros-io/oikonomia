@@ -198,8 +198,6 @@ describe('formatDate', () => {
 })
 
 describe('a shown date reads back', () => {
-  afterEach(() => resetI18nForTests())
-
   function* everyDay(): Generator<string> {
     for (let y = MIN_YEAR; y <= MAX_YEAR; y++) {
       for (let m = 1; m <= 12; m++) {
@@ -219,13 +217,14 @@ describe('a shown date reads back', () => {
     }
   })
 
-  test.each(LOCALES)('a date typed with any separator reads in %s', (locale) => {
-    applyLocale(locale)
-
-    for (const typed of ['16/10/2026', '16.10.2026', '16-10-2026', '16.10.26', '2026-10-16']) {
+  // The parser takes no language, so a date typed the way any language
+  // writes it reads in all of them.
+  test.each(['16/10/2026', '16.10.2026', '16-10-2026', '16.10.26', '2026-10-16'])(
+    '%s reads as 16 October 2026',
+    (typed) => {
       expect(parseEuropeanDateToISO(typed)).toBe('2026-10-16')
-    }
-  })
+    },
+  )
 })
 
 describe('isoDate', () => {

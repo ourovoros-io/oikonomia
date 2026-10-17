@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import '@testing-library/jest-dom/vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
@@ -26,7 +26,7 @@ vi.mock('../components/CashFlowPulse', () => ({
 
 import type { Account, CashFlowSeries, DashboardSummary, Entity, PostedEntryView } from '../lib/api'
 import { api } from '../lib/api'
-import { resetI18nForTests } from '../lib/i18n'
+import { applyLocale, resetI18nForTests } from '../lib/i18n'
 import { formatMoney } from '../lib/money'
 import { DashboardPage } from './DashboardPage'
 
@@ -156,6 +156,20 @@ describe('DashboardPage activity row colours', () => {
 
     expect(screen.getByText('Alpha supermarket').closest('li')?.querySelector('[data-amount]')).toHaveAttribute('data-amount', 'out')
     expect(screen.getByText('Client invoice').closest('li')?.querySelector('[data-amount]')).toHaveAttribute('data-amount', 'in')
+  })
+})
+
+describe('DashboardPage activity dates', () => {
+  test('a language change rewrites the dates already shown', async () => {
+    render(<DashboardPage entity={entity} />)
+    const row = await screen.findByText('Alpha supermarket')
+    const dateLine = () => row.closest('li')?.querySelector('.tabular-nums')?.firstChild
+
+    expect(dateLine()?.textContent).toBe('12/08/2026')
+
+    act(() => applyLocale('de'))
+
+    expect(dateLine()?.textContent).toBe('12.08.2026')
   })
 })
 

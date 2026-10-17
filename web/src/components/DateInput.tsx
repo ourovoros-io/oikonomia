@@ -24,8 +24,9 @@ type Props = {
 
 /**
  * Day-month-year date field with a Monday-first calendar popover. It shows the
- * separator of the app language and reads any of them. Native date inputs order their segments by OS region and cannot be
- * forced to day-month-year, so this control replaces them.
+ * separator of the app language and reads any of them. Native date inputs
+ * order their segments by OS region and cannot be forced to day-month-year,
+ * so this control replaces them.
  */
 export function DateInput({
   value,
@@ -45,7 +46,9 @@ export function DateInput({
 
   // The parent commits values only through onChange, so an external value
   // change (prefill, reset) can safely overwrite the draft text. A language
-  // change rewrites it too, so the field takes the new separator.
+  // change rewrites it too, so the field takes the new separator; a draft
+  // lost that way is acceptable, since the language changes from Settings or
+  // at startup, not while someone is typing a date.
   useEffect(() => {
     setText(value ? formatDate(value, locale) : '')
     setInvalid(false)
