@@ -153,8 +153,12 @@ export function SettingsPage({
   const [noticeKey, setNoticeKey] = useState<
     'settings.prefs.resetDone' | 'settings.passwordChanged' | 'settings.lock.saved' | null
   >(null)
-  // The name of the book just created, for its confirmation.
-  const [createdBook, setCreatedBook] = useState<string | null>(null)
+  // The book just created or restored, for its confirmation. Held by catalog
+  // key and name, so the sentence follows a language change.
+  const [addedNotice, setAddedNotice] = useState<{
+    key: 'settings.entities.created' | 'settings.entities.restored'
+    name: string
+  } | null>(null)
   /** Set once "Email support" was clicked: the opener cannot confirm a mail app opened. */
   const [mailTried, setMailTried] = useState(false)
   const [name, setName] = useState('')
@@ -205,7 +209,7 @@ export function SettingsPage({
   // mounted again then (keyed on entitiesLoaded) to decide afresh.
   const [openedToAddBook] = useState(() => Boolean(createBookIntent))
   const entitiesOpenAtStart = openedToAddBook || (entitiesLoaded && entities.length === 0)
-  const [newBookId, setNewBookId] = useState<string | null>(null)
+  const [addedBookId, setAddedBookId] = useState<string | null>(null)
   const [renameTarget, setRenameTarget] = useState<Entity | null>(null)
 
   const backupAvailability = vaultBackupAvailability({
@@ -315,8 +319,8 @@ export function SettingsPage({
       // The new book is the one the user means to work in next, so it becomes
       // current, but this page stays: adding several books should not take a
       // trip to each one's Dashboard. The new book is marked in the list too.
-      setNewBookId(entity.id)
-      setCreatedBook(entity.name)
+      setAddedBookId(entity.id)
+      setAddedNotice({ key: 'settings.entities.created', name: entity.name })
     } catch (err) {
       setPageError(commandErrorMessage(err))
     } finally {
@@ -369,6 +373,8 @@ export function SettingsPage({
       // As with a new book: a book is restored to be worked in, and this page
       // stays so several books can be restored in a row.
       await onEntityAdded(book.id)
+      setAddedBookId(book.id)
+      setAddedNotice({ key: 'settings.entities.restored', name: book.name })
     } catch (err) {
       const cmd = asCommandError(err)
       // The general sentence for a taken name says to choose another, which
@@ -539,8 +545,8 @@ export function SettingsPage({
           onDismiss={() => setNoticeKey(null)}
         />
         <Notice
-          message={createdBook ? t('settings.entities.created', { name: createdBook }) : null}
-          onDismiss={() => setCreatedBook(null)}
+          message={addedNotice ? t(addedNotice.key, { name: addedNotice.name }) : null}
+          onDismiss={() => setAddedNotice(null)}
         />
       </ToastStack>
       {prefsUnreadable ? (
@@ -901,10 +907,10 @@ export function SettingsPage({
             {entities.map((e) => (
               <li
                 key={e.id}
-                aria-current={e.id === newBookId ? 'true' : undefined}
+                aria-current={e.id === addedBookId ? 'true' : undefined}
                 className={cn(
                   'flex items-center gap-3 px-5 py-3 transition hover:bg-[var(--color-surface-2)]/50',
-                  e.id === newBookId && 'bg-[var(--color-accent-soft)]',
+                  e.id === addedBookId && 'bg-[var(--color-accent-soft)]',
                 )}
               >
                 {/* Same tile and gap as the section header, so names start under its title. */}

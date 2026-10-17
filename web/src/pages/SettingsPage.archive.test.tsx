@@ -274,6 +274,37 @@ describe('SettingsPage archived books', () => {
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
+  test('a restored book is confirmed and marked in the list, as a created one is', async () => {
+    vi.mocked(api.entityListArchived).mockResolvedValueOnce([home]).mockResolvedValue([])
+    const { rerender } = render(
+      <SettingsPage
+        entities={[shop]}
+        onEntitiesChange={async () => {}}
+        onEntityAdded={async () => {}}
+        onSelectEntity={() => {}}
+      />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: /^books/i }))
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Restore Home' }))
+    // App hands the reloaded books back down.
+    rerender(
+      <SettingsPage
+        entities={[home, shop]}
+        onEntitiesChange={async () => {}}
+        onEntityAdded={async () => {}}
+        onSelectEntity={() => {}}
+      />,
+    )
+
+    expect(await screen.findByText('Book Home restored.')).toBeInTheDocument()
+    const rows = screen.getAllByRole('listitem')
+    const homeRow = rows.find((row) => within(row).queryByText('Home'))
+    const shopRow = rows.find((row) => within(row).queryByText('Shop'))
+    expect(homeRow).toHaveAttribute('aria-current', 'true')
+    expect(shopRow).not.toHaveAttribute('aria-current')
+  })
+
   test('Restore works from the keyboard', async () => {
     vi.mocked(api.entityListArchived).mockResolvedValue([home])
     await openBooks([shop])

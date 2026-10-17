@@ -173,6 +173,7 @@
   "settings.entities.empty": "Create your first book with the New book button.",
   "settings.entities.new": "New book",
   "settings.entities.created": "Book {name} created.",
+  "settings.entities.restored": "Book {name} restored.",
   "settings.entities.rename.title": "Rename book",
   "settings.entities.rename.aria": "Rename {name}",
   "settings.entities.open": "Open",
