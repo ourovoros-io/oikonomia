@@ -995,6 +995,10 @@
         "amountOverflow": "Le montant est trop élevé.",
         "unreadable": "Cette ligne n’a pas pu être lue."
       },
+      "column": {
+        "unnamed": "Colonne {position}",
+        "repeated": "{name} ({occurrence})"
+      },
       "duplicate": "Doublon probable",
       "postSelected": "Comptabiliser {n} lignes"
     },

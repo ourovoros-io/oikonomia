@@ -20,7 +20,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// Every coded text Rust sends: the notes the document analyzer attaches to a
-/// suggestion, and the reasons a CSV import row cannot be used.
+/// suggestion, the reasons a CSV import row cannot be used, and the labels of
+/// CSV columns whose header cannot be shown as written.
 ///
 /// The `snake_case` spelling is the wire code. The web catalog maps each code
 /// to copy in `web/src/lib/uiText.ts`, and a test pins both lists against
@@ -92,11 +93,19 @@ pub enum UiTextCode {
     CsvAmountOverflow,
     /// A CSV row could not be read at all. The cause is logged, not sent.
     CsvUnreadableRow,
+    /// A CSV column whose header is empty. Parameter: `position`, the 1-based
+    /// position of the column in the file.
+    CsvUnnamedColumn,
+    /// A CSV column whose header repeats one further left. Parameters:
+    /// `name`, the header as written, and `occurrence`, the number that tells
+    /// it apart (2 for the first repeat).
+    CsvRepeatedColumn,
 }
 
 impl UiTextCode {
     /// Every code, in declaration order: the notes of the document analyzer,
-    /// then the reasons a CSV import row cannot be used.
+    /// the reasons a CSV import row cannot be used, then the labels of CSV
+    /// columns whose header cannot be shown as written.
     ///
     /// A test checks this list against `web/src/lib/uiTextCodes.json`.
     pub const ALL: &'static [Self] = &[
@@ -131,6 +140,8 @@ impl UiTextCode {
         Self::CsvZeroAmount,
         Self::CsvAmountOverflow,
         Self::CsvUnreadableRow,
+        Self::CsvUnnamedColumn,
+        Self::CsvRepeatedColumn,
     ];
 }
 
@@ -278,6 +289,8 @@ mod tests {
             UiTextCode::CsvZeroAmount,
             UiTextCode::CsvAmountOverflow,
             UiTextCode::CsvUnreadableRow,
+            UiTextCode::CsvUnnamedColumn,
+            UiTextCode::CsvRepeatedColumn,
         }
     }
 

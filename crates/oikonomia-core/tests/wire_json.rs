@@ -18,7 +18,7 @@
 )]
 
 use oikonomia_core::csv::{
-    CsvImportPostInput, CsvImportPostResult, CsvImportPreview, CsvImportPreviewRow,
+    CsvHeader, CsvImportPostInput, CsvImportPostResult, CsvImportPreview, CsvImportPreviewRow,
     CsvRequiredColumn, JournalCsvLine,
 };
 use oikonomia_core::documents::{AnalyzerStatus, DocumentMeta, DocumentSuggestion};
@@ -377,11 +377,22 @@ fn csv_import_rows_carry_the_simple_entry_request() {
 #[test]
 fn csv_import_preview_and_result() {
     assert_json_is_pinned::<CsvImportPreview>(concat!(
-        r#"{"source":"bank.csv","headers":["Date","Amount"],"detected_mapping":{"date":"Date","#,
+        r#"{"source":"bank.csv","headers":[{"name":"Date","label":null},"#,
+        r#"{"name":"Amount","label":null}],"#,
+        r#""detected_mapping":{"date":"Date","#,
         r#""description":null,"amount":"Amount","debit":null,"credit":null,"reference":null,"#,
         r#""direction":null},"missing_columns":[],"other_currency":null,"rows":[]}"#,
     ));
     assert_json_is_pinned::<CsvImportPostResult>(r#"{"posted":[],"skipped_duplicate_count":2}"#);
+}
+
+/// A column whose name was made up carries the label the Map columns step words.
+#[test]
+fn csv_header_with_a_made_up_name() {
+    assert_json_is_pinned::<CsvHeader>(concat!(
+        r#"{"name":"Amount (2)","label":{"code":"csv_repeated_column","#,
+        r#""params":{"name":"Amount","occurrence":"2"}}}"#,
+    ));
 }
 
 /// A file whose columns have to be mapped by hand names the missing ones by
@@ -389,7 +400,9 @@ fn csv_import_preview_and_result() {
 #[test]
 fn csv_import_preview_of_a_file_that_needs_a_mapping() {
     assert_json_is_pinned::<CsvImportPreview>(concat!(
-        r#"{"source":"bank.csv","headers":["When","Paid"],"detected_mapping":{"date":null,"#,
+        r#"{"source":"bank.csv","headers":[{"name":"When","label":null},"#,
+        r#"{"name":"Paid","label":null}],"#,
+        r#""detected_mapping":{"date":null,"#,
         r#""description":null,"amount":null,"debit":null,"credit":null,"reference":null,"#,
         r#""direction":null},"missing_columns":["date","amount"],"other_currency":null,"rows":[]}"#,
     ));

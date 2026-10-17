@@ -119,6 +119,7 @@ mod amount;
 mod currency_marker;
 mod error;
 mod export;
+mod header;
 mod parse;
 mod post;
 
@@ -242,10 +243,38 @@ pub enum CsvRowOutcome {
     },
 }
 
+/// One column of a bank CSV's header row, as the Map columns step offers it.
+///
+/// A mapping names columns by header, which an empty header cannot do and
+/// two headers equal but for ASCII case cannot tell apart. So every column
+/// gets a [`Self::name`] that is unique among the headers and never empty,
+/// and the UI shows [`Self::label`] for one whose name was made up.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CsvHeader {
+    /// What a [`CsvColumnMapping`] names this column by: unique among the
+    /// headers of the file, ASCII case ignored, and never empty.
+    ///
+    /// The header as written (trimmed) when it is not empty and no header
+    /// further left is equal to it. Otherwise a made-up name: `Column 3` for
+    /// an empty third header, `Amount (2)` for the second `Amount`, with the
+    /// next free number when another header already has that name.
+    pub name: String,
+    /// What the UI shows for a column whose name was made up, as a code it
+    /// words ([`UiTextCode::CsvUnnamedColumn`],
+    /// [`UiTextCode::CsvRepeatedColumn`]). `None` when [`Self::name`] is the
+    /// header as written, which is the file's own text and shown as it is.
+    ///
+    /// [`UiTextCode::CsvUnnamedColumn`]: crate::ui_text::UiTextCode::CsvUnnamedColumn
+    /// [`UiTextCode::CsvRepeatedColumn`]: crate::ui_text::UiTextCode::CsvRepeatedColumn
+    pub label: Option<UiText>,
+}
+
 /// Header-name mapping for one bank CSV (Map columns step).
 ///
-/// Values are **header names** as they appear in the first row, matched
-/// case-insensitively (ASCII). 0-based indexes are not accepted.
+/// Values are **column names**, [`CsvHeader::name`] of the preview's
+/// headers, matched case-insensitively (ASCII). A clean header is its own
+/// name; an empty or repeated one has a name made up for it, which this
+/// mapping uses like any other. 0-based indexes are not accepted.
 ///
 /// When this struct is provided (`Some`), `date` is required, and the
 /// amount side must be **either** `amount` **or** at least one of `debit`
@@ -309,8 +338,8 @@ pub enum CsvRequiredColumn {
 pub struct CsvImportPreview {
     /// Filesystem path, or empty when parsed from in-memory text.
     pub source: String,
-    /// Header row, in file order (trimmed). For the Map columns UI.
-    pub headers: Vec<String>,
+    /// Header row, in file order, one name per column. For the Map columns UI.
+    pub headers: Vec<CsvHeader>,
     /// Auto-detected mapping, from the header aliases and for the direction
     /// column from its values, for Map UI pre-fill.
     /// Present even when the caller supplied [`CsvImportPreviewInput::mapping`].

@@ -995,6 +995,10 @@
         "amountOverflow": "Der Betrag ist zu groß.",
         "unreadable": "Diese Zeile konnte nicht gelesen werden."
       },
+      "column": {
+        "unnamed": "Spalte {position}",
+        "repeated": "{name} ({occurrence})"
+      },
       "duplicate": "Möglicherweise doppelt",
       "postSelected": "{n} ausgewählte buchen"
     },
