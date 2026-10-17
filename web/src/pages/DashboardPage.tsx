@@ -261,7 +261,9 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
         />
       </Hero>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* Four across only from xl: below it a tile leaves its label a column
+          too narrow for one Greek or French word. */}
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <ArcTile
           label={t('dashboard.arc.savings.label')}
           hint={t('dashboard.arc.savings.hint')}
