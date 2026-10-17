@@ -53,6 +53,7 @@ fn simple(book: &Book, accounts: SimpleEntryAccounts) -> PostSimpleEntry {
         description: "entry".into(),
         reference: None,
         amount_minor: 2_500,
+        settles_entry_id: None,
     }
 }
 

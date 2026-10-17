@@ -85,6 +85,8 @@ export type PostedEntryView = {
    * describe; such an entry is not edited.
    */
   simple_form: SimpleEntryAccounts | null
+  /** The bill this payment settles; the edit form reopens with it picked. */
+  settles_entry_id: string | null
 }
 
 /** How an entry of a history relates to the edit that replaced it. */
@@ -276,6 +278,20 @@ export type SimpleEntryInput = {
   payable_account_id: string | null
   from_account_id: string | null
   to_account_id: string | null
+  /** The open bill a payment of an existing bill settles; core ignores it on any other entry. */
+  settles_entry_id: string | null
+}
+
+/** An unpaid bill no payment settles yet (`OpenBill`), for the payment form's bill picker. */
+export type OpenBill = {
+  entry_id: string
+  entry_date: string
+  /** The text core stored; shown as written. */
+  description: string
+  /** What a payment of it must pay. */
+  amount_minor: number
+  /** The account the bill is owed on, which a payment of it debits. */
+  payable_account_id: string
 }
 
 /** The kind, bill status and role accounts of a posted simple entry, as the form holds them. */
@@ -463,6 +479,12 @@ export const api = {
   entryVoid: (id: string) => call<{ original_id: string; reverse_id: string }>('entry_void', { id }),
   /** Earlier versions of an edited entry and their reversals, oldest first; empty if never edited. */
   entryHistory: (id: string) => call<EntryHistoryItem[]>('entry_history', { id }),
+  /**
+   * Open bills of a book, oldest first: the unpaid bills a payment can settle.
+   * `paymentId` is the payment being corrected; the bill it settles is listed too.
+   */
+  billListOpen: (entityId: string, paymentId: string | null) =>
+    call<OpenBill[]>('bill_list_open', { entityId, paymentId }),
   /** Owner-only hidden flag. Hidden rows stay in list/get; CSV export omits them. */
   entrySetHidden: (id: string, hidden: boolean) =>
     call<PostedEntryView>('entry_set_hidden', { id, hidden }),

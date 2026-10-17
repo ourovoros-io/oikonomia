@@ -1,4 +1,5 @@
-//! Journal entry commands: list, post, correct, hide and void.
+//! Journal entry commands: list, post, correct, hide and void, and the open
+//! bills a payment can settle.
 //!
 //! Every command here requires the unlocked vault. The entry forms post
 //! through the simple-entry commands, which send a kind and the accounts for
@@ -20,7 +21,11 @@
 //! - `account_wrong_entity` when an account belongs to another entity;
 //! - `account_inactive` when an account is inactive;
 //! - `invalid_date` when the entry date is not a date;
-//! - `not_found` when an account does not exist.
+//! - `not_found` when an account does not exist;
+//! - for a payment that settles a bill: `not_found` for an unknown bill,
+//!   `wrong_book` for a bill of another book, `bill_not_open` for one that is
+//!   not open, and `payment_does_not_match_bill` when the amount or payable
+//!   account is not the bill's.
 
 use crate::commands::documents::{PickedDocument, read_dropped_document};
 use crate::commands::support::{
@@ -32,9 +37,9 @@ use crate::state::{AppState, GrantPurpose};
 use oikonomia_core::documents::post_simple_entry_with_document;
 use oikonomia_core::domain::{AccountId, EntityId, JournalEntryId};
 use oikonomia_core::ledger::{
-    EntryFilter, EntryHistoryItem, PostJournal, PostJournalRequest, PostSimpleEntry,
-    PostSimpleEntryRequest, PostedEntryView, VoidResult, get_entry, list_entries, post_entry,
-    post_simple_entry, replace_simple_entry, set_entry_hidden, void_entry,
+    EntryFilter, EntryHistoryItem, OpenBill, PostJournal, PostJournalRequest, PostSimpleEntry,
+    PostSimpleEntryRequest, PostedEntryView, VoidResult, get_entry, list_entries, list_open_bills,
+    post_entry, post_simple_entry, replace_simple_entry, set_entry_hidden, void_entry,
 };
 use oikonomia_core::util::DateText;
 use serde::Deserialize;
@@ -102,6 +107,28 @@ pub(crate) async fn entry_get(
     id: JournalEntryId,
 ) -> CommandResult<PostedEntryView> {
     with_connection(&state, move |conn| get_entry(conn, id)).await
+}
+
+/// Lists an entity's open bills, oldest first: the unpaid bills no payment
+/// settles yet, which the payment form offers to settle. With `paymentId`,
+/// the form correcting that payment, the bill it settles is listed too.
+///
+/// Requires the unlocked vault. An unknown entity has no bills, so it yields
+/// an empty list, not an error.
+///
+/// # Errors
+///
+/// Returns the [common vault errors](crate::commands#common-vault-errors).
+#[tauri::command]
+pub(crate) async fn bill_list_open(
+    state: State<'_, AppState>,
+    entity_id: EntityId,
+    payment_id: Option<JournalEntryId>,
+) -> CommandResult<Vec<OpenBill>> {
+    with_connection(&state, move |conn| {
+        list_open_bills(conn, entity_id, payment_id)
+    })
+    .await
 }
 
 /// Returns the earlier versions of a corrected entry and the reversals that
@@ -287,7 +314,8 @@ pub(crate) async fn entry_post_simple_with_document_path(
 /// # Errors
 ///
 /// Returns `not_found` when the original does not exist, `wrong_book` when
-/// the replacement names another entity, `entry_already_voided` when the
+/// the replacement names another entity, `bill_settled` when the original is
+/// a bill a payment settles, `entry_already_voided` when the
 /// original has been voided or is itself a reversal, the
 /// [simple-entry errors](self#simple-entry-errors), and the
 /// [common vault errors](crate::commands#common-vault-errors).
@@ -329,7 +357,8 @@ pub(crate) async fn entry_set_hidden(
 ///
 /// # Errors
 ///
-/// Returns `not_found` when the entry does not exist, `entry_already_voided`
+/// Returns `not_found` when the entry does not exist, `bill_settled` when it
+/// is a bill a payment settles, `entry_already_voided`
 /// when it has been voided or is itself a reversal, and the
 /// [common vault errors](crate::commands#common-vault-errors).
 #[tauri::command]
@@ -418,7 +447,7 @@ mod tests {
 #[cfg(test)]
 #[cfg(not(windows))]
 mod ipc_tests {
-    use crate::commands::journal::{entry_list, entry_post_simple_with_document};
+    use crate::commands::journal::{bill_list_open, entry_list, entry_post_simple_with_document};
     use crate::commands::support::ipc_test_support::MockApp;
     use base64::Engine;
     use oikonomia_core::domain::ChartTemplate;
@@ -448,6 +477,7 @@ mod ipc_tests {
             label,
             tauri::generate_handler![
                 entry_list,
+                bill_list_open,
                 entry_post_simple_with_document,
                 crate::commands::documents::document_list
             ],
@@ -492,6 +522,7 @@ mod ipc_tests {
                 payable_account_id: None,
                 from_account_id: None,
                 to_account_id: None,
+                settles_entry_id: None,
             };
             post_simple_entry(conn, &PostSimpleEntry::try_from(request).unwrap()).unwrap();
         }
@@ -566,6 +597,22 @@ mod ipc_tests {
             .invoke("entry_list", august("rent", &book.entity))
             .unwrap();
         assert_eq!(descriptions(&none), [] as [&str; 0]);
+    }
+
+    /// The payload is the object `billListOpen` in `web/src/lib/api.ts`
+    /// passes to `invoke`; the seeded book has no bills.
+    #[test]
+    fn the_ipc_call_for_open_bills_reads_the_book_and_the_payment() {
+        let (app, book) = mock_book("open-bills");
+
+        let open = app
+            .invoke(
+                "bill_list_open",
+                serde_json::json!({ "entityId": book.entity, "paymentId": null }),
+            )
+            .unwrap();
+
+        assert_eq!(open, serde_json::json!([]));
     }
 
     #[test]

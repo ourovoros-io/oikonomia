@@ -268,6 +268,7 @@ fn importing_csv_rows_into_an_archived_entity_is_refused() {
         payable_account_id: None,
         from_account_id: None,
         to_account_id: None,
+        settles_entry_id: None,
     };
 
     let new_rows = post_import_rows(conn, &[row("2026-03-05", 1_200)], false);

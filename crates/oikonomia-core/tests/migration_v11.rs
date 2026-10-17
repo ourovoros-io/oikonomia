@@ -50,6 +50,7 @@ fn a_v10_bill_reads_its_status_from_its_lines_and_later_bills_store_it() {
                 description: "bill".into(),
                 reference: None,
                 amount_minor: 4_000,
+                settles_entry_id: None,
             },
         )
         .expect("post")

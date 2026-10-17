@@ -63,6 +63,7 @@ fn simple(book: &Book, accounts: SimpleEntryAccounts) -> PostSimpleEntry {
         description: "entry".into(),
         reference: None,
         amount_minor: 2_500,
+        settles_entry_id: None,
     }
 }
 
@@ -272,6 +273,7 @@ fn an_imported_row_and_an_entry_with_a_document_store_their_kind() {
         payable_account_id: None,
         from_account_id: None,
         to_account_id: None,
+        settles_entry_id: None,
     };
     let receipt = NewDocument {
         filename: "receipt.txt",
