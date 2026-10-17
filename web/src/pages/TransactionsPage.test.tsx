@@ -577,7 +577,7 @@ describe('TransactionsPage hidden paint', () => {
     vi.mocked(api.entryList).mockResolvedValue([postedEntry, hiddenEntry])
     await renderReady()
     expect(screen.getByText('1 posted · 1 hidden · EUR')).toBeTruthy()
-    expect(screen.getByText('Export omits hidden rows. Deleted entries are included, with “voided” in the “status” column.')).toBeTruthy()
+    expect(screen.getByText('Export writes the whole book, not only the entries shown, and omits hidden rows. Deleted entries are included, with “voided” in the “status” column.')).toBeTruthy()
     expect(screen.getByText('Hidden')).toBeTruthy()
     expect(screen.getByText('ATM cash')).toBeTruthy()
     expect(screen.queryByRole('checkbox', { name: /include hidden/i })).toBeNull()
@@ -593,7 +593,7 @@ describe('TransactionsPage hidden paint', () => {
       expect(screen.getByText('Κρυφή')).toBeTruthy()
     })
     expect(screen.getByText('0 καταχωρισμένα · 1 κρυφά · EUR')).toBeTruthy()
-    expect(screen.getByText('Η εξαγωγή παραλείπει τις κρυφές γραμμές. Οι διαγραμμένες εγγραφές περιλαμβάνονται, με την τιμή «voided» στη στήλη «status».')).toBeTruthy()
+    expect(screen.getByText('Η εξαγωγή γράφει ολόκληρο το βιβλίο, όχι μόνο τις καταχωρίσεις που εμφανίζονται, και παραλείπει τις κρυφές γραμμές. Οι διαγραμμένες εγγραφές περιλαμβάνονται, με την τιμή «voided» στη στήλη «status».')).toBeTruthy()
   })
 
   test('detail Hide checkbox calls entry_set_hidden', async () => {
@@ -1575,6 +1575,48 @@ describe('TransactionsPage list header', () => {
     expect(screen.getByRole('button', { name: 'Recurring' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Import CSV' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Export CSV' })).toBeTruthy()
+    expect(screen.getByText('Matching entries')).toBeTruthy()
+  })
+
+  test('the title reads Matching entries while a search narrows the list', async () => {
+    await renderReady()
+    expect(screen.getByText('All entries')).toBeTruthy()
+
+    await userEvent.type(screen.getByLabelText('Search'), 'Lunch')
+
+    expect(await screen.findByText('Matching entries')).toBeTruthy()
+    expect(screen.queryByText('All entries')).toBeNull()
+
+    await userEvent.clear(screen.getByLabelText('Search'))
+
+    expect(await screen.findByText('All entries')).toBeTruthy()
+  })
+
+  test('the title reads Matching entries while a date narrows the list', async () => {
+    await renderReady()
+
+    await userEvent.type(screen.getByLabelText('Entries from date'), '01/01/2026')
+    await userEvent.tab()
+
+    expect(await screen.findByText('Matching entries')).toBeTruthy()
+    expect(screen.queryByText('All entries')).toBeNull()
+  })
+
+  test('Export writes the whole book while a filter narrows the list', async () => {
+    await renderReady()
+    await userEvent.type(screen.getByLabelText('Search'), 'Lunch')
+    await screen.findByText('Matching entries')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Export CSV' }))
+
+    await waitFor(() => {
+      expect(api.csvExportJournal).toHaveBeenCalledWith('e1')
+    })
+    expect(
+      screen.getByText(
+        'Export writes the whole book, not only the entries shown, and omits hidden rows. Deleted entries are included, with “voided” in the “status” column.',
+      ),
+    ).toBeTruthy()
   })
 
   test('coming back from Recurring reloads the entries', async () => {
