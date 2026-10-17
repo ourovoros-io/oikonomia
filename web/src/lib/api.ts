@@ -487,6 +487,8 @@ export const api = {
       path,
       analysisJson: analysisJson ?? null,
     }),
+  /** One posted entry, voided or not, wherever the list's filters put it. */
+  entryGet: (id: string) => call<PostedEntryView>('entry_get', { id }),
   entryVoid: (id: string) => call<{ original_id: string; reverse_id: string }>('entry_void', { id }),
   /** Earlier versions of an edited entry and their reversals, oldest first; empty if never edited. */
   entryHistory: (id: string) => call<EntryHistoryItem[]>('entry_history', { id }),

@@ -55,6 +55,7 @@ vi.mock('../lib/api', async (importOriginal) => {
       csvExportJournal: vi.fn(),
       entrySetHidden: vi.fn(),
       entryHistory: vi.fn(),
+      entryGet: vi.fn(),
       entryPostSimple: vi.fn(),
       entryReplaceSimple: vi.fn(),
       billListOpen: vi.fn(),
@@ -317,6 +318,7 @@ beforeEach(() => {
     entry: { ...postedEntry.entry, id, hidden },
   }))
   vi.mocked(api.entryHistory).mockReset().mockResolvedValue([])
+  vi.mocked(api.entryGet).mockReset()
   vi.mocked(api.entryPostSimple).mockReset()
   vi.mocked(api.entryPostSimpleWithDocumentPath).mockReset()
   vi.mocked(api.recurringList).mockReset().mockResolvedValue([])
@@ -1930,6 +1932,66 @@ describe('TransactionsPage edit form', () => {
     const edit = await screen.findByRole('button', { name: 'Edit entry' })
     expect(edit).toBeDisabled()
     expect(edit).toHaveAccessibleDescription(reason)
+  })
+})
+
+describe('TransactionsPage between a bill and its payment', () => {
+  const billForm = {
+    kind: 'bill',
+    bill_status: 'unpaid',
+    category_account_id: 'exp1',
+    wallet_account_id: null,
+    payable_account_id: 'cc1',
+    from_account_id: null,
+    to_account_id: null,
+  } as const
+  const settledBill: PostedEntryView = {
+    ...postedEntry,
+    listed_kind: 'bill',
+    settled_by_entry_id: 'p1',
+    simple_form: billForm,
+  }
+  const payment: PostedEntryView = {
+    ...incomeEntry,
+    entry: { ...incomeEntry.entry, id: 'p1', description: 'Power payment', entry_date: '2026-09-01' },
+    listed_kind: 'bill',
+    settles_entry_id: 'j1',
+    simple_form: { ...billForm, bill_status: 'pay_existing', category_account_id: null, wallet_account_id: 'w1' },
+  }
+
+  test('a settled bill opens its payment, even one the filters leave out of the list', async () => {
+    vi.mocked(api.entryList).mockResolvedValue([settledBill])
+    vi.mocked(api.entryGet).mockResolvedValue(payment)
+    await renderReady()
+
+    await userEvent.click(await screen.findByText('Alpha supermarket'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Open payment' }))
+
+    expect(api.entryGet).toHaveBeenCalledWith('p1')
+    expect(await screen.findByRole('heading', { name: 'Power payment' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Open bill' })).toBeTruthy()
+  })
+
+  test('a payment opens the bill it settles', async () => {
+    vi.mocked(api.entryList).mockResolvedValue([payment, settledBill])
+    vi.mocked(api.entryGet).mockResolvedValue(settledBill)
+    await renderReady()
+
+    await userEvent.click(await screen.findByText('Power payment'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Open bill' }))
+
+    expect(api.entryGet).toHaveBeenCalledWith('j1')
+    expect(await screen.findByRole('heading', { name: 'Alpha supermarket' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Open payment' })).toBeTruthy()
+  })
+
+  test('an entry linked to no other has no link', async () => {
+    await renderReady()
+
+    await userEvent.click(await screen.findByText('Alpha supermarket'))
+
+    expect(await screen.findByRole('dialog')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Open (payment|bill)/ })).toBeNull()
   })
 })
 

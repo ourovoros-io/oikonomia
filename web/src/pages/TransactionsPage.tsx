@@ -200,10 +200,31 @@ export function TransactionsPage({
     return map
   }, [docs])
 
+  // An entry opened from a link in the detail dialog may be outside the
+  // filtered list, so it is read on its own.
+  const [linkedView, setLinkedView] = useState<PostedEntryView | null>(null)
   const detailView = useMemo(
-    () => visibleEntries.find((e) => e.entry.id === detailId) ?? null,
-    [visibleEntries, detailId],
+    () =>
+      visibleEntries.find((e) => e.entry.id === detailId) ??
+      (linkedView?.entry.id === detailId ? linkedView : null),
+    [visibleEntries, detailId, linkedView],
   )
+
+  /** Shows `id` in the detail dialog, read fresh from core. */
+  async function openLinkedEntry(id: string) {
+    try {
+      setLinkedView(await api.entryGet(id))
+      setDetailId(id)
+    } catch (err) {
+      setError(commandFailure(err))
+    }
+  }
+
+  /** After a change in the detail dialog: the list, and the linked entry it may show. */
+  async function reloadDetail() {
+    await reload()
+    if (linkedView) setLinkedView(await api.entryGet(linkedView.entry.id))
+  }
 
   /** Search and account narrow the list and leave the summary whole; the dates narrow both. */
   const listOnlyFilters = Boolean(debouncedSearch.trim() || accountFilter)
@@ -1240,7 +1261,8 @@ export function TransactionsPage({
         }}
         onEdit={detailView?.simple_form ? () => startEdit(detailView) : null}
         onView={(id) => setViewerDocId(id)}
-        onChanged={reload}
+        onOpenEntry={(id) => void openLinkedEntry(id)}
+        onChanged={reloadDetail}
         onError={(msg) => setError(msg)}
         error={openDialog === 'detail' ? error : null}
       />

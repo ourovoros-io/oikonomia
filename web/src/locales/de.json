@@ -551,6 +551,8 @@
   },
   "entry": {
     "paidBill": "Rechnung, bezahlt",
+    "openPayment": "Zahlung öffnen",
+    "openBill": "Rechnung öffnen",
     "kind": {
       "openingBalance": "Anfangssaldo",
       "other": "Journalbuchung"
