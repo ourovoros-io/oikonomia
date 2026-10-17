@@ -51,6 +51,7 @@ fn book_with_a_batch(conn: &Connection) -> (EntityId, AccountId) {
             payable_account_id: None,
             from_account_id: None,
             to_account_id: None,
+            settles_entry_id: None,
         })
         .collect();
     let posted = post_import_rows(conn, &rows, true).expect("post the batch");

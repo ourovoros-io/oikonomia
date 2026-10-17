@@ -18,9 +18,11 @@
 //! the UI holds no accounting rule. What needs the database is checked here:
 //! that each account exists, has a type its part accepts, belongs to the
 //! entry's entity, is not archived, and is not the account on the other
-//! side. A simple entry also stores its kind, because a bill paid at once has
-//! the lines of an expense; the views report what an entry is listed as in
-//! [`PostedEntryView::listed_kind`].
+//! side. A simple entry also stores its kind and bill status, because a bill
+//! paid at once has the lines of an expense and a bill paid by card those of
+//! an unpaid bill; the views report what an entry is listed as in
+//! [`PostedEntryView::listed_kind`] and the form an edit opens on in
+//! [`PostedEntryView::simple_form`].
 //!
 //! # Entries are not edited
 //!
@@ -76,9 +78,12 @@ use crate::ledger::accounts::{get_account, list_accounts, opening_balance_accoun
 use crate::ledger::balance::{
     ACTIVE_ENTRY_PREDICATE, account_balance_as_of, add_minor, normal_balance,
 };
+use crate::ledger::bills::{ensure_not_settled, open_bill};
 use crate::ledger::entities::ensure_writable_entity;
-use crate::ledger::entry_kind::{KindFallback, ListedEntryKind};
-use crate::ledger::simple_entry::{RoleAccount, SimpleEntryAccounts, SimpleEntryKind};
+use crate::ledger::entry_kind::{LineFallback, ListedEntryKind, PostedAs};
+use crate::ledger::simple_entry::{
+    RoleAccount, SimpleBillStatus, SimpleEntryAccounts, SimpleEntryKind,
+};
 use crate::money::Money;
 use crate::prefs::Locale;
 use crate::text::{opening_balance_description, void_description, void_memo};
@@ -166,6 +171,39 @@ pub struct PostedEntryView {
     /// entry that stores none, the kind its lines suggest. The rules are on
     /// [`ListedEntryKind`].
     pub listed_kind: ListedEntryKind,
+    /// The simple entry form that posts this entry, which an edit opens on:
+    /// the kind, the bill status and the accounts by the part they play.
+    /// `None` for a voided entry and a reversal, which are not edited, and
+    /// for an entry the simple form cannot describe, such as one of more
+    /// than two lines. The rules are on `LineFallback::simple_form`. A form
+    /// may name an account archived since; correcting the entry refuses it
+    /// until the user picks another.
+    pub simple_form: Option<SimpleEntryAccounts>,
+    /// The bill this payment settles, for a payment posted against one; the
+    /// edit form of the payment opens with that bill picked.
+    pub settles_entry_id: Option<JournalEntryId>,
+}
+
+impl PostedEntryView {
+    /// Builds the view of an entry as stored, with `fallback` from
+    /// [`LineFallback::load_for`].
+    fn new(stored: StoredEntry, fallback: &LineFallback) -> Self {
+        let listed_kind = fallback.listed_kind(stored.posted_as, &stored.lines);
+        let simple_form = if stored.is_voided {
+            None
+        } else {
+            fallback.simple_form(stored.posted_as, &stored.lines)
+        };
+
+        Self {
+            entry: stored.entry,
+            lines: stored.lines,
+            is_voided: stored.is_voided,
+            listed_kind,
+            simple_form,
+            settles_entry_id: stored.settles_entry_id,
+        }
+    }
 }
 
 /// One line of [`account_register`]: a posting to the account, with the
@@ -217,6 +255,11 @@ pub struct PostSimpleEntry {
     pub reference: Option<String>,
     /// Positive amount in minor units.
     pub amount_minor: i64,
+    /// The open bill this payment settles in full; read only when
+    /// `accounts` is a [`SimpleEntryAccounts::BillPayment`]. `None` posts a
+    /// payment that settles no bill in particular, as a recurring payment
+    /// does.
+    pub settles_entry_id: Option<JournalEntryId>,
 }
 
 /// Result of [`void_entry`]: the two entries the void linked.
@@ -263,29 +306,21 @@ pub fn list_entries(
     filter: &EntryFilter,
 ) -> Result<Vec<PostedEntryView>> {
     let listed = ListedEntries::new(entity_id, filter);
-    let headers = load_listed_headers(conn, &listed)?;
+    let entries = load_listed_headers(conn, &listed)?;
     let mut lines_by_entry = load_listed_lines(conn, &listed)?;
 
-    // Loaded once for the whole list, and only when an entry needs it.
-    let fallback = if headers.iter().any(|header| header.kind.is_none()) {
-        KindFallback::load(conn, entity_id)?
-    } else {
-        KindFallback::default()
-    };
+    // Loaded once for the whole list.
+    let fallback = LineFallback::load_for(
+        conn,
+        entity_id,
+        entries.iter().map(|stored| stored.posted_as),
+    )?;
 
-    Ok(headers
+    Ok(entries
         .into_iter()
-        .map(|header| {
-            let lines = lines_by_entry.remove(&header.entry.id).unwrap_or_default();
-            let listed_kind = header
-                .kind
-                .map_or_else(|| fallback.classify(&lines), ListedEntryKind::from);
-            PostedEntryView {
-                entry: header.entry,
-                lines,
-                is_voided: header.is_voided,
-                listed_kind,
-            }
+        .map(|mut stored| {
+            stored.lines = lines_by_entry.remove(&stored.entry.id).unwrap_or_default();
+            PostedEntryView::new(stored, &fallback)
         })
         .collect())
 }
@@ -295,10 +330,11 @@ pub fn list_entries(
 /// # Errors
 ///
 /// - [`Error::NotFound`] for an unknown entry.
-/// - [`Error::VaultCorrupt`] for a stored id, date, status, kind or amount
-///   that does not parse. For an entry that stores no kind, also for an
-///   account of its book, or the payable account of one of its recurring
-///   bills, that does not parse: the fallback reads them.
+/// - [`Error::VaultCorrupt`] for a stored id, date, status, kind, bill
+///   status or amount that does not parse. For an entry that stores no kind,
+///   or a bill that stores no status, also for an account of its book, or
+///   the payable account of one of its recurring bills, that does not parse:
+///   the fallback reads them.
 /// - [`Error::Database`] on database errors.
 pub fn get_entry(conn: &Connection, id: JournalEntryId) -> Result<PostedEntryView> {
     load_entry(conn, id)?.into_view(conn)
@@ -312,28 +348,22 @@ pub(crate) struct StoredEntry {
     pub(crate) lines: Vec<JournalLine>,
     /// Whether it is out of the active books.
     is_voided: bool,
-    /// The simple-entry kind it was posted as, if it stores one.
-    kind: Option<SimpleEntryKind>,
+    /// What it was posted as, if it stores that.
+    posted_as: Option<PostedAs>,
+    /// The bill it settles, for a payment posted against one.
+    settles_entry_id: Option<JournalEntryId>,
 }
 
 impl StoredEntry {
-    /// Builds the view [`get_entry`] returns, classifying an entry that
-    /// stores no kind from its lines.
+    /// Builds the view [`get_entry`] returns, loading the line fallback only
+    /// for an entry that needs it.
     ///
     /// # Errors
     ///
-    /// Those of [`KindFallback::load`], only for an entry without a kind.
+    /// Those of [`LineFallback::load_for`].
     fn into_view(self, conn: &Connection) -> Result<PostedEntryView> {
-        let listed_kind = match self.kind {
-            Some(kind) => ListedEntryKind::from(kind),
-            None => KindFallback::load(conn, self.entry.entity_id)?.classify(&self.lines),
-        };
-        Ok(PostedEntryView {
-            entry: self.entry,
-            lines: self.lines,
-            is_voided: self.is_voided,
-            listed_kind,
-        })
+        let fallback = LineFallback::load_for(conn, self.entry.entity_id, [self.posted_as])?;
+        Ok(PostedEntryView::new(self, &fallback))
     }
 }
 
@@ -346,17 +376,17 @@ impl StoredEntry {
 /// # Errors
 ///
 /// - [`Error::NotFound`] for an unknown entry.
-/// - [`Error::VaultCorrupt`] for a stored id, date, status, kind or amount
-///   that does not parse.
+/// - [`Error::VaultCorrupt`] for a stored id, date, status, kind, bill status
+///   or amount that does not parse.
 /// - [`Error::Database`] on database errors.
 pub(crate) fn load_entry(conn: &Connection, id: JournalEntryId) -> Result<StoredEntry> {
     const OPERATION: &str = "read journal entry";
 
-    let (entry, has_void_link, kind) = conn
+    let (entry, has_void_link, posted_as, settles_entry_id) = conn
         .query_row(
             "
             SELECT id, entity_id, entry_date, description, reference, status, hidden,
-                   voided_by_entry_id, kind
+                   voided_by_entry_id, kind, bill_status, settles_entry_id
             FROM journal_entries WHERE id = ?1
             ",
             [id.to_string()],
@@ -365,7 +395,8 @@ pub(crate) fn load_entry(conn: &Connection, id: JournalEntryId) -> Result<Stored
                 Ok((
                     map_entry_row(OPERATION, row),
                     voided_by.is_some(),
-                    stored_kind(OPERATION, row, 8),
+                    stored_posted_as(OPERATION, row, 8),
+                    stored_settles(OPERATION, row, 10),
                 ))
             },
         )
@@ -374,7 +405,8 @@ pub(crate) fn load_entry(conn: &Connection, id: JournalEntryId) -> Result<Stored
             other => Error::database(OPERATION, other),
         })?;
     let entry = entry?;
-    let kind = kind?;
+    let posted_as = posted_as?;
+    let settles_entry_id = settles_entry_id?;
 
     let is_voided = has_void_link || entry_is_void_reverse(conn, entry.id)?;
     let lines = load_lines(conn, entry.id)?;
@@ -383,7 +415,8 @@ pub(crate) fn load_entry(conn: &Connection, id: JournalEntryId) -> Result<Stored
         entry,
         lines,
         is_voided,
-        kind,
+        posted_as,
+        settles_entry_id,
     })
 }
 
@@ -462,6 +495,11 @@ pub fn post_entry(conn: &Connection, input: &PostJournal) -> Result<PostedEntryV
 /// - [`Error::NotFound`] for an unknown or archived entity, and for an unknown account.
 /// - [`Error::AccountWrongEntity`] for an account of another entity.
 /// - [`ValidationError::AccountInactive`] for an archived account.
+/// - For a payment that settles a bill: [`Error::NotFound`] for an unknown
+///   bill, [`ValidationError::WrongBook`] for a bill of another book,
+///   [`ValidationError::BillNotOpen`] for one that is not open, and
+///   [`ValidationError::PaymentDoesNotMatchBill`] when the payment does not
+///   pay the bill's whole amount from its payable account.
 /// - [`Error::VaultCorrupt`] for a stored row that does not parse.
 /// - [`Error::Database`] on database errors.
 pub fn post_simple_entry(conn: &Connection, input: &PostSimpleEntry) -> Result<PostedEntryView> {
@@ -487,6 +525,8 @@ pub fn post_simple_entry(conn: &Connection, input: &PostSimpleEntry) -> Result<P
 /// - [`Error::NotFound`] for an unknown entry, and for an entry of an archived entity.
 /// - [`ValidationError::EntryAlreadyVoided`] when the entry is voided or is
 ///   itself a reversing entry.
+/// - [`ValidationError::BillSettled`] for a bill that an active payment
+///   settles: void the payment first.
 /// - [`Error::VaultCorrupt`] for a stored row that does not parse, which
 ///   includes an entry whose stored status is not `posted`.
 /// - [`Error::Database`] on database errors.
@@ -744,6 +784,7 @@ fn post_simple_entry_in_tx(
 
     let (debit_account, credit_account) =
         simple_entry_sides(conn, input.entity_id, input.accounts)?;
+    let settles = settled_bill(conn, input)?;
 
     let amount = Money::from_minor(input.amount_minor)?;
     let lines = vec![
@@ -751,7 +792,7 @@ fn post_simple_entry_in_tx(
         PostJournalLine::credit(credit_account, amount),
     ];
 
-    post_entry_in_tx(
+    let mut stored = post_entry_in_tx(
         conn,
         &PostJournal {
             entity_id: input.entity_id,
@@ -762,9 +803,44 @@ fn post_simple_entry_in_tx(
         },
         hidden,
         ArchivedAccounts::Refuse,
-        Some(input.accounts.kind()),
-    )?
-    .into_view(conn)
+        Some(PostedAs::from(input.accounts)),
+    )?;
+
+    if let Some(bill_id) = settles {
+        conn.execute(
+            "UPDATE journal_entries SET settles_entry_id = ?1 WHERE id = ?2",
+            rusqlite::params![bill_id.to_string(), stored.entry.id.to_string()],
+        )
+        .database("link payment to the bill it settles")?;
+        stored.settles_entry_id = Some(bill_id);
+    }
+    stored.into_view(conn)
+}
+
+/// Returns the bill a simple entry settles, after checking that the payment
+/// may settle it: the bill is an open bill of the same book, and the payment
+/// pays its whole amount from its payable account.
+///
+/// Only a payment of an existing bill settles one; for any other entry the
+/// input's bill is not read and this returns `None`.
+///
+/// # Errors
+///
+/// - Those of [`open_bill`].
+/// - [`ValidationError::PaymentDoesNotMatchBill`] when the amount or the
+///   payable account differs from the bill's.
+fn settled_bill(conn: &Connection, input: &PostSimpleEntry) -> Result<Option<JournalEntryId>> {
+    let (SimpleEntryAccounts::BillPayment { payable, .. }, Some(bill_id)) =
+        (input.accounts, input.settles_entry_id)
+    else {
+        return Ok(None);
+    };
+
+    let bill = open_bill(conn, input.entity_id, bill_id)?;
+    if bill.amount_minor != input.amount_minor || bill.payable_account_id != payable {
+        return Err(ValidationError::PaymentDoesNotMatchBill.into());
+    }
+    Ok(Some(bill_id))
 }
 
 /// Checks `accounts` for an entry in the book of `entity_id` exactly as
@@ -869,24 +945,15 @@ fn like_pattern(text: &str) -> String {
     format!("%{escaped}%")
 }
 
-/// One header row of [`list_entries`], before its lines are attached.
-struct ListedHeader {
-    /// The entry itself.
-    entry: JournalEntry,
-    /// Whether the entry is out of the active books.
-    is_voided: bool,
-    /// The simple-entry kind the entry was posted as, if it stores one.
-    kind: Option<SimpleEntryKind>,
-}
-
-/// Loads the entries [`list_entries`] returns, newest first.
+/// Loads the entries [`list_entries`] returns, newest first, each without
+/// its lines.
 ///
 /// # Errors
 ///
-/// - [`Error::VaultCorrupt`] for a stored id, date or kind that does not
-///   parse.
+/// - [`Error::VaultCorrupt`] for a stored id, date, kind or bill status that
+///   does not parse.
 /// - [`Error::Database`] on database errors.
-fn load_listed_headers(conn: &Connection, listed: &ListedEntries) -> Result<Vec<ListedHeader>> {
+fn load_listed_headers(conn: &Connection, listed: &ListedEntries) -> Result<Vec<StoredEntry>> {
     const OPERATION: &str = "list journal entries";
 
     let mut stmt = conn.prepare(&listed_headers_sql()).database(OPERATION)?;
@@ -895,10 +962,13 @@ fn load_listed_headers(conn: &Connection, listed: &ListedEntries) -> Result<Vec<
         .query_map(listed.bound(), |row| {
             let is_voided: i64 = row.get(8)?;
             Ok(map_entry_row(OPERATION, row).and_then(|entry| {
-                Ok(ListedHeader {
+                Ok(StoredEntry {
                     entry,
+                    // `list_entries` fills them in from the line query.
+                    lines: Vec::new(),
                     is_voided: is_voided != 0,
-                    kind: stored_kind(OPERATION, row, 9)?,
+                    posted_as: stored_posted_as(OPERATION, row, 9)?,
+                    settles_entry_id: stored_settles(OPERATION, row, 11)?,
                 })
             }))
         })
@@ -907,29 +977,60 @@ fn load_listed_headers(conn: &Connection, listed: &ListedEntries) -> Result<Vec<
     collect_rows(OPERATION, rows)
 }
 
-/// Reads the `journal_entries.kind` column at `index`.
+/// Reads the `journal_entries.settles_entry_id` column at `index`.
 ///
 /// # Errors
 ///
-/// [`Error::VaultCorrupt`] naming the column when it holds text that is not a
-/// kind's identifier, or a value that is not text.
-fn stored_kind(
+/// [`Error::VaultCorrupt`] naming the column when it holds a value that is
+/// not an id.
+fn stored_settles(
     operation: &'static str,
     row: &rusqlite::Row<'_>,
     index: usize,
-) -> Result<Option<SimpleEntryKind>> {
-    // The schema's `CHECK` allows only the four identifiers, so other text
-    // was not written by the application.
+) -> Result<Option<JournalEntryId>> {
     read_column::<Option<String>>(operation, row, index)?
+        .map(|text| stored_id("journal_entries.settles_entry_id", &text))
+        .transpose()
+}
+
+/// Reads what an entry was posted as from the `journal_entries.kind` column
+/// at `index` and the `bill_status` column after it.
+///
+/// The status is not read for an entry that stores no kind.
+///
+/// # Errors
+///
+/// [`Error::VaultCorrupt`] naming the column when either holds text that is
+/// not one of its identifiers, or a value that is not text.
+fn stored_posted_as(
+    operation: &'static str,
+    row: &rusqlite::Row<'_>,
+    index: usize,
+) -> Result<Option<PostedAs>> {
+    // The schema's `CHECK`s allow only the identifiers, so other text was not
+    // written by the application.
+    let Some(kind) = read_column::<Option<String>>(operation, row, index)? else {
+        return Ok(None);
+    };
+    let kind = SimpleEntryKind::from_identifier(&kind).ok_or_else(|| {
+        corrupt_column(
+            "journal_entries.kind",
+            format_args!("unknown entry kind: {kind}"),
+        )
+    })?;
+
+    let bill_status = read_column::<Option<String>>(operation, row, index + 1)?
         .map(|text| {
-            SimpleEntryKind::from_identifier(&text).ok_or_else(|| {
+            SimpleBillStatus::from_identifier(&text).ok_or_else(|| {
                 corrupt_column(
-                    "journal_entries.kind",
-                    format_args!("unknown entry kind: {text}"),
+                    "journal_entries.bill_status",
+                    format_args!("unknown bill status: {text}"),
                 )
             })
         })
-        .transpose()
+        .transpose()?;
+
+    Ok(Some(PostedAs { kind, bill_status }))
 }
 
 /// The query of [`load_listed_headers`]: the entries
@@ -949,7 +1050,7 @@ fn listed_headers_sql() -> String {
                        SELECT 1 FROM journal_entries voider
                        WHERE voider.voided_by_entry_id = je.id
                    ) AS is_voided,
-               je.kind
+               je.kind, je.bill_status, je.settles_entry_id
         FROM journal_entries je
         WHERE {LISTED_ENTRIES_PREDICATE}
         ORDER BY je.entry_date DESC, je.created_at DESC, je.rowid DESC
@@ -1082,8 +1183,8 @@ enum ArchivedAccounts {
 /// Callers own the transaction: [`post_entry`] and [`void_entry`] wrap this so
 /// a failure mid-insert can never leave a partial posted entry behind.
 /// `hidden` is for [`void_entry`]: a reverse of a hidden original stays hidden.
-/// `kind` is the simple-entry kind to store, `None` for every entry that was
-/// not posted as one.
+/// `posted_as` is what a simple entry was posted as, to store; `None` for
+/// every entry that was not posted as one.
 ///
 /// # Errors
 ///
@@ -1094,7 +1195,7 @@ fn post_entry_in_tx(
     input: &PostJournal,
     hidden: bool,
     archived: ArchivedAccounts,
-    kind: Option<SimpleEntryKind>,
+    posted_as: Option<PostedAs>,
 ) -> Result<StoredEntry> {
     // First, so that an archived entity is refused whatever else is wrong
     // with the entry, and by every operation that posts one.
@@ -1138,8 +1239,8 @@ fn post_entry_in_tx(
         "
         INSERT INTO journal_entries (
             id, entity_id, entry_date, description, reference,
-            status, created_at, posted_at, voided_by_entry_id, hidden, kind
-        ) VALUES (?1, ?2, ?3, ?4, ?5, 'posted', ?6, ?6, NULL, ?7, ?8)
+            status, created_at, posted_at, voided_by_entry_id, hidden, kind, bill_status
+        ) VALUES (?1, ?2, ?3, ?4, ?5, 'posted', ?6, ?6, NULL, ?7, ?8, ?9)
         ",
         rusqlite::params![
             entry_id.to_string(),
@@ -1149,7 +1250,10 @@ fn post_entry_in_tx(
             reference,
             now,
             i64::from(hidden),
-            kind.map(SimpleEntryKind::identifier),
+            posted_as.map(|posted| posted.kind.identifier()),
+            posted_as
+                .and_then(|posted| posted.bill_status)
+                .map(SimpleBillStatus::identifier),
         ],
     )
     .database("insert journal entry")?;
@@ -1280,6 +1384,7 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
     if view.is_voided {
         return Err(ValidationError::EntryAlreadyVoided.into());
     }
+    ensure_not_settled(conn, id)?;
 
     let reverse_lines: Vec<PostJournalLine> = view
         .lines
@@ -1301,13 +1406,14 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
     };
     // The reversal takes the original's kind, so the two halves of a voided
     // pair are listed alike; the lines of a reversed paid bill would say
-    // expense.
+    // expense. It takes the bill status too, so that it never reads as a
+    // bill posted before v11; a reversal has no form, so nothing reads it.
     let reverse = post_entry_in_tx(
         conn,
         &reverse_input,
         view.entry.hidden,
         ArchivedAccounts::Accept,
-        view.kind,
+        view.posted_as,
     )?;
 
     conn.execute(
