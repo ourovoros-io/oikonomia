@@ -175,6 +175,7 @@ fn dedupe_flags_preview_and_skips_post_unless_opted_in() {
         payable_account_id: None,
         from_account_id: None,
         to_account_id: None,
+        settles_entry_id: None,
     });
     post_simple_entry(conn, &existing).expect("seed");
 
@@ -283,6 +284,7 @@ fn a_transfer_in_the_ledger_matches_a_statement_row_of_either_sign() {
         payable_account_id: None,
         from_account_id: Some(acc.checking),
         to_account_id: Some(savings),
+        settles_entry_id: None,
     };
     post_simple_entry(conn, &common::strict(transfer.clone())).expect("transfer");
 
@@ -327,6 +329,7 @@ fn store_imported(
             payable_account_id: None,
             from_account_id: None,
             to_account_id: None,
+            settles_entry_id: None,
         });
         post_simple_entry(conn, &entry).expect("store");
     }
@@ -751,6 +754,7 @@ fn export_round_trips_posted_lines_and_marks_voided() {
         payable_account_id: None,
         from_account_id: None,
         to_account_id: None,
+        settles_entry_id: None,
     });
     let view = post_simple_entry(conn, &grocery).expect("post");
     void_entry(conn, view.entry.id, Locale::En).expect("void");
@@ -768,6 +772,7 @@ fn export_round_trips_posted_lines_and_marks_voided() {
         payable_account_id: None,
         from_account_id: None,
         to_account_id: None,
+        settles_entry_id: None,
     });
     post_simple_entry(conn, &salary).expect("salary");
 
@@ -834,6 +839,7 @@ fn export_guards_cells_that_spreadsheets_would_run_as_formulas() {
         payable_account_id: None,
         from_account_id: None,
         to_account_id: None,
+        settles_entry_id: None,
     });
     post_simple_entry(conn, &hostile).expect("post");
 
@@ -871,6 +877,7 @@ fn export_omits_hidden_rows_until_unhidden() {
         payable_account_id: None,
         from_account_id: None,
         to_account_id: None,
+        settles_entry_id: None,
     });
     let view = post_simple_entry(conn, &grocery).expect("post");
     set_entry_hidden(conn, view.entry.id, true).expect("hide");

@@ -7,6 +7,7 @@
 //!
 //! - `entities`: the separate sets of books a vault holds.
 //! - `accounts`: the chart of accounts of an entity.
+//! - `bills`: open bills and the payments that settle them.
 //! - `journals`: posting, listing, voiding and correcting entries, and the
 //!   register of one account.
 //! - `balance`: the sign of a balance, the active-entry rule, and checked
@@ -120,6 +121,7 @@
 
 mod accounts;
 mod balance;
+mod bills;
 mod calendar;
 mod cash_flow;
 mod entities;
@@ -138,6 +140,7 @@ pub use accounts::{
 };
 pub(crate) use balance::ACTIVE_ENTRY_PREDICATE;
 pub use balance::{account_balance, account_balance_as_of, normal_balance};
+pub use bills::{OpenBill, list_open_bills};
 pub use cash_flow::{
     CashFlowBucket, CashFlowGranularity, CashFlowSeries, DAILY_BUCKET_MAX_DAYS, activity_window,
     cash_flow_series, cash_flow_series_for_window,

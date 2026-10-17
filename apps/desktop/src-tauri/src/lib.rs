@@ -287,6 +287,7 @@ fn ipc_commands() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sy
         commands::entry_replace_simple,
         commands::entry_get,
         commands::entry_history,
+        commands::bill_list_open,
         commands::entry_post,
         commands::entry_post_simple,
         commands::entry_post_simple_with_document,

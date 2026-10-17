@@ -23,8 +23,10 @@ import {
   type DocumentMeta,
   type Entity,
   type LastRoleAccounts,
+  type OpenBill,
   type PendingDocSource,
   type PostedEntryView,
+  type SimpleEntryAccounts,
   type SimpleEntryInput,
 } from '../lib/api'
 import { parseMajorToMinor } from '../lib/amountParse'
@@ -34,6 +36,7 @@ import { renderUiTexts, type UiText } from '../lib/uiText'
 import { fileToBase64, mimeFromName } from '../lib/files'
 import { beginExclusive } from '../lib/guards'
 import { amountTone, isMoneyOut } from '../lib/entryKind'
+import { BillPicker } from '../components/BillPicker'
 import { CashFlowPulse } from '../components/CashFlowPulse'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { CsvMappingModal } from '../components/CsvMappingModal'
@@ -112,6 +115,9 @@ export function TransactionsPage({
   const [categoryId, setCategoryId] = useState('') // expense or income account
   const [walletId, setWalletId] = useState('') // bank / cash / card
   const [payableId, setPayableId] = useState('') // bills payable / AP, or the receivable of an unpaid income
+  const [settlesId, setSettlesId] = useState('') // the open bill a payment of an existing bill settles
+  // A payment settles its bill in full, so a picked bill fixes the amount and payable account.
+  const billPicked = kind === 'bill' && billStatus === 'pay_existing' && settlesId !== ''
   const [fromId, setFromId] = useState('') // transfer
   const [toId, setToId] = useState('')
   const [amount, setAmount] = useState('')
@@ -444,6 +450,7 @@ export function TransactionsPage({
     setPendingAnalysis(null)
     setScanNotes(null)
     setEditId(null)
+    setSettlesId('')
     applyKindDefaults('expense', defaults)
   }
 
@@ -559,6 +566,15 @@ export function TransactionsPage({
     }
   }
 
+  /** A picked bill fills in what its payment must match: its whole amount and its payable account. */
+  function pickBill(bill: OpenBill | null) {
+    setSettlesId(bill?.entry_id ?? '')
+    if (!bill) return
+    setAmount(minorToInputText(bill.amount_minor, currency))
+    setAmountInvalid(false)
+    setPayableId(bill.payable_account_id)
+  }
+
   /** What the form tells Rust about payment state; only a bill or an unpaid income has one. */
   function postedBillStatus(): BillStatus | null {
     if (kind === 'bill') return billStatus
@@ -614,6 +630,7 @@ export function TransactionsPage({
         payable_account_id: payableId || null,
         from_account_id: fromId || null,
         to_account_id: toId || null,
+        settles_entry_id: billPicked ? settlesId : null,
       }
 
       if (editId) {
@@ -721,49 +738,16 @@ export function TransactionsPage({
   const range = series ? `${formatDate(series.from)} – ${formatDate(series.to)}` : null
 
   /**
-   * Map a posted entry's lines back onto the simple form and open it for
-   * editing. Bills reopen as their expense/transfer equivalent — the journal
-   * lines are identical, so nothing is lost.
+   * Open a posted entry for editing on the simple form core returns for it.
+   * Core decides the kind, bill status and accounts; the UI does not read
+   * them back from debit and credit.
    */
   function startEdit(view: PostedEntryView) {
-    const debit = view.lines.find((l) => l.debit.amount_minor > 0)
-    const credit = view.lines.find((l) => l.credit.amount_minor > 0)
-    if (!debit || !credit) return
+    if (!view.simple_form) return
 
     resetDraft()
-
-    const debitType = accountMap.get(debit.account_id)?.account_type
-    const creditType = accountMap.get(credit.account_id)?.account_type
-    const billsPayableId = defaults?.bills_payable ?? null
-    if (debitType === 'expense' && credit.account_id === billsPayableId) {
-      setKind('bill')
-      setBillStatus('unpaid')
-      setCategoryId(debit.account_id)
-      setPayableId(credit.account_id)
-    } else if (debit.account_id === billsPayableId) {
-      setKind('bill')
-      setBillStatus('pay_existing')
-      setPayableId(debit.account_id)
-      setWalletId(credit.account_id)
-    } else if (debitType === 'expense') {
-      setKind('expense')
-      setCategoryId(debit.account_id)
-      setWalletId(credit.account_id)
-    } else if (creditType === 'income' && debit.account_id === (defaults?.receivable ?? null)) {
-      // Lines alone cannot tell a receivable from an asset, so the seeded one stands for it.
-      setKind('income')
-      setIncomeUnpaid(true)
-      setCategoryId(credit.account_id)
-      setPayableId(debit.account_id)
-    } else if (creditType === 'income') {
-      setKind('income')
-      setCategoryId(credit.account_id)
-      setWalletId(debit.account_id)
-    } else {
-      setKind('transfer')
-      setToId(debit.account_id)
-      setFromId(credit.account_id)
-    }
+    fillForm(view.simple_form)
+    setSettlesId(view.settles_entry_id ?? '')
 
     const amountMinor = view.lines.reduce((s, l) => s + l.debit.amount_minor, 0)
     setAmount(minorToInputText(amountMinor, currency))
@@ -776,6 +760,20 @@ export function TransactionsPage({
     setEditId(view.entry.id)
     setDetailId(null)
     setShowForm(true)
+  }
+
+  function fillForm(form: SimpleEntryAccounts) {
+    setKind(form.kind)
+    // The kind's defaults first, so a part the entry does not have, such as the
+    // payable of a paid bill, holds the default and not the last form's account.
+    applyKindDefaults(form.kind, defaults)
+    if (form.kind === 'bill' && form.bill_status) setBillStatus(form.bill_status)
+    setIncomeUnpaid(form.kind === 'income' && form.bill_status === 'unpaid')
+    if (form.category_account_id) setCategoryId(form.category_account_id)
+    if (form.wallet_account_id) setWalletId(form.wallet_account_id)
+    if (form.payable_account_id) setPayableId(form.payable_account_id)
+    if (form.from_account_id) setFromId(form.from_account_id)
+    if (form.to_account_id) setToId(form.to_account_id)
   }
 
   return (
@@ -1007,6 +1005,7 @@ export function TransactionsPage({
                 setAmountInvalid(false)
               }}
               className="tabular-nums"
+              disabled={billPicked}
               required
               aria-invalid={amountInvalid || undefined}
               aria-describedby={amountInvalid ? errorBannerId : undefined}
@@ -1116,6 +1115,16 @@ export function TransactionsPage({
                   <option value="pay_existing">{t('tx.billPayExisting')}</option>
                 </Select>
               </Field>
+              {billStatus === 'pay_existing' ? (
+                <BillPicker
+                  entityId={entity.id}
+                  correctingPaymentId={editId}
+                  value={settlesId}
+                  currency={currency}
+                  onPick={pickBill}
+                  onError={setError}
+                />
+              ) : null}
               {billStatus !== 'pay_existing' ? (
                 <Field label={t('tx.billCategory')}>
                   <Select
@@ -1144,7 +1153,12 @@ export function TransactionsPage({
               ) : null}
               {billStatus === 'unpaid' || billStatus === 'pay_existing' ? (
                 <Field label={t('tx.billsPayableAccount')}>
-                  <Select value={payableId} onChange={(e) => setPayableId(e.target.value)} required>
+                  <Select
+                    value={payableId}
+                    onChange={(e) => setPayableId(e.target.value)}
+                    disabled={billPicked}
+                    required
+                  >
                     {payableAccounts.length === 0 ? (
                       <option value="">{t('tx.noLiability')}</option>
                     ) : null}
@@ -1220,9 +1234,7 @@ export function TransactionsPage({
         onClose={() => {
           if (!viewerDocId) setDetailId(null)
         }}
-        onEdit={() => {
-          if (detailView) startEdit(detailView)
-        }}
+        onEdit={detailView?.simple_form ? () => startEdit(detailView) : null}
         onView={(id) => setViewerDocId(id)}
         onChanged={reload}
         onError={(msg) => setError(msg)}

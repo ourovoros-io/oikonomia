@@ -26,8 +26,11 @@ type Props = {
   documents: DocumentMeta[]
   currency: Currency
   onClose: () => void
-  /** Open the entry in the edit form. */
-  onEdit: () => void
+  /**
+   * Open the entry in the edit form; null for an entry core gives no simple form,
+   * which has no Edit button.
+   */
+  onEdit: (() => void) | null
   onView: (documentId: string) => void
   onChanged: () => Promise<void>
   onError: (message: string) => void
@@ -278,12 +281,14 @@ export function EntryDetailModal({
 
         <EntryHistory key={entry.id} entryId={entry.id} />
 
-        <div className="flex justify-end border-t border-[var(--color-border)] pt-4">
-          <Button variant="secondary" disabled={anyBusy} onClick={onEdit}>
-            <Pencil className="size-3.5" />
-            {t('entry.edit')}
-          </Button>
-        </div>
+        {onEdit && (
+          <div className="flex justify-end border-t border-[var(--color-border)] pt-4">
+            <Button variant="secondary" disabled={anyBusy} onClick={onEdit}>
+              <Pencil className="size-3.5" />
+              {t('entry.edit')}
+            </Button>
+          </div>
+        )}
       </div>
     </Modal>
   )

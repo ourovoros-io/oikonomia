@@ -112,6 +112,7 @@ export function buildSimpleEntryInput(args: {
     payable_account_id: args.payableId || null,
     from_account_id: args.fromId || null,
     to_account_id: args.toId || null,
+    settles_entry_id: null,
   }
 }
 
