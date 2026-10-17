@@ -22,6 +22,7 @@ import {
   rowNeedsCategory,
   rowSelectable,
 } from './csvImport'
+import type { AccountLike } from './simpleEntry'
 
 /** What Rust's `account_defaults` returns for a book; the UI never picks these. */
 const defaults: AccountDefaults = {
@@ -31,6 +32,7 @@ const defaults: AccountDefaults = {
   income: 'inc1',
   bill_category: 'exp1',
   bills_payable: null,
+  receivable: null,
   transfer_source: 'w1',
   transfer_destination: 'w1',
 }
@@ -80,10 +82,10 @@ describe('defaultChecked', () => {
 })
 
 describe('rowCategoryOptions', () => {
-  const lists = {
+  const lists: { expense: AccountLike[]; income: AccountLike[] } = {
     expense: [{ id: 'exp1', name: 'Groceries', account_type: 'expense', is_active: true }],
     income: [{ id: 'inc1', name: 'Salary', account_type: 'income', is_active: true }],
-  } as const
+  }
 
   test('an expense row lists only expense accounts', () => {
     expect(rowCategoryOptions('expense', lists)).toEqual(lists.expense)
@@ -100,10 +102,10 @@ describe('rowCategoryOptions', () => {
 })
 
 describe('rowNeedsCategory', () => {
-  const lists = {
+  const lists: { expense: AccountLike[]; income: AccountLike[] } = {
     expense: [{ id: 'exp1', name: 'Groceries', account_type: 'expense', is_active: true }],
     income: [{ id: 'inc1', name: 'Salary', account_type: 'income', is_active: true }],
-  } as const
+  }
 
   test('a row booked to a listed account of its kind needs nothing', () => {
     expect(rowNeedsCategory(suggested('expense'), lists)).toBe(false)
@@ -213,7 +215,12 @@ describe('applyBulkAccounts', () => {
 })
 
 describe('initialBulkAccounts', () => {
-  const account = (id: string) => ({ id, account_type: 'asset' as const })
+  const account = (id: string): AccountLike => ({
+    id,
+    name: id,
+    account_type: 'asset',
+    is_active: true,
+  })
   const lists = {
     wallets: [account('cash'), account('w1')],
     categories: [account('exp0'), account('exp1')],
