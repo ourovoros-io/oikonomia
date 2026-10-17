@@ -123,6 +123,9 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   // interface must never stay in a language that failed to save.
   const storedLocale = useRef<Locale>(locale)
   const latestChange = useRef(0)
+  // The last change of this window whose save has answered; a change is in
+  // flight while this is behind latestChange.
+  const settledChange = useRef(0)
 
   useEffect(() => {
     setLocalePersist(async (next) => {
@@ -145,20 +148,45 @@ export function I18nProvider({ children }: { children: ReactNode }) {
         storedLocale.current = stored
         applyLocale(stored)
         setLanguageChangeFailed(true)
+      } finally {
+        if (change === latestChange.current) settledChange.current = change
       }
     })
 
     return () => setLocalePersist(null)
   }, [])
 
+  // Rust sends every window the language it stores, so a window that stays
+  // open while another changes it (the hidden quick-add window, while
+  // Settings changes it) follows. A change of this window's own still in
+  // flight owns the outcome, so an older language arriving meanwhile does
+  // not flash up; Rust sends the events in the order it put the languages
+  // into effect, so the last one this window gets is the language in effect.
+  const eventsReceived = useRef(0)
+  useEffect(
+    () =>
+      api.onLocaleChanged((sent) => {
+        eventsReceived.current += 1
+        const stored = parseLocale(sent)
+        storedLocale.current = stored
+
+        if (settledChange.current === latestChange.current) applyLocale(stored)
+      }),
+    [],
+  )
+
   useEffect(() => {
     let cancelled = false
 
-    // A change the user makes while this is in flight owns the outcome: it
-    // is persisted after Rust has answered or is answered by it, and either
-    // way the late hydration result must not repaint the interface.
+    // A change the user makes, or one another window makes and Rust sends,
+    // while this is in flight owns the outcome: it is newer than what the
+    // hydration read, so the late result must not repaint the interface.
     const startedAt = latestChange.current
-    const superseded = () => cancelled || latestChange.current !== startedAt
+    const eventsBefore = eventsReceived.current
+    const superseded = () =>
+      cancelled ||
+      latestChange.current !== startedAt ||
+      eventsReceived.current !== eventsBefore
 
     void hydrateLocale().then((hydrated) => {
       if (superseded()) return

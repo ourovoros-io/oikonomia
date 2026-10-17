@@ -22,6 +22,7 @@ vi.mock('../lib/api', () => ({
     getLocale: vi.fn(),
     setLocale: vi.fn(),
     getUiPrefs: vi.fn(),
+    onLocaleChanged: vi.fn(() => () => {}),
     resetUiPrefs: vi.fn(),
   },
 }))

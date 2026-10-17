@@ -18,10 +18,9 @@ import { Button, ErrorBanner, ToastStack, TruncatedLabel } from './components/ui
 import { bookDotColour } from './lib/bookColour'
 import { cn } from './lib/cn'
 import { TopBarContext, type TopBarSlots } from './lib/topBar'
-import { listen } from '@tauri-apps/api/event'
 import {
   appInfo,
-  isTauri,
+  onTauriEvent,
   vaultLock,
   vaultStatus,
   vaultTouch,
@@ -208,25 +207,14 @@ export default function App() {
 
   // The Rust watchdog is the authority on idle locking; it emits this event
   // when it closes the vault so the UI drops to the unlock screen.
-  useEffect(() => {
-    if (!isTauri()) return
-
-    let unlisten: (() => void) | undefined
-    let cancelled = false
-
-    void listen('vault-locked', () => {
-      setStatus('locked')
-      forgetEntities()
-    }).then((fn) => {
-      if (cancelled) fn()
-      else unlisten = fn
-    })
-
-    return () => {
-      cancelled = true
-      unlisten?.()
-    }
-  }, [forgetEntities])
+  useEffect(
+    () =>
+      onTauriEvent('vault-locked', () => {
+        setStatus('locked')
+        forgetEntities()
+      }),
+    [forgetEntities],
+  )
 
   // Fast-path idle timer, plus a throttled heartbeat so the Rust watchdog
   // counts UI activity (mouse/keyboard) as activity, not just commands.

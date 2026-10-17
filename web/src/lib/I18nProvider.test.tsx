@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import '@testing-library/jest-dom/vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 vi.mock('./api', () => ({
@@ -10,12 +10,16 @@ vi.mock('./api', () => ({
     resolveLocale: vi.fn(),
     setLocale: vi.fn(),
     getUiPrefs: vi.fn(),
+    onLocaleChanged: vi.fn(),
   },
 }))
 
 import { api } from './api'
 import { I18nProvider, useI18n } from './I18nProvider'
 import { LOCALE_STORAGE_KEY, getLocale, resetI18nForTests, setLocale, type Locale } from './i18n'
+
+/** What Rust's `locale-changed` event hands the provider; set when it subscribes. */
+let sendLocale: (locale: unknown) => void = () => undefined
 
 function Probe() {
   const { locale, t } = useI18n()
@@ -37,6 +41,14 @@ beforeEach(() => {
   vi.mocked(api.resolveLocale).mockReset().mockRejectedValue(new Error('no tauri'))
   vi.mocked(api.setLocale).mockReset()
   vi.mocked(api.getUiPrefs).mockReset()
+  vi.mocked(api.onLocaleChanged)
+    .mockReset()
+    .mockImplementation((apply) => {
+      sendLocale = apply
+      return () => {
+        sendLocale = () => undefined
+      }
+    })
 })
 
 describe('I18nProvider', () => {
@@ -312,6 +324,80 @@ describe('I18nProvider', () => {
 
       expect(getLocale()).toBe('de')
       expect(screen.getByText('de')).toBeTruthy()
+    })
+  })
+
+  describe('a language stored by another window', () => {
+    async function renderHydrated(stored: Locale) {
+      vi.mocked(api.resolveLocale).mockResolvedValue(stored)
+      render(
+        <I18nProvider>
+          <Probe />
+        </I18nProvider>,
+      )
+      await waitFor(() => {
+        expect(screen.getByText(stored)).toBeTruthy()
+      })
+    }
+
+    test('is applied when Rust sends it', async () => {
+      await renderHydrated('en')
+
+      act(() => sendLocale('el'))
+
+      expect(getLocale()).toBe('el')
+      expect(screen.getByRole('heading', { name: 'Ρυθμίσεις' })).toBeTruthy()
+      // This window only follows: it stores nothing itself.
+      expect(api.setLocale).not.toHaveBeenCalled()
+    })
+
+    test('does not repaint over a change of this window still being saved', async () => {
+      let finishSave: () => void = () => undefined
+      vi.mocked(api.setLocale).mockReturnValue(
+        new Promise<void>((resolve) => {
+          finishSave = resolve
+        }),
+      )
+      await renderHydrated('en')
+
+      setLocale('fr')
+      act(() => sendLocale('el'))
+      expect(getLocale()).toBe('fr')
+
+      await act(async () => finishSave())
+      act(() => sendLocale('fr'))
+
+      expect(getLocale()).toBe('fr')
+    })
+
+    test('wins over the read the window started with, when it arrives first', async () => {
+      let finishResolve: (stored: Locale) => void = () => undefined
+      vi.mocked(api.resolveLocale).mockReturnValue(
+        new Promise<Locale>((resolve) => {
+          finishResolve = resolve
+        }),
+      )
+      render(
+        <I18nProvider>
+          <Probe />
+        </I18nProvider>,
+      )
+
+      act(() => sendLocale('de'))
+      await act(async () => finishResolve('en'))
+
+      expect(getLocale()).toBe('de')
+      expect(screen.getByText('de')).toBeTruthy()
+    })
+
+    test('stops arriving once the provider is gone', async () => {
+      await renderHydrated('en')
+      expect(api.onLocaleChanged).toHaveBeenCalledTimes(1)
+
+      cleanup()
+      sendLocale('de')
+
+      expect(getLocale()).toBe('en')
     })
   })
 })
