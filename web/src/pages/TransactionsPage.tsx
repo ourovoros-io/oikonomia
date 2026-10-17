@@ -511,10 +511,21 @@ export function TransactionsPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newEntryIntent, entity?.id])
 
+  /**
+   * The bill choice lives only while paying a bill: another status frees the
+   * amount a picked bill fixed, so coming back asks for the choice again.
+   */
+  function chooseBillStatus(next: BillStatus) {
+    setBillStatus(next)
+    if (next !== 'pay_existing') setBillChoice(NO_BILL_CHOICE)
+  }
+
   function setKindAndDefaults(next: EntryKind) {
     if (next === kind) return
     setKind(next)
     applyKindDefaults(next, defaults)
+    // A picked bill fixed the amount; another kind frees it, so the pick goes too.
+    setBillChoice(NO_BILL_CHOICE)
     // A new type is a fresh start on the form, so the old error goes even when
     // it is about the amount or description that carry over: saving checks again.
     setError(null)
@@ -609,6 +620,8 @@ export function TransactionsPage({
     const amountKey = amountProblemKey(minor, 'tx.invalidAmount')
     if (amountKey) return { key: amountKey, amount: true }
     if (!description.trim()) return { key: 'form.fieldRequired', amount: false }
+    // Save is disabled meanwhile; this keeps any other submit path honest.
+    if (billChoiceMissing) return { key: 'tx.billToPayRequired', amount: false }
 
     return null
   }
@@ -1129,7 +1142,7 @@ export function TransactionsPage({
               <Field label={t('tx.billStatus')} className="sm:col-span-2 lg:col-span-3">
                 <Select
                   value={billStatus}
-                  onChange={(e) => setBillStatus(e.target.value as BillStatus)}
+                  onChange={(e) => chooseBillStatus(e.target.value as BillStatus)}
                 >
                   <option value="paid">{t('tx.billPaidNow')}</option>
                   <option value="unpaid">{t('tx.billUnpaid')}</option>
@@ -1141,6 +1154,7 @@ export function TransactionsPage({
                   entityId={entity.id}
                   correctingPaymentId={editId}
                   value={billChoice}
+                  describedBy={billChoiceMissing ? billChoiceReasonId : undefined}
                   currency={currency}
                   onPick={pickBill}
                   onError={setError}
@@ -1229,6 +1243,11 @@ export function TransactionsPage({
           )}
 
           <div className="flex justify-end gap-2 border-t border-[var(--color-border)] pt-4 sm:col-span-2 lg:col-span-3">
+            {billChoiceMissing ? (
+              <p id={billChoiceReasonId} className="mr-auto text-sm text-[var(--color-danger)]">
+                {t('tx.billToPayRequired')}
+              </p>
+            ) : null}
             <Button
               type="button"
               variant="secondary"
@@ -1237,11 +1256,6 @@ export function TransactionsPage({
             >
               {t('common.cancel')}
             </Button>
-            {billChoiceMissing ? (
-              <p id={billChoiceReasonId} className="mr-auto text-sm text-[var(--color-danger)]">
-                {t('tx.billToPayRequired')}
-              </p>
-            ) : null}
             <Button
               type="submit"
               busy={busy}
