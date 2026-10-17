@@ -68,6 +68,7 @@ const series: CashFlowSeries = {
   total_income_minor: 120000,
   total_expenses_minor: 4250,
   net_minor: 115750,
+  hidden_entry_count: 0,
   buckets: [],
 }
 
