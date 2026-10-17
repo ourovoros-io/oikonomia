@@ -67,7 +67,11 @@ vi.mock('./pages/DashboardPage', async () => {
 })
 vi.mock('./pages/TransactionsPage', () => ({
   TransactionsPage: ({ newEntryIntent }: { newEntryIntent?: number }) => (
-    <div>{`Transactions stub, new entry intent ${newEntryIntent ?? 0}`}</div>
+    <div>
+      {`Transactions stub, new entry intent ${newEntryIntent ?? 0}`}
+      {/* Uncontrolled, so its text survives a rerender and only a remount clears it. */}
+      <input aria-label="Stub page state" />
+    </div>
   ),
 }))
 vi.mock('./pages/DocumentsPage', () => ({
@@ -302,6 +306,17 @@ describe('App shell', () => {
     expect(
       screen.getByRole('button', { name: 'Personal, EUR' }).getAttribute('aria-current'),
     ).toBeNull()
+  })
+
+  test('another book remounts the page, so no state carries over from the last one', async () => {
+    vi.mocked(api.entityList).mockResolvedValue([entity, { ...entity, id: 'e2', name: 'Household' }])
+    render(<App />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Transactions' }))
+    await userEvent.type(await screen.findByLabelText('Stub page state'), 'groceries')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Household, EUR' }))
+
+    expect(screen.getByLabelText('Stub page state')).toHaveValue('')
   })
 
   test('Lock is a button with its own word, and has no native tooltip to linger on the lock screen', async () => {

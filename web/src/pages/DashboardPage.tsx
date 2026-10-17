@@ -120,13 +120,7 @@ export function DashboardPage({ entity, onCreateBook }: Props) {
   }, [from, period, locale, t])
 
   useEffect(() => {
-    if (!entity) {
-      setData(null)
-      setSeries(null)
-      setEntries([])
-      setAccounts([])
-      return
-    }
+    if (!entity) return
     let cancelled = false
     setLoading(true)
     void (async () => {

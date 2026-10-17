@@ -49,7 +49,6 @@ type Tab = 'trial' | 'pnl' | 'bs'
 /** Last successful fetch, so a date change cannot keep painting the previous window. */
 type AppliedQuery = {
   tab: Tab
-  entityId: string
   from: string
   to: string
   asOf: string
@@ -79,7 +78,6 @@ export function ReportsPage({ entity, onCreateBook }: Props) {
     entity !== null &&
     applied !== null &&
     applied.tab === tab &&
-    applied.entityId === entity.id &&
     (tab === 'pnl' ? applied.from === from && applied.to === to : applied.asOf === asOf)
 
   async function onExportPdf() {
@@ -110,19 +108,13 @@ export function ReportsPage({ entity, onCreateBook }: Props) {
   }
 
   useEffect(() => {
-    if (!entity) {
-      setTb(null)
-      setPnl(null)
-      setBs(null)
-      setApplied(null)
-      return
-    }
+    if (!entity) return
     if (tab === 'pnl' && (!from || !to)) return
     if (tab !== 'pnl' && !asOf) return
 
     let cancelled = false
     const entityId = entity.id
-    const requested: AppliedQuery = { tab, entityId, from, to, asOf }
+    const requested: AppliedQuery = { tab, from, to, asOf }
 
     void (async () => {
       setError(null)
