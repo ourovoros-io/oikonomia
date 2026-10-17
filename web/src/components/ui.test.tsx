@@ -174,7 +174,6 @@ describe('Button', () => {
 
     const label = screen.getByTitle('Verschlüsselten Tresor anlegen')
     expect(label.className).toMatch(/truncate/)
-    expect(label.className).toMatch(/min-w-0/)
     expect(screen.getByRole('button', { name: 'Verschlüsselten Tresor anlegen' })).toContainElement(label)
   })
 })

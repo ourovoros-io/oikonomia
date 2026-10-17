@@ -285,7 +285,7 @@ export function CollapsibleSection({
  */
 export function TruncatedLabel({ text }: { text: string }) {
   return (
-    <span className="min-w-0 truncate" title={text}>
+    <span className="truncate" title={text}>
       {text}
     </span>
   )
