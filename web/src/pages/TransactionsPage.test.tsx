@@ -1703,6 +1703,9 @@ describe('TransactionsPage paying an existing bill', () => {
     expect(api.billListOpen).toHaveBeenCalledWith('e1', null)
     expect(screen.getByLabelText('Amount (EUR)')).toHaveValue('99.00')
     expect(screen.getByLabelText('Bills payable account')).toHaveValue('cc1')
+    // A payment settles its bill in full: what the bill fixed is not edited.
+    expect(screen.getByLabelText('Amount (EUR)')).toBeDisabled()
+    expect(screen.getByLabelText('Bills payable account')).toBeDisabled()
     await userEvent.type(screen.getByLabelText('Description'), 'Power')
     await userEvent.click(screen.getByRole('button', { name: 'Save entry' }))
     await waitFor(() => {

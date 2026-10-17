@@ -47,17 +47,37 @@ pub struct OpenBill {
 
 /// Matches a payment `pay` that is in the books.
 ///
-/// A voided payment has its `voided_by_entry_id` set, and a reversal never
-/// names a bill, so a payment that is out of the books never counts.
+/// This is [`ACTIVE_ENTRY_PREDICATE`] without its test for a reversal that
+/// points back at the entry, which a payment does not need: only
+/// [`post_simple_entry`](crate::ledger::post_simple_entry) writes
+/// `settles_entry_id`, never on a reversal, and every void since v8 links
+/// the voided entry to its reversal, so a voided payment has its own
+/// `voided_by_entry_id` set.
 const ACTIVE_PAYMENT_PREDICATE: &str = "
     pay.status = 'posted' AND pay.voided_by_entry_id IS NULL
 ";
 
+/// Which open bills [`query_open_bills`] reads.
+#[derive(Debug, Clone, Copy)]
+enum OpenBills {
+    /// Every open bill of the book, a bill `correcting_payment` settles
+    /// counted as open.
+    Every {
+        /// The payment a form is correcting, if any.
+        correcting_payment: Option<JournalEntryId>,
+    },
+    /// The one bill a payment names, if it is open.
+    One(JournalEntryId),
+}
+
 /// Lists the open bills of an entity, oldest first.
 ///
-/// With `payment`, a bill that payment settles is listed as open too: the
-/// form that corrects the payment offers its bill again, and correcting it
-/// voids the payment before the replacement settles the bill.
+/// With `correcting_payment`, a bill that payment settles is listed as open
+/// too: the form that corrects the payment offers its bill again, and
+/// correcting it voids the payment before the replacement settles the bill.
+///
+/// A bill owed on an archived account is left out: no payment can debit
+/// that account until it is restored.
 ///
 /// An entity that does not exist has no bills and gives an empty list.
 ///
@@ -68,9 +88,9 @@ const ACTIVE_PAYMENT_PREDICATE: &str = "
 pub fn list_open_bills(
     conn: &Connection,
     entity_id: EntityId,
-    payment: Option<JournalEntryId>,
+    correcting_payment: Option<JournalEntryId>,
 ) -> Result<Vec<OpenBill>> {
-    query_open_bills(conn, entity_id, None, payment)
+    query_open_bills(conn, entity_id, OpenBills::Every { correcting_payment })
 }
 
 /// Returns the open bill `bill_id` of the book of `entity_id`, for a
@@ -102,7 +122,7 @@ pub(crate) fn open_bill(
         return Err(ValidationError::WrongBook.into());
     }
 
-    query_open_bills(conn, entity_id, Some(bill_id), None)?
+    query_open_bills(conn, entity_id, OpenBills::One(bill_id))?
         .pop()
         .ok_or_else(|| ValidationError::BillNotOpen.into())
 }
@@ -115,26 +135,27 @@ pub(crate) fn open_bill(
 /// [`ValidationError::BillSettled`] when one does; [`Error::Database`] on
 /// database errors.
 pub(crate) fn ensure_not_settled(conn: &Connection, id: JournalEntryId) -> Result<()> {
-    let payments: i64 = conn
+    let settled: bool = conn
         .query_row(
             &format!(
                 "
-                SELECT COUNT(1) FROM journal_entries pay
-                WHERE pay.settles_entry_id = ?1 AND {ACTIVE_PAYMENT_PREDICATE}
+                SELECT EXISTS (
+                    SELECT 1 FROM journal_entries pay
+                    WHERE pay.settles_entry_id = ?1 AND {ACTIVE_PAYMENT_PREDICATE}
+                )
                 "
             ),
             [id.to_string()],
             |row| row.get(0),
         )
         .database("look for the payment of a bill")?;
-    if payments > 0 {
+    if settled {
         return Err(ValidationError::BillSettled.into());
     }
     Ok(())
 }
 
-/// Reads the open bills of `entity_id`, or only `bill_id` when given,
-/// counting a bill that `payment` settles as open.
+/// Reads the open bills of `entity_id` that `which` selects.
 ///
 /// A bill has one debit line, on its category, and one credit line, on its
 /// payable account, so joining the credit line gives one row per bill.
@@ -145,16 +166,20 @@ pub(crate) fn ensure_not_settled(conn: &Connection, id: JournalEntryId) -> Resul
 fn query_open_bills(
     conn: &Connection,
     entity_id: EntityId,
-    bill_id: Option<JournalEntryId>,
-    payment: Option<JournalEntryId>,
+    which: OpenBills,
 ) -> Result<Vec<OpenBill>> {
     const OPERATION: &str = "list open bills";
 
+    let (bill_id, payment) = match which {
+        OpenBills::Every { correcting_payment } => (None, correcting_payment),
+        OpenBills::One(bill_id) => (Some(bill_id), None),
+    };
     let sql = format!(
         "
         SELECT je.id, je.entry_date, je.description, jl.credit_minor, jl.account_id
         FROM journal_entries je
         JOIN journal_lines jl ON jl.entry_id = je.id AND jl.credit_minor > 0
+        JOIN accounts payable ON payable.id = jl.account_id AND payable.is_active = 1
         WHERE je.entity_id = ?1
           AND (?2 IS NULL OR je.id = ?2)
           AND je.kind = 'bill'

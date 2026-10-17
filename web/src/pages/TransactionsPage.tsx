@@ -116,6 +116,8 @@ export function TransactionsPage({
   const [walletId, setWalletId] = useState('') // bank / cash / card
   const [payableId, setPayableId] = useState('') // bills payable / AP, or the receivable of an unpaid income
   const [settlesId, setSettlesId] = useState('') // the open bill a payment of an existing bill settles
+  // A payment settles its bill in full, so a picked bill fixes the amount and payable account.
+  const billPicked = kind === 'bill' && billStatus === 'pay_existing' && settlesId !== ''
   const [fromId, setFromId] = useState('') // transfer
   const [toId, setToId] = useState('')
   const [amount, setAmount] = useState('')
@@ -656,7 +658,7 @@ export function TransactionsPage({
         payable_account_id: payableId || null,
         from_account_id: fromId || null,
         to_account_id: toId || null,
-        settles_entry_id: kind === 'bill' && billStatus === 'pay_existing' ? settlesId || null : null,
+        settles_entry_id: billPicked ? settlesId : null,
       }
 
       if (editId) {
@@ -1031,6 +1033,7 @@ export function TransactionsPage({
                 setAmountInvalid(false)
               }}
               className="tabular-nums"
+              disabled={billPicked}
               required
               aria-invalid={amountInvalid || undefined}
               aria-describedby={amountInvalid ? errorBannerId : undefined}
@@ -1143,7 +1146,7 @@ export function TransactionsPage({
               {billStatus === 'pay_existing' ? (
                 <BillPicker
                   entityId={entity.id}
-                  paymentId={editId}
+                  correctingPaymentId={editId}
                   value={settlesId}
                   currency={currency}
                   onPick={pickBill}
@@ -1178,7 +1181,12 @@ export function TransactionsPage({
               ) : null}
               {billStatus === 'unpaid' || billStatus === 'pay_existing' ? (
                 <Field label={t('tx.billsPayableAccount')}>
-                  <Select value={payableId} onChange={(e) => setPayableId(e.target.value)} required>
+                  <Select
+                    value={payableId}
+                    onChange={(e) => setPayableId(e.target.value)}
+                    disabled={billPicked}
+                    required
+                  >
                     {payableAccounts.length === 0 ? (
                       <option value="">{t('tx.noLiability')}</option>
                     ) : null}

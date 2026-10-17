@@ -972,6 +972,7 @@ fn load_listed_headers(conn: &Connection, listed: &ListedEntries) -> Result<Vec<
             Ok(map_entry_row(OPERATION, row).and_then(|entry| {
                 Ok(StoredEntry {
                     entry,
+                    // `list_entries` fills them in from the line query.
                     lines: Vec::new(),
                     is_voided: is_voided != 0,
                     posted_as: stored_posted_as(OPERATION, row, 9)?,

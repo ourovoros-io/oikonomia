@@ -271,17 +271,17 @@ pub enum ValidationError {
 
     /// The bill a payment names is not an open bill: it is not an unpaid
     /// bill, it is voided, or another payment already settles it.
-    #[error("the bill is not open")]
+    #[error("bill is not open")]
     BillNotOpen,
 
     /// A payment that settles a bill must pay its whole amount, from the
     /// payable account the bill is owed on.
-    #[error("the payment does not match the bill it settles")]
+    #[error("payment does not match the bill it settles")]
     PaymentDoesNotMatchBill,
 
     /// The bill has a payment that settles it, so it cannot be voided or
     /// corrected until that payment is voided.
-    #[error("the bill is settled by a payment")]
+    #[error("bill is settled by a payment")]
     BillSettled,
 
     /// Opening balances apply only to asset and liability accounts.

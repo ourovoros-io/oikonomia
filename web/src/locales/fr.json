@@ -1139,7 +1139,7 @@
     "entryNotPosted": "Seules les écritures comptabilisées peuvent être supprimées.",
     "wrongBook": "Cet élément appartient à un autre livre. Passez au bon livre, puis réessayez.",
     "billNotOpen": "Cette facture est déjà payée ou n’est plus ouverte. Choisissez une autre facture.",
-    "paymentDoesNotMatchBill": "Un paiement de facture règle toute la facture depuis le compte sur lequel elle est due. Choisissez de nouveau la facture pour remplir les deux.",
+    "paymentDoesNotMatchBill": "Un paiement de facture règle toute la facture depuis le compte sur lequel elle est due. Choisissez de nouveau la facture pour remplir son montant et son compte.",
     "billSettled": "Cette facture a un paiement. Supprimez d’abord le paiement, puis modifiez ou supprimez la facture.",
     "openingBalanceAccountType": "Un solde d’ouverture ne peut être défini que sur un compte d’actif ou de passif.",
     "openingBalanceUnchanged": "Ce compte a déjà ce solde.",

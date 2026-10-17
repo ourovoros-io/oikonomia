@@ -503,12 +503,18 @@ fn migrate_v11(tx: &Transaction<'_>) -> Result<()> {
 /// which bill it paid, so no list of open bills could be built. A payment
 /// posted from the form's bill picker now names the unpaid bill it settles,
 /// in full: one payment settles one bill. An open bill is an unpaid bill
-/// that no active payment names. The column is NULL for every other entry,
-/// for a payment posted without a bill, and for every payment posted before
-/// this step; the bills those paid stay out of the open list only if they
-/// were posted before v11, which lists bills by their stored status
-/// ([`crate::ledger::list_open_bills`]). The partial index serves the lookup
-/// of a bill's payment, which listing open bills makes once per bill.
+/// that no active payment names ([`crate::ledger::list_open_bills`]). The
+/// column is NULL for every other entry, for a payment posted without a
+/// bill, and for every payment posted before this step.
+///
+/// Only a bill that stores the status unpaid (v11) can be open, so a bill
+/// posted before v11 never is. A v11 unpaid bill that an earlier payment
+/// already paid is listed as open, since that payment named no bill; v11
+/// was in no release, so only a vault that ran an unreleased build holds
+/// one.
+///
+/// The partial index serves the lookup of a bill's payment, which listing
+/// open bills makes once per bill.
 fn migrate_v12(tx: &Transaction<'_>) -> Result<()> {
     if !journal_entries_has_column(tx, "settles_entry_id")? {
         tx.execute_batch(

@@ -25,7 +25,7 @@ use oikonomia_core::documents::{AnalyzerStatus, DocumentMeta, DocumentSuggestion
 use oikonomia_core::domain::{Account, Entity, JournalEntry, JournalLine};
 use oikonomia_core::ledger::{
     BalanceSheet, CashFlowSeries, CreateAccount, CreateEntity, CreateRecurringTemplateRequest,
-    DashboardSummary, EntryHistoryItem, JournalLineRequest, ListedEntryKind, PnL,
+    DashboardSummary, EntryHistoryItem, JournalLineRequest, ListedEntryKind, OpenBill, PnL,
     PostJournalRequest, PostSimpleEntryRequest, PostedEntryView, RecurringPostResult,
     RecurringTemplateView, RegisterLine, SimpleEntryAccounts, TrialBalance, UpdateAccount,
     UpdateRecurringTemplateRequest, VoidResult,
@@ -155,6 +155,17 @@ fn posted_entry_view() {
         r#""66666666-6666-4666-8666-666666666666","payable_account_id":null,"#,
         r#""from_account_id":null,"to_account_id":null},"#,
         r#""settles_entry_id":null}"#,
+    ));
+}
+
+/// The bill picker labels each bill from these fields and fills the form from
+/// its amount and payable account.
+#[test]
+fn open_bill() {
+    assert_json_is_pinned::<OpenBill>(concat!(
+        r#"{"entry_id":"33333333-3333-4333-8333-333333333333","entry_date":"2026-08-10","#,
+        r#""description":"Power","amount_minor":9900,"payable_account_id":"#,
+        r#""66666666-6666-4666-8666-666666666666"}"#,
     ));
 }
 

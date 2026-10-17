@@ -8,7 +8,7 @@ import { Field, Select } from './ui'
 type Props = {
   entityId: string
   /** The payment being corrected, whose bill is offered again; null for a new payment. */
-  paymentId: string | null
+  correctingPaymentId: string | null
   /** The picked bill's id, or '' for a payment of no bill in particular. */
   value: string
   currency: Currency
@@ -22,13 +22,13 @@ type Props = {
  * hands it to the form, which fills in its amount and payable account; core
  * checks that the payment matches the bill it settles.
  */
-export function BillPicker({ entityId, paymentId, value, currency, onPick, onError }: Props) {
+export function BillPicker({ entityId, correctingPaymentId, value, currency, onPick, onError }: Props) {
   const { t } = useI18n()
   const [bills, setBills] = useState<OpenBill[]>([])
 
   useEffect(() => {
     let current = true
-    api.billListOpen(entityId, paymentId).then(
+    api.billListOpen(entityId, correctingPaymentId).then(
       (open) => {
         if (current) setBills(open)
       },
@@ -40,9 +40,7 @@ export function BillPicker({ entityId, paymentId, value, currency, onPick, onErr
     return () => {
       current = false
     }
-    // onError is a fresh closure each render; the list depends on the book and payment only.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entityId, paymentId])
+  }, [entityId, correctingPaymentId, onError])
 
   return (
     <Field label={t('tx.billToPay')} className="sm:col-span-2 lg:col-span-3">

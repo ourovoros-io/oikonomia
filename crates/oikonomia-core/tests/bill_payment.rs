@@ -8,9 +8,9 @@ mod common;
 use oikonomia_core::domain::{AccountId, ChartTemplate, EntityId, JournalEntryId};
 use oikonomia_core::error::{Error, ValidationError};
 use oikonomia_core::ledger::{
-    OpenBill, PostSimpleEntry, PostSimpleEntryRequest, PostedEntryView, SimpleBillStatus,
-    SimpleEntryAccounts, SimpleEntryKind, get_entry, list_open_bills, post_simple_entry,
-    replace_simple_entry, void_entry,
+    EntryFilter, OpenBill, PostSimpleEntry, PostSimpleEntryRequest, PostedEntryView,
+    SimpleBillStatus, SimpleEntryAccounts, SimpleEntryKind, archive_account, get_entry,
+    list_entries, list_open_bills, post_simple_entry, replace_simple_entry, void_entry,
 };
 use oikonomia_core::prefs::Locale;
 use rusqlite::Connection;
@@ -274,8 +274,92 @@ fn a_payment_must_settle_an_open_bill_of_its_book_in_full() {
         pay(conn, &book, bill_id),
         Err(Error::Validation(ValidationError::BillNotOpen))
     ));
-    // Nothing a refused payment would have posted is left behind.
+    // The two bills and the one payment; no refused payment was posted.
+    assert_eq!(entry_count(conn, &book), 3);
     assert_eq!(open_ids(conn, &book), [on_card]);
+}
+
+#[test]
+fn correcting_one_payment_offers_its_bill_and_no_other() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn, "Home");
+    let first = bill(conn, &book, book.bills_payable, 4_000);
+    let second = bill(conn, &book, book.bills_payable, 4_000);
+    let first_payment = pay(conn, &book, first).expect("pay the first");
+    pay(conn, &book, second).expect("pay the second");
+
+    let offered: Vec<_> = list_open_bills(conn, book.entity_id, Some(first_payment.entry.id))
+        .expect("open bills")
+        .into_iter()
+        .map(|open| open.entry_id)
+        .collect();
+
+    assert_eq!(offered, [first]);
+}
+
+#[test]
+fn correcting_a_payment_into_one_of_no_bill_reopens_the_bill() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn, "Home");
+    let bill_id = bill(conn, &book, book.bills_payable, 4_000);
+    let paid = pay(conn, &book, bill_id).expect("pay");
+    let unlinked = PostSimpleEntry {
+        entity_id: book.entity_id,
+        accounts: payment(&book, book.bills_payable),
+        entry_date: common::date("2026-04-12"),
+        description: "power".into(),
+        reference: None,
+        amount_minor: 4_000,
+        settles_entry_id: None,
+    };
+
+    replace_simple_entry(conn, paid.entry.id, &unlinked, Locale::En).expect("correct");
+
+    assert_eq!(open_ids(conn, &book), [bill_id]);
+}
+
+#[test]
+fn a_bill_owed_on_an_archived_account_is_not_offered() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn, "Home");
+    let on_card = bill(conn, &book, book.card, 4_000);
+    let on_payable = bill(conn, &book, book.bills_payable, 4_000);
+
+    archive_account(conn, book.card).expect("archive the card");
+
+    // No payment could debit the archived card until it is restored.
+    assert_eq!(open_ids(conn, &book), [on_payable]);
+    assert!(matches!(
+        post(conn, &book, payment(&book, book.card), 4_000, Some(on_card)),
+        Err(Error::Validation(ValidationError::AccountInactive { .. }))
+    ));
+}
+
+#[test]
+fn a_bill_named_on_an_entry_that_is_not_a_payment_is_not_read() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn, "Home");
+    let bill_id = bill(conn, &book, book.bills_payable, 4_000);
+    let expense = SimpleEntryAccounts::Expense {
+        category: book.power,
+        wallet: book.checking,
+    };
+
+    // Another amount than the bill's: were the bill read, this would be refused.
+    let posted = post(conn, &book, expense, 1_000, Some(bill_id)).expect("post");
+
+    assert_eq!(posted.settles_entry_id, None);
+    assert_eq!(open_ids(conn, &book), [bill_id]);
+}
+
+fn entry_count(conn: &Connection, book: &Book) -> usize {
+    list_entries(conn, book.entity_id, &EntryFilter::default())
+        .expect("entries")
+        .len()
 }
 
 #[test]

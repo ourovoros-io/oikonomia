@@ -110,7 +110,7 @@ pub(crate) async fn entry_get(
 }
 
 /// Lists an entity's open bills, oldest first: the unpaid bills no payment
-/// settles yet, which the payment form offers to settle. With `paymentId`,
+/// settles yet, which the payment form offers to settle. With `correctingPaymentId`,
 /// the form correcting that payment, the bill it settles is listed too.
 ///
 /// Requires the unlocked vault. An unknown entity has no bills, so it yields
@@ -123,10 +123,10 @@ pub(crate) async fn entry_get(
 pub(crate) async fn bill_list_open(
     state: State<'_, AppState>,
     entity_id: EntityId,
-    payment_id: Option<JournalEntryId>,
+    correcting_payment_id: Option<JournalEntryId>,
 ) -> CommandResult<Vec<OpenBill>> {
     with_connection(&state, move |conn| {
-        list_open_bills(conn, entity_id, payment_id)
+        list_open_bills(conn, entity_id, correcting_payment_id)
     })
     .await
 }
@@ -452,8 +452,8 @@ mod ipc_tests {
     use base64::Engine;
     use oikonomia_core::domain::ChartTemplate;
     use oikonomia_core::ledger::{
-        CreateEntity, PostSimpleEntry, PostSimpleEntryRequest, SimpleEntryKind, create_entity,
-        list_accounts, post_simple_entry,
+        CreateEntity, PostSimpleEntry, PostSimpleEntryRequest, SimpleEntryAccounts,
+        SimpleEntryKind, create_entity, list_accounts, post_simple_entry,
     };
     use oikonomia_core::prefs::Locale;
     use oikonomia_core::vault::Connection;
@@ -477,7 +477,6 @@ mod ipc_tests {
             label,
             tauri::generate_handler![
                 entry_list,
-                bill_list_open,
                 entry_post_simple_with_document,
                 crate::commands::documents::document_list
             ],
@@ -599,20 +598,76 @@ mod ipc_tests {
         assert_eq!(descriptions(&none), [] as [&str; 0]);
     }
 
-    /// The payload is the object `billListOpen` in `web/src/lib/api.ts`
-    /// passes to `invoke`; the seeded book has no bills.
+    /// Creates a book with one bill and the payment that settles it, and
+    /// returns the ids of the book, the bill and the payment.
+    fn seed_paid_bill(conn: &Connection) -> [String; 3] {
+        let book = CreateEntity {
+            name: "Home".into(),
+            base_currency: "EUR".into(),
+            chart_template: ChartTemplate::Personal,
+            fiscal_year_start_month: None,
+        };
+        let entity = create_entity(conn, &book, Locale::En).unwrap();
+        let accounts = list_accounts(conn, entity.id).unwrap();
+        let account = |code: &str| {
+            accounts
+                .iter()
+                .find(|account| account.code == code)
+                .map(|account| account.id)
+                .unwrap()
+        };
+        let (power, checking, payable) = (account("5100"), account("1010"), account("2050"));
+        let post = |accounts, settles_entry_id| {
+            let entry = PostSimpleEntry {
+                entity_id: entity.id,
+                accounts,
+                entry_date: oikonomia_core::util::parse_date("2026-08-05").unwrap(),
+                description: "Power".into(),
+                reference: None,
+                amount_minor: 9_900,
+                settles_entry_id,
+            };
+            post_simple_entry(conn, &entry).unwrap().entry.id
+        };
+
+        let bill = post(
+            SimpleEntryAccounts::BillUnpaid {
+                category: power,
+                payable,
+            },
+            None,
+        );
+        let payment = post(
+            SimpleEntryAccounts::BillPayment {
+                payable,
+                wallet: checking,
+            },
+            Some(bill),
+        );
+        [entity.id.to_string(), bill.to_string(), payment.to_string()]
+    }
+
+    /// The payloads are the objects `billListOpen` in `web/src/lib/api.ts`
+    /// passes to `invoke`.
     #[test]
-    fn the_ipc_call_for_open_bills_reads_the_book_and_the_payment() {
-        let (app, book) = mock_book("open-bills");
-
-        let open = app
-            .invoke(
+    fn the_ipc_call_for_open_bills_reads_the_book_and_the_corrected_payment() {
+        let (app, [entity, bill, payment]) = MockApp::start(
+            "open-bills",
+            tauri::generate_handler![bill_list_open],
+            seed_paid_bill,
+        );
+        let open = |correcting: Option<&str>| {
+            app.invoke(
                 "bill_list_open",
-                serde_json::json!({ "entityId": book.entity, "paymentId": null }),
+                serde_json::json!({ "entityId": entity, "correctingPaymentId": correcting }),
             )
-            .unwrap();
+            .unwrap()
+        };
 
-        assert_eq!(open, serde_json::json!([]));
+        assert_eq!(open(None), serde_json::json!([]));
+        let offered = open(Some(&payment));
+        assert_eq!(offered[0]["entry_id"], bill.as_str());
+        assert_eq!(offered[0]["amount_minor"], 9_900);
     }
 
     #[test]

@@ -233,8 +233,8 @@ impl TryFrom<PostSimpleEntryRequest> for PostSimpleEntry {
     /// Checks that `request` holds what its kind needs and types it.
     ///
     /// An account in a part the kind does not have is dropped, and so is a
-    /// bill status on an entry that is not a bill, and a bill to settle on
-    /// an entry that is not a payment of one.
+    /// bill status on an entry that is not a bill. A bill to settle is passed
+    /// on, and posting reads it only for a payment of an existing bill.
     ///
     /// # Errors
     ///
@@ -256,7 +256,7 @@ impl TryFrom<PostSimpleEntryRequest> for PostSimpleEntry {
             description: request.description,
             reference: request.reference,
             amount_minor: request.amount_minor,
-            settles_entry_id: settled_by(accounts, request.settles_entry_id),
+            settles_entry_id: request.settles_entry_id,
         })
     }
 }
@@ -287,7 +287,7 @@ impl PostSimpleEntryRequest {
             description: self.description.clone(),
             reference: self.reference.clone(),
             amount_minor: self.amount_minor,
-            settles_entry_id: settled_by(accounts, self.settles_entry_id),
+            settles_entry_id: self.settles_entry_id,
         })
     }
 
@@ -469,15 +469,6 @@ impl TryFrom<UpdateRecurringTemplateRequest> for UpdateRecurringTemplate {
             },
         })
     }
-}
-
-/// Returns `bill_id` for a payment of an existing bill and `None` for any
-/// other entry, which settles no bill.
-fn settled_by(
-    accounts: SimpleEntryAccounts,
-    bill_id: Option<JournalEntryId>,
-) -> Option<JournalEntryId> {
-    bill_id.filter(|_| matches!(accounts, SimpleEntryAccounts::BillPayment { .. }))
 }
 
 /// The JSON shape of a [`RecurringTemplateView`].

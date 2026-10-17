@@ -481,10 +481,10 @@ export const api = {
   entryHistory: (id: string) => call<EntryHistoryItem[]>('entry_history', { id }),
   /**
    * Open bills of a book, oldest first: the unpaid bills a payment can settle.
-   * `paymentId` is the payment being corrected; the bill it settles is listed too.
+   * `correctingPaymentId` is the payment being corrected; the bill it settles is listed too.
    */
-  billListOpen: (entityId: string, paymentId: string | null) =>
-    call<OpenBill[]>('bill_list_open', { entityId, paymentId }),
+  billListOpen: (entityId: string, correctingPaymentId: string | null) =>
+    call<OpenBill[]>('bill_list_open', { entityId, correctingPaymentId }),
   /** Owner-only hidden flag. Hidden rows stay in list/get; CSV export omits them. */
   entrySetHidden: (id: string, hidden: boolean) =>
     call<PostedEntryView>('entry_set_hidden', { id, hidden }),
