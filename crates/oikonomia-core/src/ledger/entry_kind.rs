@@ -1,6 +1,6 @@
 //! What the entry list and the dashboard call an entry, and the simple entry
 //! form an edit of it opens on. The rules are on [`ListedEntryKind`] and
-//! [`KindFallback::simple_form`]; this module holds them and the line
+//! [`LineFallback::simple_form`]; this module holds them and the line
 //! fallback they share for entries that store too little.
 
 use crate::coa::default_role_codes;
@@ -131,15 +131,15 @@ impl From<SimpleEntryAccounts> for PostedAs {
 }
 
 /// Returns whether reading an entry posted as `posted_as` needs a loaded
-/// [`KindFallback`]: one that stores no kind, or a bill posted before v11.
-pub(crate) fn needs_fallback(posted_as: Option<PostedAs>) -> bool {
+/// [`LineFallback`]: one that stores no kind, or a bill posted before v11.
+fn needs_fallback(posted_as: Option<PostedAs>) -> bool {
     posted_as.is_none_or(PostedAs::lacks_status)
 }
 
 /// What the line fallback needs to know about one book: the type of each
 /// account, which accounts hold bills and which hold receivables.
 #[derive(Debug, Default)]
-pub(crate) struct KindFallback {
+pub(crate) struct LineFallback {
     /// The type of every account of the book, archived ones included.
     account_types: HashMap<AccountId, AccountType>,
     /// The accounts a line on which makes an entry a bill.
@@ -149,7 +149,29 @@ pub(crate) struct KindFallback {
     receivable_accounts: HashSet<AccountId>,
 }
 
-impl KindFallback {
+impl LineFallback {
+    /// Loads the fallback for the book of `entity_id` when an entry posted as
+    /// one of `posted` needs it, and returns an empty one otherwise, which
+    /// reads nothing of the book.
+    ///
+    /// Every reader of entries takes its fallback from here, so none can
+    /// pass an empty one for an entry that needs the book.
+    ///
+    /// # Errors
+    ///
+    /// Those of [`load`](Self::load), only when an entry needs it.
+    pub(crate) fn load_for(
+        conn: &Connection,
+        entity_id: EntityId,
+        posted: impl IntoIterator<Item = Option<PostedAs>>,
+    ) -> Result<Self> {
+        if posted.into_iter().any(needs_fallback) {
+            Self::load(conn, entity_id)
+        } else {
+            Ok(Self::default())
+        }
+    }
+
     /// Loads the fallback for the book of `entity_id`.
     ///
     /// # Errors
@@ -250,11 +272,15 @@ impl KindFallback {
     ) -> Option<SimpleEntryAccounts> {
         let (debit, credit) = debit_and_credit(lines)?;
 
-        if let Some(posted) = posted_as.filter(|posted| !posted.lacks_status()) {
-            return SimpleEntryAccounts::from_sides(posted.kind, posted.bill_status, debit, credit);
-        }
-
         let kind = match posted_as {
+            Some(posted) if !posted.lacks_status() => {
+                return SimpleEntryAccounts::from_sides(
+                    posted.kind,
+                    posted.bill_status,
+                    debit,
+                    credit,
+                );
+            }
             Some(posted) => posted.kind,
             None => self.classify(lines).simple_kind()?,
         };
@@ -400,7 +426,7 @@ mod tests {
     /// A book of one account of each type, with `bills` as its bill account
     /// and `receivable` as its receivable account.
     struct Book {
-        fallback: KindFallback,
+        fallback: LineFallback,
         asset: AccountId,
         receivable: AccountId,
         liability: AccountId,
@@ -423,7 +449,7 @@ mod tests {
             (expense, AccountType::Expense),
         ]);
         Book {
-            fallback: KindFallback {
+            fallback: LineFallback {
                 account_types,
                 bill_accounts: HashSet::from([bills]),
                 receivable_accounts: HashSet::from([receivable]),
@@ -449,7 +475,7 @@ mod tests {
     /// The form of an entry posted as `posted_as` that debits `debit` and
     /// credits `credit`, read with `fallback`.
     fn form(
-        fallback: &KindFallback,
+        fallback: &LineFallback,
         posted_as: Option<PostedAs>,
         debit: AccountId,
         credit: AccountId,
@@ -474,7 +500,7 @@ mod tests {
         };
 
         let read = form(
-            &KindFallback::default(),
+            &LineFallback::default(),
             Some(PostedAs::from(paid_by_card)),
             book.expense,
             book.bills,
@@ -515,6 +541,30 @@ mod tests {
     }
 
     #[test]
+    fn an_income_that_stores_no_status_reads_as_received() {
+        let book = book();
+        let income = Some(PostedAs {
+            kind: SimpleEntryKind::Income,
+            bill_status: None,
+        });
+
+        // Even on the receivable: only a stored status says it is owed.
+        assert!(!needs_fallback(income));
+        assert_eq!(
+            form(
+                &LineFallback::default(),
+                income,
+                book.receivable,
+                book.income
+            ),
+            Some(SimpleEntryAccounts::Income {
+                category: book.income,
+                wallet: book.receivable,
+            })
+        );
+    }
+
+    #[test]
     fn an_entry_without_a_kind_takes_the_form_its_lines_suggest() {
         let book = book();
         let fallback = &book.fallback;
@@ -532,6 +582,13 @@ mod tests {
             Some(SimpleEntryAccounts::IncomeReceivable {
                 category: book.income,
                 receivable: book.receivable,
+            })
+        );
+        assert_eq!(
+            form(fallback, None, book.asset, book.income),
+            Some(SimpleEntryAccounts::Income {
+                category: book.income,
+                wallet: book.asset,
             })
         );
         assert_eq!(

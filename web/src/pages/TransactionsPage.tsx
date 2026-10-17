@@ -25,7 +25,7 @@ import {
   type LastRoleAccounts,
   type PendingDocSource,
   type PostedEntryView,
-  type SimpleEntryForm,
+  type SimpleEntryAccounts,
   type SimpleEntryInput,
 } from '../lib/api'
 import { parseMajorToMinor } from '../lib/amountParse'
@@ -750,12 +750,11 @@ export function TransactionsPage({
   const range = series ? `${formatDate(series.from)} – ${formatDate(series.to)}` : null
 
   /**
-   * Map a posted entry's lines back onto the simple form and open it for
-   * editing. Bills reopen as their expense/transfer equivalent — the journal
-   * lines are identical, so nothing is lost.
+   * Open a posted entry for editing on the simple form core returns for it.
+   * Core decides the kind, bill status and accounts; the UI does not read
+   * them back from debit and credit.
    */
   function startEdit(view: PostedEntryView) {
-    // Core says which form posts the entry; the UI does not read it back from debit and credit.
     if (!view.simple_form) return
 
     resetDraft()
@@ -774,11 +773,13 @@ export function TransactionsPage({
     setShowForm(true)
   }
 
-  function fillForm(form: SimpleEntryForm) {
+  function fillForm(form: SimpleEntryAccounts) {
     setKind(form.kind)
+    // The kind's defaults first, so a part the entry does not have, such as the
+    // payable of a paid bill, holds the default and not the last form's account.
+    applyKindDefaults(form.kind, defaults)
     if (form.kind === 'bill' && form.bill_status) setBillStatus(form.bill_status)
     setIncomeUnpaid(form.kind === 'income' && form.bill_status === 'unpaid')
-    // Parts the kind does not have stay on the defaults resetDraft chose.
     if (form.category_account_id) setCategoryId(form.category_account_id)
     if (form.wallet_account_id) setWalletId(form.wallet_account_id)
     if (form.payable_account_id) setPayableId(form.payable_account_id)

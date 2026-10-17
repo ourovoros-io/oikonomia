@@ -80,11 +80,11 @@ export type PostedEntryView = {
   is_voided: boolean
   listed_kind: ListedEntryKind
   /**
-   * The simple entry form core posts this entry from (`SimpleEntryAccounts`), which an
+   * The simple entry form core posts this entry from, which an
    * edit opens on. Null for a voided entry, a reversal, and an entry the form cannot
    * describe; such an entry is not edited.
    */
-  simple_form: SimpleEntryForm | null
+  simple_form: SimpleEntryAccounts | null
 }
 
 /** How an entry of a history relates to the edit that replaced it. */
@@ -279,7 +279,7 @@ export type SimpleEntryInput = {
 }
 
 /** The kind, bill status and role accounts of a posted simple entry, as the form holds them. */
-export type SimpleEntryForm = Pick<
+export type SimpleEntryAccounts = Pick<
   SimpleEntryInput,
   | 'kind'
   | 'bill_status'

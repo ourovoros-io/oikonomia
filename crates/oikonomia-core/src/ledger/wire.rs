@@ -21,8 +21,9 @@
 //! One `TryFrom` turns it into the strict type, and the ledger functions take
 //! only the strict type.
 //!
-//! A view goes the other way. [`RecurringTemplateView`] is strict in memory
-//! and serializes through a flat twin that stays inside the crate, so the UI
+//! A view goes the other way. [`RecurringTemplateView`] and
+//! [`SimpleEntryAccounts`], the form of a posted entry, are strict in memory
+//! and serialize through flat twins that stay inside the crate, so the UI
 //! keeps reading the kind, the bill status and five optional accounts side
 //! by side.
 //!

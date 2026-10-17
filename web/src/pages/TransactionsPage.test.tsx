@@ -1708,6 +1708,59 @@ describe('TransactionsPage edit form', () => {
     })
   })
 
+  test('a part the edited entry lacks holds its default, not the last form account', async () => {
+    const owedOn = account({ id: 'r1', name: 'Receivables', account_type: 'asset', code: '1200' })
+    const payable = account({ id: 'bp1', name: 'Bills Payable', account_type: 'liability', code: '2050' })
+    vi.mocked(api.accountList).mockResolvedValue([...accounts, owedOn, payable])
+    vi.mocked(api.accountDefaults).mockResolvedValue({ ...DEFAULTS, receivable: 'r1', bills_payable: 'bp1' })
+    const invoice: PostedEntryView = {
+      ...incomeEntry,
+      simple_form: {
+        kind: 'income',
+        bill_status: 'unpaid',
+        category_account_id: 'inc1',
+        wallet_account_id: null,
+        payable_account_id: 'r1',
+        from_account_id: null,
+        to_account_id: null,
+      },
+    }
+    const paidBill: PostedEntryView = {
+      ...postedEntry,
+      listed_kind: 'bill',
+      simple_form: {
+        kind: 'bill',
+        bill_status: 'paid',
+        category_account_id: 'exp1',
+        wallet_account_id: 'w1',
+        payable_account_id: null,
+        from_account_id: null,
+        to_account_id: null,
+      },
+    }
+    vi.mocked(api.entryList).mockResolvedValue([paidBill, invoice])
+    vi.mocked(api.entryReplaceSimple).mockResolvedValue(paidBill)
+    await renderReady()
+
+    // The invoice leaves its receivable in the form's payable part.
+    await userEvent.click(await screen.findByText('CLIENT INVOICE'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit entry' }))
+    await screen.findByRole('heading', { name: 'Edit entry' })
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }))
+
+    await userEvent.click(await screen.findByText('Alpha supermarket'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit entry' }))
+    await userEvent.selectOptions(await screen.findByLabelText('Bill status'), 'unpaid')
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+
+    await waitFor(() => {
+      expect(api.entryReplaceSimple).toHaveBeenCalledWith(
+        'j1',
+        expect.objectContaining({ bill_status: 'unpaid', payable_account_id: 'bp1' }),
+      )
+    })
+  })
+
   test('an entry core gives no simple form has no Edit button', async () => {
     vi.mocked(api.entryList).mockResolvedValue([{ ...postedEntry, simple_form: null }])
     await renderReady()

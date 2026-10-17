@@ -88,12 +88,14 @@ const entries: PostedEntryView[] = [
     lines: [line('l1', 'j1', 'exp1', 4250, 0), line('l2', 'j1', 'w1', 0, 4250)],
     is_voided: false,
     listed_kind: 'expense',
+    simple_form: null,
   },
   {
     entry: { id: 'j2', entity_id: 'e1', entry_date: '2026-08-11', description: 'Client invoice', reference: null, status: 'posted', hidden: false },
     lines: [line('l3', 'j2', 'w1', 120000, 0), line('l4', 'j2', 'inc1', 0, 120000)],
     is_voided: false,
     listed_kind: 'income',
+    simple_form: null,
   },
 ]
 
@@ -150,6 +152,7 @@ describe('DashboardPage activity kinds', () => {
       entry: { ...expense.entry, id, description },
       lines,
       listed_kind: 'bill',
+      simple_form: null,
     })
     vi.mocked(api.entryList).mockResolvedValue([
       // Lines of an expense, and of a transfer from the wallet to a liability.

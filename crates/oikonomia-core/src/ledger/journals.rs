@@ -79,7 +79,7 @@ use crate::ledger::balance::{
     ACTIVE_ENTRY_PREDICATE, account_balance_as_of, add_minor, normal_balance,
 };
 use crate::ledger::entities::ensure_writable_entity;
-use crate::ledger::entry_kind::{KindFallback, ListedEntryKind, PostedAs, needs_fallback};
+use crate::ledger::entry_kind::{LineFallback, ListedEntryKind, PostedAs};
 use crate::ledger::simple_entry::{
     RoleAccount, SimpleBillStatus, SimpleEntryAccounts, SimpleEntryKind,
 };
@@ -174,22 +174,21 @@ pub struct PostedEntryView {
     /// the kind, the bill status and the accounts by the part they play.
     /// `None` for a voided entry and a reversal, which are not edited, and
     /// for an entry the simple form cannot describe, such as one of more
-    /// than two lines. The rules are on `KindFallback::simple_form`.
+    /// than two lines. The rules are on `LineFallback::simple_form`. A form
+    /// may name an account archived since; correcting the entry refuses it
+    /// until the user picks another.
     pub simple_form: Option<SimpleEntryAccounts>,
 }
 
 impl PostedEntryView {
     /// Builds the view of an entry read with its lines, and what it was
-    /// posted as.
-    ///
-    /// `fallback` must be loaded for the entry's book when
-    /// [`needs_fallback`] says so; otherwise it is not read.
+    /// posted as, with `fallback` from [`LineFallback::load_for`].
     fn new(
         entry: JournalEntry,
         lines: Vec<JournalLine>,
         is_voided: bool,
         posted_as: Option<PostedAs>,
-        fallback: &KindFallback,
+        fallback: &LineFallback,
     ) -> Self {
         let listed_kind = fallback.listed_kind(posted_as, &lines);
         let simple_form = if is_voided {
@@ -306,15 +305,12 @@ pub fn list_entries(
     let headers = load_listed_headers(conn, &listed)?;
     let mut lines_by_entry = load_listed_lines(conn, &listed)?;
 
-    // Loaded once for the whole list, and only when an entry needs it.
-    let fallback = if headers
-        .iter()
-        .any(|header| needs_fallback(header.posted_as))
-    {
-        KindFallback::load(conn, entity_id)?
-    } else {
-        KindFallback::default()
-    };
+    // Loaded once for the whole list.
+    let fallback = LineFallback::load_for(
+        conn,
+        entity_id,
+        headers.iter().map(|header| header.posted_as),
+    )?;
 
     Ok(headers
         .into_iter()
@@ -364,13 +360,9 @@ impl StoredEntry {
     ///
     /// # Errors
     ///
-    /// Those of [`KindFallback::load`], only for an entry that needs it.
+    /// Those of [`LineFallback::load_for`].
     fn into_view(self, conn: &Connection) -> Result<PostedEntryView> {
-        let fallback = if needs_fallback(self.posted_as) {
-            KindFallback::load(conn, self.entry.entity_id)?
-        } else {
-            KindFallback::default()
-        };
+        let fallback = LineFallback::load_for(conn, self.entry.entity_id, [self.posted_as])?;
         Ok(PostedEntryView::new(
             self.entry,
             self.lines,
@@ -1369,9 +1361,10 @@ fn void_entry_in_tx(conn: &Connection, id: JournalEntryId, locale: Locale) -> Re
         reference: view.entry.reference.clone(),
         lines: reverse_lines,
     };
-    // The reversal takes the original's kind and status, so the two halves of a voided
+    // The reversal takes the original's kind, so the two halves of a voided
     // pair are listed alike; the lines of a reversed paid bill would say
-    // expense.
+    // expense. It takes the bill status too, so that it never reads as a
+    // bill posted before v11; a reversal has no form, so nothing reads it.
     let reverse = post_entry_in_tx(
         conn,
         &reverse_input,

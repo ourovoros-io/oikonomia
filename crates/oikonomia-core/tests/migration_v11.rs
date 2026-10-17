@@ -7,7 +7,8 @@ mod common;
 use oikonomia_core::db::{CURRENT_SCHEMA_VERSION, migrate};
 use oikonomia_core::domain::ChartTemplate;
 use oikonomia_core::ledger::{
-    PostSimpleEntry, PostedEntryView, SimpleEntryAccounts, get_entry, post_simple_entry,
+    EntryFilter, PostSimpleEntry, PostedEntryView, SimpleEntryAccounts, get_entry, list_entries,
+    post_simple_entry,
 };
 use rusqlite::Connection;
 
@@ -53,7 +54,18 @@ fn a_v10_bill_reads_its_status_from_its_lines_and_later_bills_store_it() {
         )
         .expect("post")
     };
-    let form = |id| get_entry(conn, id).expect("get").simple_form;
+    // Read by id and in the list, which load the line fallback separately.
+    let form = |id| {
+        let by_id = get_entry(conn, id).expect("get").simple_form;
+        let listed = list_entries(conn, entity_id, &EntryFilter::default())
+            .expect("list")
+            .into_iter()
+            .find(|view| view.entry.id == id)
+            .expect("listed")
+            .simple_form;
+        assert_eq!(by_id, listed, "by id and in the list");
+        by_id
+    };
     let unpaid = SimpleEntryAccounts::BillUnpaid {
         category: food,
         payable: bills_payable,
@@ -62,8 +74,13 @@ fn a_v10_bill_reads_its_status_from_its_lines_and_later_bills_store_it() {
         category: food,
         payable: card,
     };
+    let payment = SimpleEntryAccounts::BillPayment {
+        payable: bills_payable,
+        wallet: common::account(conn, entity_id, "1010"),
+    };
     let older_unpaid = post(unpaid);
     let older_owed_on_card = post(owed_on_card);
+    let older_payment = post(payment);
     reset_to_v10(conn);
 
     migrate(conn).expect("v10 -> v11");
@@ -73,6 +90,7 @@ fn a_v10_bill_reads_its_status_from_its_lines_and_later_bills_store_it() {
     // An older bill has only its lines to go on: one owed on the default
     // payable reads as unpaid, one owed on a card as paid with it.
     assert_eq!(form(older_unpaid.entry.id), Some(unpaid));
+    assert_eq!(form(older_payment.entry.id), Some(payment));
     assert_eq!(
         form(older_owed_on_card.entry.id),
         Some(SimpleEntryAccounts::BillPaid {
