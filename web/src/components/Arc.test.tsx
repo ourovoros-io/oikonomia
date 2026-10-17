@@ -66,6 +66,8 @@ describe('ArcTile', () => {
     const shownLabel = screen.getByText(label)
     expect(shownLabel.className).not.toMatch(/line-clamp/)
     expect(shownLabel).not.toHaveAttribute('title')
+    // With no title on the label, the meter's name is how assistive tech reads it.
+    expect(screen.getByRole('meter', { name: label })).toBeTruthy()
     expect(screen.getByTitle(hint).className).toMatch(/line-clamp-2/)
   })
 })
