@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { UiError } from './uiError'
 
-type Stored = { dialog: string | null; text: string | null }
+type Stored = { dialog: string | null; error: UiError | null }
 
-const NONE: Stored = { dialog: null, text: null }
+const NONE: Stored = { dialog: null, error: null }
 
 /**
  * An error that belongs to whichever dialog is open, so it is drawn inside
@@ -14,8 +15,8 @@ const NONE: Stored = { dialog: null, text: null }
  * site needs cleanup code. A failure is shown where the person is looking when
  * it arrives: in the dialog open then, or on the page.
  *
- * `setMessage(text, dialog)` can address a dialog that is about to open, for an
- * error raised in the same step that opens it. `setMessage` keeps one identity
+ * `setError(error, dialog)` can address a dialog that is about to open, for an
+ * error raised in the same step that opens it. `setError` keeps one identity
  * for the life of the component, so effects may depend on it freely.
  */
 export function useDialogError(openDialog: string | null) {
@@ -23,7 +24,7 @@ export function useDialogError(openDialog: string | null) {
   const [seen, setSeen] = useState(openDialog)
 
   // Adjusting state while rendering is React's way to reset on a prop change
-  // without a render that still shows the old message.
+  // without a render that still shows the old error.
   if (seen !== openDialog) {
     setSeen(openDialog)
     if (stored.dialog !== openDialog) setStored(NONE)
@@ -35,10 +36,10 @@ export function useDialogError(openDialog: string | null) {
     openRef.current = openDialog
   }, [openDialog])
 
-  const text = stored.dialog === openDialog ? stored.text : null
-  const setMessage = useCallback((next: string | null, dialog?: string | null) => {
-    setStored({ dialog: dialog === undefined ? openRef.current : dialog, text: next })
+  const error = stored.dialog === openDialog ? stored.error : null
+  const setError = useCallback((next: UiError | null, dialog?: string | null) => {
+    setStored({ dialog: dialog === undefined ? openRef.current : dialog, error: next })
   }, [])
 
-  return [text, setMessage] as const
+  return [error, setError] as const
 }

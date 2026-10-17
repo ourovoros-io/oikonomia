@@ -29,7 +29,7 @@ import {
   type VaultStatus,
 } from './lib/tauri'
 import { api, type Entity } from './lib/api'
-import { commandErrorMessage } from './lib/commandError'
+import { commandFailure, type UiError } from './lib/uiError'
 import { DashboardPage } from './pages/DashboardPage'
 import { TransactionsPage } from './pages/TransactionsPage'
 import { DocumentsPage } from './pages/DocumentsPage'
@@ -64,7 +64,7 @@ export default function App() {
   const [active, setActive] = useState<NavId>('dashboard')
   const [status, setStatus] = useState<VaultStatus | null>(null)
   const [info, setInfo] = useState<AppInfo | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<UiError | null>(null)
   const [locking, setLocking] = useState(false)
   /** The preferences file is damaged and the notice has not been dismissed. */
   const [prefsNotice, setPrefsNotice] = useState(false)
@@ -171,7 +171,7 @@ export default function App() {
         await noteDamagedPrefs()
       }
     } catch (err) {
-      setError(commandErrorMessage(err, 'app.failedBackend'))
+      setError(commandFailure(err, 'app.failedBackend'))
     }
   }, [loadEntities, noteDamagedPrefs])
 
@@ -192,7 +192,7 @@ export default function App() {
       await loadEntities()
       return true
     } catch (err) {
-      setError(commandErrorMessage(err, 'app.failedBackend'))
+      setError(commandFailure(err, 'app.failedBackend'))
       return false
     }
   }
@@ -264,7 +264,7 @@ export default function App() {
       setStatus(next)
       forgetEntities()
     } catch (err) {
-      setError(commandErrorMessage(err, 'app.failedLock'))
+      setError(commandFailure(err, 'app.failedLock'))
     } finally {
       setLocking(false)
     }
@@ -456,7 +456,7 @@ export default function App() {
             <main key={active} className="flex-1 overflow-auto [scrollbar-gutter:stable]">
               <div className="mx-auto max-w-6xl px-7 pt-2 pb-10">
                 <ToastStack>
-                  <ErrorBanner message={error} className="" onDismiss={() => setError(null)} />
+                  <ErrorBanner error={error} className="" onDismiss={() => setError(null)} />
                   {prefsNotice && active !== 'settings' ? (
                     <DamagedPrefsNotice
                       onOpenSettings={() => navigate('settings')}

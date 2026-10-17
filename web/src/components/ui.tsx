@@ -9,6 +9,7 @@ import type {
 
 import { cn } from '../lib/cn'
 import { useI18n } from '../lib/I18nProvider'
+import { uiErrorText, type UiError } from '../lib/uiError'
 
 /**
  * The shared control look. `ui-control` is a styling hook, not decoration:
@@ -402,28 +403,38 @@ export function Field({
  * An error or notice that stays until the problem is fixed. With `onDismiss`
  * it can also be closed; without it, the owner clears it. It scrolls itself
  * into view when it appears, so a failure above the fold is never silent.
+ *
+ * `error` is worded here, in the language on screen, so a language switch
+ * re-words a banner that is up.
  */
 export function ErrorBanner({
-  message,
+  error,
   title,
   className = 'mb-4',
   id,
   onDismiss,
 }: {
-  message: string | null
+  error: UiError | null
   title?: string
   className?: string
   id?: string
   onDismiss?: () => void
 }) {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const ref = useRef<HTMLDivElement>(null)
+  const scrolledLocale = useRef(locale)
+  const message = error ? uiErrorText(error) : null
   const visible = Boolean(message || title)
 
   useEffect(() => {
+    // A language switch re-words the banner in place. It is not a new
+    // failure, so it must not pull the page away from the language control.
+    const reworded = scrolledLocale.current !== locale
+    scrolledLocale.current = locale
+
     // Undefined in jsdom.
-    if (visible) ref.current?.scrollIntoView?.({ block: 'nearest' })
-  }, [visible, message])
+    if (visible && !reworded) ref.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [visible, message, locale])
 
   if (!visible) return null
 

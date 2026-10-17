@@ -99,10 +99,15 @@ const LEFTOVER_PLACEHOLDER = /\{\w+\}/
  * core counts in.
  */
 export function renderUiText(text: UiText, book: Currency | null): string {
+  return wordUiText(text, book, (problem) => console.warn(problem))
+}
+
+/** `renderUiText`, with what it cannot word passed to `report`. */
+function wordUiText(text: UiText, book: Currency | null, report: (problem: string) => void): string {
   const key = keyFor(NOTE_CODE_KEYS, text.code)
 
   if (key === undefined) {
-    console.warn(`Unknown UI text code "${text.code}"`)
+    report(`Unknown UI text code "${text.code}"`)
     return ''
   }
 
@@ -122,12 +127,12 @@ export function renderUiText(text: UiText, book: Currency | null): string {
     const currency = text.params?.[spec.currency]
 
     if (rawMinor === undefined || !INTEGER_TEXT.test(rawMinor) || !currency) {
-      console.warn(`UI text "${text.code}" is missing its money values`)
+      report(`UI text "${text.code}" is missing its money values`)
       return ''
     }
 
     if (book === null || book.code !== currency) {
-      console.warn(`UI text "${text.code}" carries money that is not in the book's currency`)
+      report(`UI text "${text.code}" carries money that is not in the book's currency`)
       return ''
     }
 
@@ -141,7 +146,7 @@ export function renderUiText(text: UiText, book: Currency | null): string {
   if (copy === key) return ''
 
   if (LEFTOVER_PLACEHOLDER.test(copy)) {
-    console.warn(`UI text "${text.code}" is missing a value for its copy`)
+    report(`UI text "${text.code}" is missing a value for its copy`)
     return ''
   }
 
@@ -150,8 +155,24 @@ export function renderUiText(text: UiText, book: Currency | null): string {
 
 /** All notes in the current language, in order, joined by a space; unknown codes are skipped. */
 export function renderUiTexts(notes: readonly UiText[], book: Currency | null): string {
+  return joinNotes(notes, book, (problem) => console.warn(problem))
+}
+
+/**
+ * `renderUiTexts` without logging, for notes worded again on every draw and
+ * language switch; whoever kept them logged what cannot be worded once.
+ */
+export function quietUiTexts(notes: readonly UiText[], book: Currency | null): string {
+  return joinNotes(notes, book, () => undefined)
+}
+
+function joinNotes(
+  notes: readonly UiText[],
+  book: Currency | null,
+  report: (problem: string) => void,
+): string {
   return notes
-    .map((note) => renderUiText(note, book))
+    .map((note) => wordUiText(note, book, report))
     .filter((sentence) => sentence !== '')
     .join(' ')
 }

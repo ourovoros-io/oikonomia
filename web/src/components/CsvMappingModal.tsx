@@ -16,13 +16,14 @@ import {
   type CsvMapDraft,
 } from '../lib/csvImport'
 import { useI18n } from '../lib/I18nProvider'
+import type { UiError } from '../lib/uiError'
 
 type Props = {
   open: boolean
   preview: CsvImportPreview | null
   busy?: boolean
   /** The last failure of an action in this dialog, drawn at the top of it. */
-  error?: string | null
+  error?: UiError | null
   onClose: () => void
   onContinue: (mapping: CsvColumnMapping, unchanged: boolean) => void
 }

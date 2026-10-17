@@ -287,7 +287,29 @@ export function logCommandError(err: unknown): void {
 }
 
 /**
- * The one way to show a failed command to the user: localized copy for the
+ * The copy for `cmd`'s code with its `params` filled in. Undefined when the
+ * code has no copy, or the copy needs a value the error did not carry, so a raw
+ * `{name}` is never shown.
+ */
+function codeCopy(cmd: CommandError): string | undefined {
+  const key = keyFor(ERROR_CODE_KEYS, cmd.code) ?? keyFor(WEB_ERROR_KEYS, cmd.code)
+  if (!key) return undefined
+
+  // Text from the user's file is cut to a length a sentence can hold.
+  const params = cmd.params ? withShortFileText(cmd.params) : undefined
+  const roleFallbackKey = keyFor(ROLE_FALLBACK_KEYS, key)
+
+  if (roleFallbackKey) return roleCopy(key, roleFallbackKey, params)
+
+  // The sentence for the identifier Rust sent, when there is one and it has
+  // every value it names; otherwise the code's own sentence.
+  const variant = variantKey(cmd.code, params)
+
+  return (variant && filledCopy(variant, params)) ?? filledCopy(key, params)
+}
+
+/**
+ * The one way to word a failed command for the user: localized copy for the
  * error's `code`, with its `params` filled in, never the raw Rust text (which
  * is English and can carry operating-system detail).
  *
@@ -297,39 +319,26 @@ export function logCommandError(err: unknown): void {
  * "A file operation failed.". A specific code always shows its own copy. With
  * no `fallbackKey` the code's copy, or the generic one, is shown.
  *
- * Copy that needs a value the error did not carry is treated as no copy, so a
- * raw `{name}` is never shown.
- *
- * Vague, unknown and copy-less errors are logged, so their detail is not lost.
- * User-correctable errors (a name already taken) are not diagnostic and are not.
+ * It does not log, so a banner can word the error again in another language;
+ * `logHiddenCause` keeps the detail, once, when the error is caught.
  */
-export function commandErrorMessage(err: unknown, fallbackKey?: string): string {
+export function commandErrorText(err: unknown, fallbackKey?: string): string {
   const cmd = asCommandError(err)
-  const vague = VAGUE_CODES.has(cmd.code)
-  const key = keyFor(ERROR_CODE_KEYS, cmd.code) ?? keyFor(WEB_ERROR_KEYS, cmd.code)
 
-  // Text from the user's file is cut to a length a sentence can hold.
-  const params = cmd.params ? withShortFileText(cmd.params) : undefined
+  if (VAGUE_CODES.has(cmd.code) && fallbackKey !== undefined) return t(fallbackKey)
 
-  let copy: string | undefined
-  if (key) {
-    const roleFallbackKey = keyFor(ROLE_FALLBACK_KEYS, key)
-    const variant = variantKey(cmd.code, params)
+  return codeCopy(cmd) ?? t(fallbackKey ?? 'error.unknown')
+}
 
-    if (roleFallbackKey) {
-      copy = roleCopy(key, roleFallbackKey, params)
-    } else {
-      // The sentence for the identifier Rust sent, when there is one and it
-      // has every value it names; otherwise the code's own sentence.
-      copy = (variant && filledCopy(variant, params)) ?? filledCopy(key, params)
-    }
-  }
+/**
+ * Logs `err` when the sentence the person sees hides its cause: a vague,
+ * unknown or copy-less error, so its detail is not lost. A user-correctable
+ * error (a name already taken) is not diagnostic and is not logged.
+ */
+export function logHiddenCause(err: unknown): void {
+  const cmd = asCommandError(err)
 
-  if (vague || copy === undefined) logCommandError(cmd)
-
-  if (vague && fallbackKey !== undefined) return t(fallbackKey)
-
-  return copy ?? t(fallbackKey ?? 'error.unknown')
+  if (VAGUE_CODES.has(cmd.code) || codeCopy(cmd) === undefined) logCommandError(cmd)
 }
 
 /**

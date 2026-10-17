@@ -18,7 +18,7 @@ import {
 import {
   buildExpensePdfBytes,
   bytesToBase64,
-  pdfExportErrorMessage,
+  pdfExportFailure,
   suggestedExpensePdfName,
 } from '../lib/expensePdf'
 import { beginExclusive } from '../lib/guards'
@@ -37,7 +37,7 @@ import {
   ToastStack,
 } from '../components/ui'
 import { cn } from '../lib/cn'
-import { commandErrorMessage } from '../lib/commandError'
+import { commandFailure, type UiError } from '../lib/uiError'
 import { t } from '../lib/i18n'
 import { reportLineName } from '../lib/uiText'
 import { useI18n } from '../lib/I18nProvider'
@@ -62,7 +62,7 @@ export function ReportsPage({ entity, onCreateBook }: Props) {
   const [asOf, setAsOf] = useState(() => rememberedReportPeriod().asOf ?? todayISO())
   const [from, setFrom] = useState(() => rememberedReportPeriod().from ?? monthStartISO())
   const [to, setTo] = useState(() => rememberedReportPeriod().to ?? monthEndISO())
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<UiError | null>(null)
   const [tb, setTb] = useState<TrialBalance | null>(null)
   const [pnl, setPnl] = useState<PnL | null>(null)
   const [bs, setBs] = useState<BalanceSheet | null>(null)
@@ -100,7 +100,7 @@ export function ReportsPage({ entity, onCreateBook }: Props) {
         suggestedName: suggestedExpensePdfName(data.from, data.to),
       })
     } catch (err) {
-      setError(pdfExportErrorMessage(err))
+      setError(pdfExportFailure(err))
     } finally {
       pdfBusyRef.current = false
       setPdfBusy(false)
@@ -141,7 +141,7 @@ export function ReportsPage({ entity, onCreateBook }: Props) {
           }
         }
       } catch (err) {
-        if (!cancelled) setError(commandErrorMessage(err))
+        if (!cancelled) setError(commandFailure(err))
       }
     })()
 
@@ -225,7 +225,7 @@ export function ReportsPage({ entity, onCreateBook }: Props) {
       </Card>
 
       <ToastStack>
-        <ErrorBanner className="" message={error} onDismiss={() => setError(null)} />
+        <ErrorBanner className="" error={error} onDismiss={() => setError(null)} />
       </ToastStack>
 
       {tab === 'trial' && tb && queryMatches ? (

@@ -9,7 +9,7 @@ import {
   type DocumentMeta,
   type PostedEntryView,
 } from '../lib/api'
-import { commandErrorMessage } from '../lib/commandError'
+import { commandFailure, copyError, type UiError } from '../lib/uiError'
 import { fileToBase64, formatBytes, mimeFromName } from '../lib/files'
 import { ConfirmDialog } from './ConfirmDialog'
 import { EntryHistory } from './EntryHistory'
@@ -33,9 +33,9 @@ type Props = {
   onEdit: (() => void) | null
   onView: (documentId: string) => void
   onChanged: () => Promise<void>
-  onError: (message: string) => void
+  onError: (error: UiError) => void
   /** The last failure of an action in this dialog, drawn at the top of it. */
-  error?: string | null
+  error?: UiError | null
 }
 
 /** Full journal view: lines with account names plus the attachments list. */
@@ -71,7 +71,7 @@ export function EntryDetailModal({
     if (anyBusy) return
     // Resource guard only — the backend enforces the same cap.
     if (file.size > 8 * 1024 * 1024) {
-      onError(t('entry.fileTooLarge'))
+      onError(copyError('entry.fileTooLarge'))
       return
     }
     setAttachBusy(true)
@@ -86,7 +86,7 @@ export function EntryDetailModal({
       })
       await onChanged()
     } catch (err) {
-      onError(commandErrorMessage(err, 'entry.attachFailed'))
+      onError(commandFailure(err, 'entry.attachFailed'))
     } finally {
       setAttachBusy(false)
     }
@@ -101,7 +101,7 @@ export function EntryDetailModal({
       setDeleteId(null)
       await onChanged()
     } catch (err) {
-      onError(commandErrorMessage(err, 'entry.deleteFailed'))
+      onError(commandFailure(err, 'entry.deleteFailed'))
     } finally {
       setBusyId(null)
     }
@@ -115,7 +115,7 @@ export function EntryDetailModal({
       await api.entrySetHidden(view.entry.id, hidden)
       await onChanged()
     } catch (err) {
-      onError(commandErrorMessage(err, 'entry.updateFailed'))
+      onError(commandFailure(err, 'entry.updateFailed'))
     } finally {
       setHideBusy(false)
     }
@@ -127,7 +127,7 @@ export function EntryDetailModal({
     try {
       await api.documentExport(id)
     } catch (err) {
-      onError(commandErrorMessage(err, 'entry.exportFailed'))
+      onError(commandFailure(err, 'entry.exportFailed'))
     } finally {
       setBusyId(null)
     }

@@ -15,6 +15,7 @@ import {
   rowSelectable,
 } from '../lib/csvImport'
 import { useI18n } from '../lib/I18nProvider'
+import type { UiError } from '../lib/uiError'
 import { renderUiText } from '../lib/uiText'
 
 type DraftRow = CsvImportPreview['rows'][number] & { checked: boolean }
@@ -28,7 +29,7 @@ type Props = {
   incomeAccounts: Account[]
   busy?: boolean
   /** The last failure of an action in this dialog, drawn at the top of it. */
-  error?: string | null
+  error?: UiError | null
   onClose: () => void
   onConfirm: (input: { rows: SimpleEntryInput[]; include_duplicates: boolean }) => void
 }

@@ -4,7 +4,8 @@ import type { PDFFont, PDFPage } from 'pdf-lib'
 import interRegularUrl from '../assets/fonts/Inter-Regular.ttf?url'
 import interSemiBoldUrl from '../assets/fonts/Inter-SemiBold.ttf?url'
 import type { ReportLine } from './api'
-import { asCommandError, commandErrorMessage, logCommandError } from './commandError'
+import { asCommandError, logCommandError } from './commandError'
+import { commandFailure, copyError, type UiError } from './uiError'
 import { formatPercent } from './arc'
 import { formatMoney, type Currency } from './money'
 import { buildSlices, vizHex, type ExpenseSlice } from './expenseSlices'
@@ -589,7 +590,7 @@ export async function buildExpensePdfBytes(input: ExpensePdfInput): Promise<Uint
 }
 
 /** Failures of the save step show the PDF sentence; any other code shows its own copy. */
-export function pdfExportErrorMessage(err: unknown): string {
+export function pdfExportFailure(err: unknown): UiError {
   const exportFailureCodes = [
     'save_location_invalid',
     'save_failed',
@@ -602,8 +603,8 @@ export function pdfExportErrorMessage(err: unknown): string {
     // The sentence hides the cause; keep it for diagnosis.
     logCommandError(err)
 
-    return t('reports.pdf.error')
+    return copyError('reports.pdf.error')
   }
 
-  return commandErrorMessage(err, 'reports.pdf.error')
+  return commandFailure(err, 'reports.pdf.error')
 }

@@ -1,14 +1,17 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
-  backupCommandError,
-  restoreCommandError,
+  backupFailure,
+  restoreFailure,
   canBackupVault,
   restoreConfirm,
   vaultBackupAvailability,
   vaultBackupBanner,
 } from './vaultBackupUi'
 import { resetI18nForTests, t } from './i18n'
-import en from '../locales/en.json' with { type: 'json' }
+import { uiErrorText } from './uiError'
+
+const backupText = (err: unknown) => uiErrorText(backupFailure(err))
+const restoreText = (err: unknown) => uiErrorText(restoreFailure(err))
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -40,18 +43,16 @@ describe('canBackupVault', () => {
 describe('vaultBackupBanner', () => {
   test('empty copy matches backup-03', () => {
     expect(vaultBackupBanner('empty')).toEqual({
-      title: t('settings.vaultBackup.emptyTitle'),
-      body: t('settings.vaultBackup.emptyBody'),
+      titleKey: 'settings.vaultBackup.emptyTitle',
+      bodyKey: 'settings.vaultBackup.emptyBody',
     })
-    expect(vaultBackupBanner('empty')?.title).toBe(en['settings.vaultBackup.emptyTitle'])
   })
 
   test('missing copy matches backup-04', () => {
     expect(vaultBackupBanner('missing')).toEqual({
-      title: t('settings.vaultBackup.missingTitle'),
-      body: t('settings.vaultBackup.missingBody'),
+      titleKey: 'settings.vaultBackup.missingTitle',
+      bodyKey: 'settings.vaultBackup.missingBody',
     })
-    expect(vaultBackupBanner('missing')?.title).toBe(en['settings.vaultBackup.missingTitle'])
   })
 
   test('ready has no banner', () => {
@@ -77,18 +78,18 @@ describe('restoreConfirm', () => {
 
 describe('backupCommandError', () => {
   test('maps known backup/restore codes', () => {
-    expect(backupCommandError({ code: 'vault_uninitialized', message: 'x' })).toMatch(
+    expect(backupText({ code: 'vault_uninitialized', message: 'x' })).toMatch(
       /not been initialized/i,
     )
-    expect(backupCommandError({ code: 'backup_invalid', message: 'backup is invalid: truncated' })).toBe(
+    expect(backupText({ code: 'backup_invalid', message: 'backup is invalid: truncated' })).toBe(
       'That file is not a valid Oikonomia backup.',
     )
-    expect(backupCommandError({ code: 'restore_would_overwrite', message: 'x' })).toMatch(/already exists/i)
-    expect(backupCommandError({ code: 'not_found', message: 'file not found' })).toBe(
+    expect(backupText({ code: 'restore_would_overwrite', message: 'x' })).toMatch(/already exists/i)
+    expect(backupText({ code: 'not_found', message: 'file not found' })).toBe(
       'Backup file not found.',
     )
     for (const code of ['io', 'database', 'serialization']) {
-      expect(backupCommandError({ code, message: 'write backup archive: disk' }), code).toBe(
+      expect(backupText({ code, message: 'write backup archive: disk' }), code).toBe(
         'Could not read or write the backup file.',
       )
     }
@@ -97,7 +98,7 @@ describe('backupCommandError', () => {
   test('logs the raw cause of a file error, which the sentence hides', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
 
-    backupCommandError({ code: 'io', message: 'EACCES /Users/x/backup' })
+    backupText({ code: 'io', message: 'EACCES /Users/x/backup' })
 
     expect(warn).toHaveBeenCalledTimes(1)
     expect(warn.mock.calls[0][0]).toContain('EACCES /Users/x/backup')
@@ -105,7 +106,7 @@ describe('backupCommandError', () => {
 
   test('a code with its own copy shows that copy, with its parameters', () => {
     expect(
-      backupCommandError({
+      backupText({
         code: 'file_too_large',
         message: 'file too large (max 8 MB)',
         params: { max_mb: '8' },
@@ -114,7 +115,7 @@ describe('backupCommandError', () => {
   })
 
   test('an unknown code shows the backup fallback, never the raw message', () => {
-    const shown = backupCommandError({ code: 'brand_new', message: 'sqlcipher: disk image is malformed' })
+    const shown = backupText({ code: 'brand_new', message: 'sqlcipher: disk image is malformed' })
 
     expect(shown).toBe('Could not complete the backup.')
     expect(shown).not.toContain('sqlcipher')
@@ -126,14 +127,14 @@ describe('restoreCommandError', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const error = { code: 'crypto', message: 'bad tag' }
 
-    expect(restoreCommandError(error)).toBe('Could not restore the backup.')
-    expect(backupCommandError(error)).toBe('Could not complete the backup.')
+    expect(restoreText(error)).toBe('Could not restore the backup.')
+    expect(backupText(error)).toBe('Could not complete the backup.')
   })
 
   test('shares the specific sentences with backup', () => {
     for (const code of ['vault_uninitialized', 'backup_invalid', 'restore_would_overwrite', 'not_found']) {
-      expect(restoreCommandError({ code, message: 'x' }), code).toBe(
-        backupCommandError({ code, message: 'x' }),
+      expect(restoreText({ code, message: 'x' }), code).toBe(
+        backupText({ code, message: 'x' }),
       )
     }
   })
