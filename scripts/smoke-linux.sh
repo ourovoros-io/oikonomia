@@ -8,8 +8,8 @@
 #   - a second launch exits and leaves one process (single instance);
 #   - with no tray to bring it back, closing the window quits the app;
 #   - the vault directory is created owner-only under XDG_DATA_HOME, with the vault.
-# For the .deb it also proves that the app still starts, without a tray, once
-# the tray library is gone.
+# For the .deb it also proves that the package depends on the tray library,
+# and that the app still starts, without a tray, once that library is gone.
 #
 # Needs: xvfb, openbox, xdotool, wmctrl, imagemagick, dbus-x11.
 # Screenshots land in target/smoke/ for a human to look at.
@@ -186,7 +186,11 @@ appimages=(target/release/bundle/appimage/*.AppImage)
 openbox &
 sleep 2
 
+# Tauri's bundler adds the appindicator library to Depends only when the build
+# machine has its development package; the tray needs it at run time.
 readonly TRAY_LIBRARY_PACKAGE='libayatana-appindicator3-1'
+dpkg-deb --field "${debs[0]}" Depends | grep -qw "$TRAY_LIBRARY_PACKAGE" \
+  || fail "the .deb does not depend on $TRAY_LIBRARY_PACKAGE"
 
 # Installing with apt proves the package's declared dependencies resolve.
 sudo apt-get install -y "./${debs[0]}"
