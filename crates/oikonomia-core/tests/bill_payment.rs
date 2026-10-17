@@ -563,3 +563,38 @@ fn voiding_an_occurrence_reopens_its_bill() {
 
     assert_eq!(open_ids(conn, &book), [bill_id]);
 }
+
+#[test]
+fn correcting_an_occurrence_keeps_its_bill() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = book(conn, "Home");
+    let bill_id = bill(conn, &book, book.bills_payable, 4_000);
+    let template = recurring_payment(conn, &book);
+    let paid = post_occurrence(conn, template, None);
+
+    // The edit form opens on the bill the occurrence settles and offers it.
+    let stored = get_entry(conn, paid.entry.id).expect("get");
+    assert_eq!(stored.settles_entry_id, Some(bill_id));
+    let offered: Vec<_> = list_open_bills(conn, book.entity_id, Some(paid.entry.id))
+        .expect("open bills")
+        .into_iter()
+        .map(|open| open.entry_id)
+        .collect();
+    assert_eq!(offered, [bill_id]);
+
+    let correction = PostSimpleEntry {
+        entity_id: book.entity_id,
+        accounts: stored.simple_form.expect("an occurrence has a simple form"),
+        entry_date: common::date("2026-04-21"),
+        description: "power, corrected".into(),
+        reference: None,
+        amount_minor: 4_000,
+        settles_entry_id: stored.settles_entry_id,
+    };
+    let replacement =
+        replace_simple_entry(conn, paid.entry.id, &correction, Locale::En).expect("correct");
+
+    assert_eq!(replacement.settles_entry_id, Some(bill_id));
+    assert_eq!(open_ids(conn, &book), []);
+}

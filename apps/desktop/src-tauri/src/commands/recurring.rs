@@ -124,6 +124,10 @@ pub(crate) async fn recurring_delete(
 /// only, and the cadence still steps from the stored next date, not from the
 /// date posted.
 ///
+/// An occurrence that pays an existing bill settles the oldest open bill of
+/// the book owed on its payable account for the amount posted, and none when
+/// no open bill matches; the result's entry names the bill it settled.
+///
 /// # Errors
 ///
 /// Returns `not_found` when the template does not exist, `date_out_of_range`
