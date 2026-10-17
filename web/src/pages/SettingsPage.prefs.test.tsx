@@ -69,7 +69,12 @@ beforeEach(() => {
 function renderSettings() {
   render(
     <I18nProvider>
-      <SettingsPage entities={[]} onEntitiesChange={async () => {}} onSelectEntity={() => {}} />
+      <SettingsPage
+        entities={[]}
+        onEntitiesChange={async () => {}}
+        onEntityCreated={async () => {}}
+        onSelectEntity={() => {}}
+      />
     </I18nProvider>,
   )
 }

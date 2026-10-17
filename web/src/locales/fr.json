@@ -339,7 +339,7 @@
       "countOne": "1 livre",
       "countMany": "{n} livres",
       "new": "Nouveau livre",
-      "emptyBody": "Utilisez le bouton Nouveau livre ci-dessus pour créer votre premier livre.",
+      "emptyBody": "Créez votre premier livre avec le bouton « Nouveau livre ».",
       "open": "Ouvrir",
       "deleteAria": "Supprimer {name}",
       "deleteTitle": "Supprimer",
