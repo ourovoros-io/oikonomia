@@ -212,7 +212,7 @@ pub enum ValidationError {
     /// Rows of a bank import are booked to no category the import lists:
     /// none, or one that is not an active expense account for an expense or
     /// an active income account for an income of the book.
-    #[error("{count} import rows have no listed category")]
+    #[error("import rows without a listed category: {count}")]
     ImportCategoryRequired {
         /// How many rows of the batch.
         count: usize,
