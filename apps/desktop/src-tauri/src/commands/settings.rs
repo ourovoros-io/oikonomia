@@ -34,7 +34,7 @@ use oikonomia_core::prefs::{
     store_locale,
 };
 use oikonomia_core::vault::vault_header_path;
-use tauri::{Manager, Runtime, State};
+use tauri::{Emitter, Manager, Runtime, State};
 
 /// Returns the idle time, in seconds, after which the vault locks itself.
 ///
@@ -93,28 +93,53 @@ pub(crate) async fn settings_get_locale(app: tauri::AppHandle) -> CommandResult<
     .await
 }
 
-/// Stores the app language, then rebuilds the tray menu and retitles the
-/// quick-add window in it.
+/// The event every webview receives after the app language in effect
+/// changes, with the new [`Locale`] as its payload.
+/// `web/src/lib/I18nProvider.tsx` applies it, so a window that stays open
+/// while the language changes in another one, such as the hidden quick-add
+/// window, follows it.
+pub(crate) const LOCALE_CHANGED: &str = "locale-changed";
+
+/// Makes the rest of the app follow a new language: rewords the tray menu and
+/// the quick-add window's title, and sends [`LOCALE_CHANGED`] to every webview.
+///
+/// Called with the preferences lock held, so the events go out in the order
+/// the languages were put into effect and the last one a window receives is
+/// the language in effect. Nothing on the main thread takes that lock, so
+/// waiting on the main thread for the tray menu while holding it cannot
+/// deadlock.
+///
+/// A failure is logged and otherwise ignored: the language is already in
+/// effect, and a window started later reads it.
+fn announce_locale<R: Runtime>(app: &tauri::AppHandle<R>, locale: Locale) {
+    crate::tray::apply_locale(app, locale);
+
+    if let Err(err) = app.emit(LOCALE_CHANGED, locale) {
+        log::warn!("failed to send the new language to the windows: {err}");
+    }
+}
+
+/// Stores the app language, then makes the rest of the app follow it (see
+/// [`announce_locale`]).
 ///
 /// Works in every vault state.
 ///
 /// # Errors
 ///
 /// Returns the [preferences save errors](self#preferences-save-errors), in
-/// which case the tray and the window keep the language they had,
+/// which case the tray and the windows keep the language they had,
 /// `app_state_unavailable` when the application state was never set up, and
 /// `task_failed` when the blocking task panics.
 #[tauri::command]
-pub(crate) async fn settings_set_locale(
-    app: tauri::AppHandle,
+pub(crate) async fn settings_set_locale<R: Runtime>(
+    app: tauri::AppHandle<R>,
     locale: Locale,
 ) -> CommandResult<()> {
     with_prefs_blocking(app, move |app, state| {
-        let prefs_guard = state.lock_prefs();
+        let _prefs_guard = state.lock_prefs();
         store_locale(state.data_dir(), locale)?;
-        drop(prefs_guard);
 
-        crate::tray::apply_locale(app, locale);
+        announce_locale(app, locale);
         Ok(())
     })
     .await
@@ -141,12 +166,12 @@ pub(crate) async fn settings_set_locale(
 /// object, `app_state_unavailable` when the application state was never set up, and
 /// `task_failed` when the blocking task panics.
 #[tauri::command]
-pub(crate) async fn settings_resolve_locale(
-    app: tauri::AppHandle,
+pub(crate) async fn settings_resolve_locale<R: Runtime>(
+    app: tauri::AppHandle<R>,
     system_languages: Vec<String>,
 ) -> CommandResult<Locale> {
     with_prefs_blocking(app, move |app, state| {
-        let prefs_guard = state.lock_prefs();
+        let _prefs_guard = state.lock_prefs();
         let data_dir = state.data_dir();
 
         // Before the vault exists the app writes nothing of its own accord:
@@ -158,12 +183,12 @@ pub(crate) async fn settings_resolve_locale(
             let locale = peek_locale(data_dir, &system_languages);
             (locale, locale != load_ui_prefs(data_dir).locale())
         };
-        drop(prefs_guard);
 
-        // The tray was built at startup from the stored language, English on
-        // a first run, so it only needs a rebuild when this call changed it.
+        // The tray and the windows started from the language stored then,
+        // English on a first run, so they need telling only when this call
+        // changed the language in effect, stored or not.
         if changed {
-            crate::tray::apply_locale(app, locale);
+            announce_locale(app, locale);
         }
 
         Ok(locale)
@@ -319,8 +344,8 @@ where
 
 /// The preferences commands invoked through the mock IPC, the way the
 /// webview invokes them: `settings_remember_quick_add` read back through
-/// `settings_get_ui_prefs`, the `unreadable` flag of that answer, and
-/// `settings_reset_ui_prefs`.
+/// `settings_get_ui_prefs`, the `unreadable` flag of that answer,
+/// `settings_reset_ui_prefs`, and the event the language commands send.
 ///
 /// Not built on Windows, where the mock runtime keeps a test executable from
 /// starting; `commands::support::ipc_test_support` says why.
@@ -328,8 +353,9 @@ where
 #[cfg(not(windows))]
 mod ipc_tests {
     use crate::commands::settings::{
-        settings_get_ui_prefs, settings_remember_last_entity, settings_remember_quick_add,
-        settings_reset_ui_prefs, with_prefs_blocking,
+        LOCALE_CHANGED, settings_get_ui_prefs, settings_remember_last_entity,
+        settings_remember_quick_add, settings_reset_ui_prefs, settings_resolve_locale,
+        settings_set_locale, with_prefs_blocking,
     };
     use crate::commands::support::ipc_test_support::MockApp;
 
@@ -353,7 +379,9 @@ mod ipc_tests {
                 settings_remember_quick_add,
                 settings_remember_last_entity,
                 settings_get_ui_prefs,
-                settings_reset_ui_prefs
+                settings_reset_ui_prefs,
+                settings_set_locale,
+                settings_resolve_locale
             ],
             |_conn| (),
         );
@@ -663,5 +691,51 @@ mod ipc_tests {
             .invoke("settings_get_ui_prefs", serde_json::json!({}))
             .unwrap();
         assert_eq!(prefs["last_entity_id"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn a_stored_language_is_announced() {
+        let app = mock_app("set-locale-event");
+        let sent = app.record_events(LOCALE_CHANGED);
+
+        let answer = app
+            .invoke("settings_set_locale", serde_json::json!({ "locale": "el" }))
+            .unwrap();
+
+        assert_eq!(answer, serde_json::Value::Null);
+        assert_eq!(*sent.lock().unwrap(), ["\"el\""]);
+        let prefs = app
+            .invoke("settings_get_ui_prefs", serde_json::json!({}))
+            .unwrap();
+        assert_eq!(prefs["locale"], "el");
+    }
+
+    #[test]
+    fn a_language_that_could_not_be_stored_is_not_sent() {
+        let app = mock_app("set-locale-refused");
+        app.write_file("ui-prefs.json", CUT_OFF);
+        let sent = app.record_events(LOCALE_CHANGED);
+
+        let refused = app
+            .invoke("settings_set_locale", serde_json::json!({ "locale": "fr" }))
+            .unwrap_err();
+
+        assert_eq!(refused["code"], "prefs_unreadable", "{refused}");
+        assert!(sent.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_first_run_choice_is_announced_once() {
+        let app = mock_app("resolve-locale-event");
+        let sent = app.record_events(LOCALE_CHANGED);
+        let languages = serde_json::json!({ "systemLanguages": ["de-AT", "en"] });
+
+        let first = app.invoke("settings_resolve_locale", languages.clone());
+        let second = app.invoke("settings_resolve_locale", languages);
+
+        assert_eq!(first.unwrap(), "de");
+        assert_eq!(second.unwrap(), "de");
+        // The second call finds the language stored and changes nothing.
+        assert_eq!(*sent.lock().unwrap(), ["\"de\""]);
     }
 }

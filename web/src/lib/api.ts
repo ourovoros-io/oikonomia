@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 import { asCommandError, errorReport } from './commandError'
-import { isTauri } from './tauri'
+import { isTauri, onTauriEvent } from './tauri'
 import type { UiText } from './uiText'
 
 export type ChartTemplate = 'personal' | 'company' | 'blank'
@@ -406,8 +406,19 @@ function logFrontendError(location: FrontendErrorLocation, error: unknown): void
   }
 }
 
+/**
+ * Calls `apply` with each language the backend puts into effect, whichever
+ * window changed it: Rust sends `locale-changed` (`LOCALE_CHANGED` in
+ * `commands/settings.rs`) to every window. The payload is passed on as sent,
+ * for the caller to parse. Returns a function that stops listening.
+ */
+function onLocaleChanged(apply: (locale: unknown) => void): () => void {
+  return onTauriEvent('locale-changed', apply)
+}
+
 export const api = {
   logFrontendError,
+  onLocaleChanged,
   /** The books that are not archived; an archived one is never the current book. */
   entityList: () => call<Entity[]>('entity_list'),
   /** The archived books, which `entityList` leaves out. They are read-only until restored. */
@@ -487,6 +498,8 @@ export const api = {
       path,
       analysisJson: analysisJson ?? null,
     }),
+  /** One posted entry, voided or not, wherever the list's filters put it. */
+  entryGet: (id: string) => call<PostedEntryView>('entry_get', { id }),
   entryVoid: (id: string) => call<{ original_id: string; reverse_id: string }>('entry_void', { id }),
   /** Earlier versions of an edited entry and their reversals, oldest first; empty if never edited. */
   entryHistory: (id: string) => call<EntryHistoryItem[]>('entry_history', { id }),

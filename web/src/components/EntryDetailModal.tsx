@@ -1,5 +1,5 @@
 import { useId, useRef, useState } from 'react'
-import { Download, Eye, Paperclip, Pencil, Plus, Trash2 } from 'lucide-react'
+import { ArrowRight, Download, Eye, Paperclip, Pencil, Plus, Trash2 } from 'lucide-react'
 import {
   api,
   formatDate,
@@ -32,6 +32,8 @@ type Props = {
    */
   onEdit: (() => void) | null
   onView: (documentId: string) => void
+  /** Open another entry in this dialog: the payment of a settled bill, or a payment's bill. */
+  onOpenEntry: (entryId: string) => void
   onChanged: () => Promise<void>
   onError: (error: UiError) => void
   /** The last failure of an action in this dialog, drawn at the top of it. */
@@ -47,6 +49,7 @@ export function EntryDetailModal({
   onClose,
   onEdit,
   onView,
+  onOpenEntry,
   onChanged,
   onError,
   error = null,
@@ -136,6 +139,9 @@ export function EntryDetailModal({
 
   return (
     <Modal
+      // A linked entry replaces the one shown: a fresh dialog moves focus and
+      // scroll to its top, so the new title is what is read next.
+      key={entry.id}
       open
       title={entry.description}
       description={`${formatDate(entry.entry_date)}${entry.reference ? t('entry.ref', { reference: entry.reference }) : ''}`}
@@ -280,6 +286,8 @@ export function EntryDetailModal({
           )}
         </div>
 
+        <SettlementLink view={view} disabled={anyBusy} onOpenEntry={onOpenEntry} />
+
         <EntryHistory key={entry.id} entryId={entry.id} />
 
         {onEdit && (
@@ -292,6 +300,43 @@ export function EntryDetailModal({
         )}
       </div>
     </Modal>
+  )
+}
+
+/**
+ * The way between a bill and the payment that settles it. A settled bill
+ * names its payment, which the user must delete before changing the bill, so
+ * the link saves looking for it; a payment links back to its bill.
+ */
+function SettlementLink({
+  view,
+  disabled,
+  onOpenEntry,
+}: {
+  view: PostedEntryView
+  disabled: boolean
+  onOpenEntry: (entryId: string) => void
+}) {
+  const { t } = useI18n()
+  const link = view.settled_by_entry_id
+    ? { entryId: view.settled_by_entry_id, label: t('entry.openPayment') }
+    : view.settles_entry_id
+      ? { entryId: view.settles_entry_id, label: t('entry.openBill') }
+      : null
+  if (!link) return null
+
+  return (
+    <div>
+      <Button
+        variant="secondary"
+        size="sm"
+        disabled={disabled}
+        onClick={() => onOpenEntry(link.entryId)}
+      >
+        <ArrowRight className="size-3.5" />
+        {link.label}
+      </Button>
+    </div>
   )
 }
 

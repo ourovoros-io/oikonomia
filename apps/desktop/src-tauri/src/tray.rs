@@ -225,16 +225,19 @@ fn build_menu<R: tauri::Runtime, M: Manager<R>>(app: &M, locale: Locale) -> taur
 ///
 /// A failure is logged and otherwise ignored: the language itself is already
 /// stored, and stale native text is not worth failing the command for.
-pub(crate) fn apply_locale(app: &AppHandle, locale: Locale) {
-    match build_menu(app, locale) {
-        Ok(menu) => {
-            if let Some(tray) = app.tray_by_id("main")
-                && let Err(err) = tray.set_menu(Some(menu))
-            {
-                log::warn!("failed to update tray menu: {err}");
+pub(crate) fn apply_locale<R: tauri::Runtime>(app: &AppHandle<R>, locale: Locale) {
+    // The menu is built only for a tray that exists: there is none where the
+    // tray could not be created, nor in the IPC tests' mock app, where a menu
+    // cannot be built off the main thread.
+    if let Some(tray) = app.tray_by_id("main") {
+        match build_menu(app, locale) {
+            Ok(menu) => {
+                if let Err(err) = tray.set_menu(Some(menu)) {
+                    log::warn!("failed to update tray menu: {err}");
+                }
             }
+            Err(err) => log::warn!("failed to rebuild tray menu: {err}"),
         }
-        Err(err) => log::warn!("failed to rebuild tray menu: {err}"),
     }
 
     if let Some(window) = app.get_webview_window(QUICK_ADD_LABEL)
