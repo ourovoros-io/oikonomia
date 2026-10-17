@@ -14,7 +14,7 @@ import { Aurora } from './components/Aurora'
 import { Logo } from './components/Logo'
 import { PageErrorBoundary } from './components/PageErrorBoundary'
 import { UnlockScreen } from './components/UnlockScreen'
-import { Button, ErrorBanner, ToastStack } from './components/ui'
+import { Button, ErrorBanner, ToastStack, TruncatedLabel } from './components/ui'
 import { bookDotColour } from './lib/bookColour'
 import { cn } from './lib/cn'
 import { TopBarContext, type TopBarSlots } from './lib/topBar'
@@ -396,7 +396,7 @@ export default function App() {
                 aria-describedby={entity ? undefined : 'quick-add-hint'}
               >
                 <Plus className="size-4" />
-                {t('app.sidebar.quickAdd')}
+                <TruncatedLabel text={t('app.sidebar.quickAdd')} />
               </Button>
               {entity ? null : (
                 <p id="quick-add-hint" className="px-3 text-xs text-[var(--color-muted)]">

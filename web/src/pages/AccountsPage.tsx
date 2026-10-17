@@ -109,11 +109,11 @@ function canSetBalance(account: Account): boolean {
 }
 
 /**
- * The row's Set balance button keeps its label on one line: the button is a
- * fixed height, so a wrapped Greek label would spill out of it. The minimum is
- * the old fixed width, which the English label fits.
+ * The row's Set balance button grows with its one-line label instead of
+ * shrinking under it. The minimum is the old fixed width, which the English
+ * label fits.
  */
-const SET_BALANCE_CLASS = 'min-w-32 shrink-0 whitespace-nowrap'
+const SET_BALANCE_CLASS = 'min-w-32 shrink-0'
 
 export function AccountsPage({ entity, onCreateBook }: Props) {
   const { t } = useI18n()
