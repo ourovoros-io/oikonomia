@@ -75,7 +75,9 @@ async function openBooks(entities: Entity[], onEntitiesChange = vi.fn(async () =
       onSelectEntity={() => {}}
     />,
   )
-  await userEvent.click(screen.getByRole('button', { name: /^books/i }))
+  const header = screen.getByRole('button', { name: /^books/i })
+  // With no book the section starts open, and a click would fold it.
+  if (header.getAttribute('aria-expanded') === 'false') await userEvent.click(header)
   return onEntitiesChange
 }
 
@@ -218,7 +220,7 @@ describe('SettingsPage archived books', () => {
     await openBooks([])
 
     expect(await screen.findByRole('button', { name: 'Restore Home' })).toBeEnabled()
-    expect(screen.getByText('Use the New book button above to create your first book.')).toBeInTheDocument()
+    expect(screen.getByText('Create your first book with the New book button.')).toBeInTheDocument()
   })
 
   test('are not asked for when there is no vault', async () => {

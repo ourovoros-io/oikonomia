@@ -193,8 +193,11 @@ export function SettingsPage({
   const [restorePicking, setRestorePicking] = useState(false)
   const newEntityAnchorRef = useRef<HTMLDivElement>(null)
   // The book list is open when the page was opened to add a book, so the new
-  // book is in view; otherwise it starts folded like the other sections.
-  const [entitiesOpenAtStart] = useState(() => Boolean(createBookIntent))
+  // book is in view, and when there is no book yet, so the way to add one is
+  // in view; otherwise it starts folded like the other sections.
+  const [entitiesOpenAtStart] = useState(
+    () => Boolean(createBookIntent) || entities.length === 0,
+  )
   const [newBookId, setNewBookId] = useState<string | null>(null)
   const [renameTarget, setRenameTarget] = useState<Entity | null>(null)
 

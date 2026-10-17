@@ -170,7 +170,7 @@
   "settings.entities.none": "No books yet",
   "settings.entities.oneBook": "1 book",
   "settings.entities.nBooks": "{count} books",
-  "settings.entities.empty": "Use the New book button above to create your first book.",
+  "settings.entities.empty": "Create your first book with the New book button.",
   "settings.entities.new": "New book",
   "settings.entities.created": "Book {name} created.",
   "settings.entities.rename.title": "Rename book",

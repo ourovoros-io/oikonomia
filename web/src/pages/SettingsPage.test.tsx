@@ -1003,6 +1003,24 @@ describe('SettingsPage books', () => {
     expect(onSelectEntity).not.toHaveBeenCalled()
   })
 
+  test('with no book the list starts open, showing how to add one', async () => {
+    render(
+      <SettingsPage
+        entities={[]}
+        onEntitiesChange={noopAsync}
+        onEntityCreated={noopAsync}
+        onSelectEntity={() => {}}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: /^books/i })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
+    expect(screen.getByText('Create your first book with the New book button.')).toBeVisible()
+    expect(screen.getByRole('button', { name: /^new book$/i })).toBeEnabled()
+  })
+
   test('the next New book form starts from the default chart again', async () => {
     vi.mocked(api.entityCreate).mockResolvedValue(created)
     render(
