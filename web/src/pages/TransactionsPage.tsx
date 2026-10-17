@@ -509,6 +509,9 @@ export function TransactionsPage({
   function setKindAndDefaults(next: EntryKind) {
     setKind(next)
     applyKindDefaults(next, defaults)
+    // The error was about the previous type's form. Amount and description carry over.
+    setError(null)
+    setAmountInvalid(false)
   }
 
   function applySuggestion(s: DocumentSuggestion, source: PendingDocSource) {
