@@ -215,10 +215,10 @@ pub struct DashboardSummary {
     /// previous net's size; `None` when the previous net is zero, when there
     /// is no previous window, or when the change does not fit in `i64`.
     pub net_vs_previous_bps: Option<i64>,
-    /// Hidden entries behind `cash_like_assets`, `income` and `expenses`,
-    /// which an export leaves out: those in the window on an income or
-    /// expense account, and those through the `assets_as_of` date on an asset
-    /// account, each counted once.
+    /// Hidden entries behind `cash_like_assets`, `income`, `expenses` and
+    /// `net_vs_previous_bps`, which an export leaves out: those in the window
+    /// or the [`previous_window`] on an income or expense account, and those
+    /// through the `assets_as_of` date on an asset account, each counted once.
     pub hidden_entry_count: usize,
 }
 
@@ -436,7 +436,8 @@ pub fn dashboard_summary(
         .database("count entries in period")?;
 
     let net_income = subtract_minor(income, expenses)?;
-    let net_vs_previous_bps = match previous_window(from, to) {
+    let previous = previous_window(from, to);
+    let net_vs_previous_bps = match previous {
         Some((previous_from, previous_to)) => {
             let previous_net = net_in_range(conn, entity_id, previous_from, previous_to)?;
             ratio_bps(
@@ -446,6 +447,9 @@ pub fn dashboard_summary(
         }
         None => None,
     };
+    // The previous window ends the day before `from`, so the net and its
+    // comparison read one unbroken range, and one count covers both.
+    let pnl_from = previous.map_or(from, |(previous_from, _)| previous_from);
     let (savings_rate_bps, spend_ratio_bps) = if income > 0 {
         (ratio_bps(net_income, income), ratio_bps(expenses, income))
     } else {
@@ -467,7 +471,7 @@ pub fn dashboard_summary(
         hidden_entry_count: count_hidden_dashboard_entries(
             conn,
             entity_id,
-            from,
+            pnl_from,
             to,
             assets_as_of,
         )?,

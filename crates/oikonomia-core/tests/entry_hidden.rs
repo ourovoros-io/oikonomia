@@ -335,6 +335,49 @@ fn the_dashboard_counts_hidden_entries_behind_its_assets_figure() {
     );
 }
 
+/// The note covers the comparison with the previous window too: a hidden
+/// expense there moves `net_vs_previous_bps`, so it counts, once even when it
+/// also reaches the assets figure. One dated before the previous window
+/// counts only through the assets figure.
+#[test]
+fn the_dashboard_counts_hidden_entries_behind_its_comparison() {
+    let (_dir, vault) = common::vault();
+    let conn = vault.connection().expect("conn");
+    let book = create_book(conn, "Personal", ChartTemplate::Personal);
+    let hidden_on_card = |date| {
+        let view = common::post_two_line(conn, book.entity_id, date, ("5100", "2000"), 900);
+        set_entry_hidden(conn, view.entry.id, true).expect("hide");
+        view.entry.id
+    };
+    let hidden_from_wallet = |date| {
+        let view = post_simple_entry(conn, &expense(&book, date, "Wallet", 300)).expect("post");
+        set_entry_hidden(conn, view.entry.id, true).expect("hide");
+    };
+
+    hidden_on_card("2026-01-31");
+    hidden_from_wallet("2026-01-20");
+    hidden_on_card("2026-02-01");
+    hidden_from_wallet("2026-02-28");
+    let voided = hidden_on_card("2026-02-10");
+    void_entry(conn, voided, Locale::En).expect("void");
+
+    let (march_1, march_31) = (common::date("2026-03-01"), common::date("2026-03-31"));
+    let today = common::date("2026-03-15");
+    let summary =
+        dashboard_summary(conn, book.entity_id, march_1, march_31, today).expect("dashboard");
+
+    assert!(
+        summary.net_vs_previous_bps.is_some(),
+        "February has a net to compare with"
+    );
+    assert_eq!(
+        summary.hidden_entry_count, 3,
+        "the card expense on the first of February, the February wallet expense once, and the \
+         January wallet expense through the assets figure; not the January card expense or \
+         the voided one"
+    );
+}
+
 #[test]
 fn voiding_hidden_entry_omits_original_and_reverse_from_export() {
     let (_dir, vault) = common::vault();
