@@ -903,7 +903,7 @@
       "badge": "Ausgeblendet"
     },
     "export": {
-      "whisper": "Der Export lässt ausgeblendete Zeilen weg. Gelöschte Buchungen sind enthalten und haben in der Spalte „status“ den Wert „voided“."
+      "whisper": "Der Export schreibt das ganze Buch, unabhängig von den Filtern, und lässt ausgeblendete Zeilen weg. Gelöschte Buchungen sind enthalten und haben in der Spalte „status“ den Wert „voided“."
     },
     "void": {
       "title": "Buchung löschen?",
@@ -913,6 +913,7 @@
     },
     "list": {
       "title": "Alle Buchungen",
+      "matchingTitle": "Passende Buchungen",
       "new": "Neue Buchung",
       "meta": {
         "counts": "{posted} gebucht · {hidden} ausgeblendet"

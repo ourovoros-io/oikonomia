@@ -200,6 +200,8 @@ export function TransactionsPage({
   /** Search and account narrow the list and leave the summary whole; the dates narrow both. */
   const listOnlyFilters = Boolean(debouncedSearch.trim() || accountFilter)
   const filtersNarrowList = listOnlyFilters || Boolean(fromDate || toDate)
+  // The counts follow the narrowed list, so the title must not claim it is all of it.
+  const listTitle = filtersNarrowList ? t('tx.list.matchingTitle') : t('tx.allEntries')
   // The summary already reports an inverted window through its error from
   // Rust; the list only needs to know it holds nothing. ISO dates order as
   // strings.
@@ -1267,7 +1269,7 @@ export function TransactionsPage({
       {visibleEntries.length === 0 && filtersNarrowList ? (
         // The header buttons stay: Recurring, Import and Export do not depend on the filters.
         <Panel
-          title={t('tx.allEntries')}
+          title={listTitle}
           description={`${t('tx.list.meta.counts', { posted: postedCount, hidden: hiddenCount })} · ${ccy}`}
           whisper={t('tx.export.whisper')}
           actions={csvActions}
@@ -1287,7 +1289,7 @@ export function TransactionsPage({
         />
       ) : (
         <Panel
-          title={t('tx.allEntries')}
+          title={listTitle}
           description={`${t('tx.list.meta.counts', { posted: postedCount, hidden: hiddenCount })} · ${ccy}`}
           whisper={t('tx.export.whisper')}
           actions={csvActions}
