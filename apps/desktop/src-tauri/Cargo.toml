@@ -72,6 +72,9 @@ tauri-plugin-single-instance = "2.5.2"
 # zbus with its default features on Linux, so this adds no crate.
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = "=5.19.0"
+# Checks that the appindicator library loads before the tray is created
+# (`tray::install`); without it tray-icon panics.
+appindicator-probe = { path = "../../../crates/appindicator-probe" }
 
 [lints]
 workspace = true

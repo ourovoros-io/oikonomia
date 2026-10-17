@@ -8,6 +8,8 @@
 #   - a second launch exits and leaves one process (single instance);
 #   - with no tray to bring it back, closing the window quits the app;
 #   - the vault directory is created owner-only under XDG_DATA_HOME, with the vault.
+# For the .deb it also proves that the app still starts, without a tray, once
+# the tray library is gone.
 #
 # Needs: xvfb, openbox, xdotool, wmctrl, imagemagick, dbus-x11.
 # Screenshots land in target/smoke/ for a human to look at.
@@ -149,6 +151,31 @@ smoke() {
   echo "$name ok"
 }
 
+# smoke_without_tray_library: with the appindicator library removed, the
+# installed app still starts and draws, and logs that it has no tray. Without
+# the check before the tray is created, tray-icon panicked there (#206).
+smoke_without_tray_library() {
+  local name="no-tray-library"
+  echo "== $name"
+
+  export XDG_DATA_HOME="$PWD/$out/$name-data"
+  rm -rf "$XDG_DATA_HOME"
+
+  "$PROCESS_NAME" >"$out/$name.log" 2>&1 &
+  wait_until "$name shows its window" window_is_visible
+  wait_until "$name paints its first screen (see $out/$name.png)" \
+    window_is_painted "$out/$name.png"
+
+  local error_log="$XDG_DATA_HOME/io.ourovoros.oikonomia/logs/errors.log"
+  grep -q 'starting without a tray icon: no appindicator library loads' "$error_log" \
+    || fail "$name: $error_log does not say the tray library is missing"
+
+  pkill -x "$PROCESS_NAME"
+  wait_until "$name exits" app_has_exited
+
+  echo "$name ok"
+}
+
 shopt -s nullglob
 debs=(target/release/bundle/deb/*.deb)
 appimages=(target/release/bundle/appimage/*.AppImage)
@@ -159,9 +186,17 @@ appimages=(target/release/bundle/appimage/*.AppImage)
 openbox &
 sleep 2
 
+readonly TRAY_LIBRARY_PACKAGE='libayatana-appindicator3-1'
+
 # Installing with apt proves the package's declared dependencies resolve.
 sudo apt-get install -y "./${debs[0]}"
 smoke deb "$PROCESS_NAME"
+
+# Removing only the library, against the dependency, stands in for a system
+# that lacks it. Reinstalling it repairs the package state for the removal.
+sudo dpkg --remove --force-depends "$TRAY_LIBRARY_PACKAGE"
+smoke_without_tray_library
+sudo apt-get install -y "$TRAY_LIBRARY_PACKAGE"
 sudo apt-get remove -y "$PROCESS_NAME"
 
 # CI runners have no FUSE; the AppImage runtime can unpack itself instead.
