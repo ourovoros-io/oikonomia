@@ -2,12 +2,16 @@ import { afterEach, describe, expect, test } from 'vitest'
 import type { AccountDefaults } from './api'
 import { resetI18nForTests } from './i18n'
 import {
+  accountChoices,
   buildSimpleEntryInput,
   formBillStatus,
+  holdsUnusableAccount,
   isBillStatus,
   kindDefaultAccounts,
   lastAccountsMapKey,
+  shownAccountFields,
   validateTrayAccounts,
+  type AccountLike,
 } from './simpleEntry'
 
 /** What Rust's `account_defaults` returns; the names here are deliberately not English. */
@@ -254,5 +258,54 @@ describe('isBillStatus', () => {
     expect(['paid', 'unpaid', 'pay_existing'].every(isBillStatus)).toBe(true)
     expect(isBillStatus('Paid')).toBe(false)
     expect(isBillStatus('')).toBe(false)
+  })
+})
+
+describe('account fields', () => {
+  const book: AccountLike[] = [
+    { id: 'a1', name: 'Bank', account_type: 'asset', is_active: true },
+    { id: 'a0', name: 'Old bank', account_type: 'asset', is_active: false },
+    { id: 'e1', name: 'Food', account_type: 'expense', is_active: true },
+    { id: 'e0', name: 'Old food', account_type: 'expense', is_active: false },
+    { id: 'l1', name: 'Payable', account_type: 'liability', is_active: true },
+  ]
+  const held = { category: 'e1', wallet: 'a1', payable: 'l1', from: 'a1', to: 'l1' }
+  const ids = (list: readonly AccountLike[]) => list.map((a) => a.id)
+
+  test('each kind and status shows the fields core posts to', () => {
+    expect(shownAccountFields('expense', 'paid', false)).toEqual(['category', 'wallet'])
+    expect(shownAccountFields('income', 'paid', false)).toEqual(['category', 'wallet'])
+    expect(shownAccountFields('income', 'paid', true)).toEqual(['category', 'payable'])
+    expect(shownAccountFields('bill', 'paid', false)).toEqual(['category', 'wallet'])
+    expect(shownAccountFields('bill', 'unpaid', false)).toEqual(['category', 'payable'])
+    expect(shownAccountFields('bill', 'pay_existing', false)).toEqual(['wallet', 'payable'])
+    expect(shownAccountFields('transfer', 'paid', false)).toEqual(['from', 'to'])
+  })
+
+  test('a select lists the active accounts of its types, plus an archived one it holds', () => {
+    expect(ids(accountChoices(book, 'expense', 'category', 'e1'))).toEqual(['e1'])
+    expect(ids(accountChoices(book, 'expense', 'category', 'e0'))).toEqual(['e1', 'e0'])
+    expect(ids(accountChoices(book, 'expense', 'wallet', ''))).toEqual(['a1', 'l1'])
+    expect(ids(accountChoices(book, 'income', 'wallet', 'l1'))).toEqual(['a1'])
+    expect(ids(accountChoices(book, 'expense', 'from', 'a1'))).toEqual([])
+  })
+
+  test('a shown field that is empty, archived or of the wrong type holds the save', () => {
+    const form = { kind: 'expense', billStatus: 'paid', incomeUnpaid: false } as const
+
+    expect(holdsUnusableAccount(book, { ...form, held })).toBe(false)
+    expect(holdsUnusableAccount(book, { ...form, held: { ...held, category: '' } })).toBe(true)
+    expect(holdsUnusableAccount(book, { ...form, held: { ...held, category: 'e0' } })).toBe(true)
+    expect(holdsUnusableAccount(book, { ...form, held: { ...held, category: 'a1' } })).toBe(true)
+    expect(holdsUnusableAccount(book, { ...form, held: { ...held, category: 'gone' } })).toBe(true)
+  })
+
+  test('a hidden field never holds the save', () => {
+    const unpaidBill = { kind: 'bill', billStatus: 'unpaid', incomeUnpaid: false } as const
+
+    expect(holdsUnusableAccount(book, { ...unpaidBill, held: { ...held, wallet: 'a0' } })).toBe(
+      false,
+    )
+    expect(holdsUnusableAccount(book, { ...unpaidBill, held: { ...held, payable: '' } })).toBe(true)
   })
 })

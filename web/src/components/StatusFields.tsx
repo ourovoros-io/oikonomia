@@ -1,22 +1,64 @@
 import type { ReactNode } from 'react'
 import type { Account } from '../lib/api'
 import { useI18n } from '../lib/I18nProvider'
-import { isBillStatus, type BillStatus } from '../lib/simpleEntry'
+import { isBillStatus, shownAccountFields, type BillStatus } from '../lib/simpleEntry'
 import { Field, Select } from './ui'
 
-/** One account field of the form: what it holds, how it changes, what it offers. */
+/**
+ * One account field of the form: what it holds, how it changes, what it
+ * offers. `options` are the active accounts it accepts, plus the held account
+ * when that one is archived (`accountChoices`).
+ */
 export type AccountField = {
   value: string
   onChange: (id: string) => void
   options: readonly Account[]
 }
 
-function AccountOptions({ options }: { options: readonly Account[] }) {
-  return options.map((a) => (
-    <option key={a.id} value={a.id}>
-      {a.code} · {a.name}
-    </option>
-  ))
+/**
+ * An account select that shows the account the form holds. When that is no
+ * active option (none picked, archived, or not yet loaded), the browser would
+ * show the first account while the form keeps another, so the held value gets
+ * its own option: the archived account marked as such, else `placeholder`.
+ */
+export function AccountSelect({
+  label,
+  field,
+  placeholder,
+  disabled = false,
+}: {
+  label: string
+  field: AccountField
+  placeholder?: string | undefined
+  disabled?: boolean
+}) {
+  const { t } = useI18n()
+  const held = field.options.find((a) => a.id === field.value)
+
+  return (
+    <Field label={label}>
+      <Select
+        value={field.value}
+        onChange={(e) => field.onChange(e.target.value)}
+        disabled={disabled}
+        required
+        aria-invalid={held?.is_active ? undefined : true}
+      >
+        {held ? null : (
+          <option value={field.value} disabled>
+            {placeholder ?? t('tx.accountChoose')}
+          </option>
+        )}
+        {field.options.map((a) => (
+          <option key={a.id} value={a.id} disabled={!a.is_active}>
+            {a.is_active
+              ? `${a.code} · ${a.name}`
+              : t('tx.accountArchived', { code: a.code, name: a.name })}
+          </option>
+        ))}
+      </Select>
+    </Field>
+  )
 }
 
 /**
@@ -50,7 +92,8 @@ export function BillStatusFields({
   wide: string
 }) {
   const { t } = useI18n()
-  const noPayable = payable.options.length === 0
+  const shown = shownAccountFields('bill', status, false)
+  const noPayable = !payable.options.some((a) => a.is_active)
 
   return (
     <>
@@ -68,38 +111,24 @@ export function BillStatusFields({
         </Select>
       </Field>
       {status === 'pay_existing' ? payment : null}
-      {status === 'pay_existing' ? null : (
-        <Field label={t('tx.billCategory')}>
-          <Select
-            value={category.value}
-            onChange={(e) => category.onChange(e.target.value)}
-            required
-          >
-            <AccountOptions options={category.options} />
-          </Select>
-        </Field>
-      )}
-      {status === 'unpaid' ? null : (
-        <Field label={status === 'paid' ? t('tx.paidFrom') : t('tx.payFrom')}>
-          <Select value={wallet.value} onChange={(e) => wallet.onChange(e.target.value)} required>
-            <AccountOptions options={wallet.options} />
-          </Select>
-        </Field>
-      )}
-      {status === 'paid' ? null : (
-        <Field label={t('tx.billsPayableAccount')}>
-          <Select
-            value={payable.value}
-            onChange={(e) => payable.onChange(e.target.value)}
-            disabled={payableLocked}
-            required
-          >
-            {noPayable ? <option value="">{t('tx.noLiability')}</option> : null}
-            <AccountOptions options={payable.options} />
-          </Select>
-        </Field>
-      )}
-      {noPayable && status !== 'paid' ? (
+      {shown.includes('category') ? (
+        <AccountSelect label={t('tx.billCategory')} field={category} />
+      ) : null}
+      {shown.includes('wallet') ? (
+        <AccountSelect
+          label={status === 'paid' ? t('tx.paidFrom') : t('tx.payFrom')}
+          field={wallet}
+        />
+      ) : null}
+      {shown.includes('payable') ? (
+        <AccountSelect
+          label={t('tx.billsPayableAccount')}
+          field={payable}
+          placeholder={noPayable ? t('tx.noLiability') : undefined}
+          disabled={payableLocked}
+        />
+      ) : null}
+      {noPayable && shown.includes('payable') ? (
         <p className={`text-xs text-[var(--color-muted)] ${wide}`}>{t('tx.billsPayableTip')}</p>
       ) : null}
     </>
@@ -127,15 +156,10 @@ export function IncomeStatusFields({
   wide: string
 }) {
   const { t } = useI18n()
-  const holder = unpaid ? receivable : wallet
 
   return (
     <>
-      <Field label={t('tx.incomeType')}>
-        <Select value={category.value} onChange={(e) => category.onChange(e.target.value)} required>
-          <AccountOptions options={category.options} />
-        </Select>
-      </Field>
+      <AccountSelect label={t('tx.incomeType')} field={category} />
       <Field label={t('tx.incomeStatus')} className={wide}>
         <Select
           value={unpaid ? 'unpaid' : 'received'}
@@ -145,11 +169,10 @@ export function IncomeStatusFields({
           <option value="unpaid">{t('tx.incomeUnpaid')}</option>
         </Select>
       </Field>
-      <Field label={unpaid ? t('tx.receivableAccount') : t('tx.receivedInto')}>
-        <Select value={holder.value} onChange={(e) => holder.onChange(e.target.value)} required>
-          <AccountOptions options={holder.options} />
-        </Select>
-      </Field>
+      <AccountSelect
+        label={unpaid ? t('tx.receivableAccount') : t('tx.receivedInto')}
+        field={unpaid ? receivable : wallet}
+      />
     </>
   )
 }

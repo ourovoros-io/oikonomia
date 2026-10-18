@@ -1023,7 +1023,9 @@
     "billToPay": "Zu zahlende Rechnung",
     "billToPayNone": "Mit keiner Rechnung verknüpft",
     "billToPayChoose": "Rechnung wählen…",
-    "billToPayRequired": "Wählen Sie die Rechnung, die diese Zahlung begleicht, oder „Mit keiner Rechnung verknüpft“."
+    "billToPayRequired": "Wählen Sie die Rechnung, die diese Zahlung begleicht, oder „Mit keiner Rechnung verknüpft“.",
+    "accountChoose": "Konto wählen…",
+    "accountArchived": "{code} · {name} (archiviert)"
   },
   "recurring": {
     "title": "Wiederkehrend",

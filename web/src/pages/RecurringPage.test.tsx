@@ -738,3 +738,83 @@ describe('RecurringPage status fields keep and reset what they hold', () => {
     expect(screen.getByText(/add a liability named “Bills Payable”/)).toBeInTheDocument()
   })
 })
+
+describe('RecurringPage account selects show what the form holds', () => {
+  test('a template on an archived account shows it as archived and holds Save', async () => {
+    vi.mocked(api.accountList).mockResolvedValue([
+      ...accounts,
+      account({
+        id: 'exp0',
+        name: 'Old rent',
+        account_type: 'expense',
+        code: '5900',
+        is_active: false,
+      }),
+    ])
+    vi.mocked(api.recurringList).mockResolvedValue([template({ category_account_id: 'exp0' })])
+    await renderPage()
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit template' }))
+
+    const category = screen.getByLabelText('Category')
+    expect(category).toHaveValue('exp0')
+    expect(category).toHaveDisplayValue('5900 · Old rent (archived)')
+    expect(category).toHaveAttribute('aria-invalid', 'true')
+    const save = screen.getByRole('button', { name: 'Save template' })
+    expect(save).toBeDisabled()
+    expect(save).toHaveAccessibleDescription('Choose an account for every field this entry needs.')
+
+    await userEvent.selectOptions(category, 'exp1')
+
+    expect(save).toBeEnabled()
+    await userEvent.click(save)
+    await waitFor(() => {
+      expect(api.recurringUpdate).toHaveBeenCalledTimes(1)
+    })
+    expect(vi.mocked(api.recurringUpdate).mock.calls[0]?.[0]).toMatchObject({
+      category_account_id: 'exp1',
+    })
+  })
+
+  test('a role with no default shows a placeholder, not the first account', async () => {
+    vi.mocked(api.accountList).mockResolvedValue([
+      ...accounts,
+      account({ id: 'bp1', name: 'Bills payable', account_type: 'liability', code: '2050' }),
+    ])
+    // DEFAULTS names no bills payable account.
+    await renderPage()
+    await userEvent.click(screen.getAllByRole('button', { name: 'New template' })[0])
+    await userEvent.click(await screen.findByRole('button', { name: 'Bill' }))
+    await userEvent.selectOptions(screen.getByLabelText('Bill status'), 'unpaid')
+
+    const payable = screen.getByLabelText('Bills payable account')
+    expect(payable).toHaveValue('')
+    expect(payable).toHaveDisplayValue('Choose an account…')
+    expect(screen.getByRole('button', { name: 'Save template' })).toBeDisabled()
+
+    await userEvent.selectOptions(payable, 'bp1')
+
+    expect(screen.getByRole('button', { name: 'Save template' })).toBeEnabled()
+  })
+
+  test('defaults that arrive after New opens fill its empty fields', async () => {
+    let resolveDefaults: (roles: AccountDefaults) => void = () => {}
+    vi.mocked(api.accountDefaults).mockReturnValue(
+      new Promise((resolve) => {
+        resolveDefaults = resolve
+      }),
+    )
+    await renderPage()
+    await userEvent.click(screen.getAllByRole('button', { name: 'New template' })[0])
+
+    expect(screen.getByLabelText('Category')).toHaveDisplayValue('Choose an account…')
+    expect(screen.getByRole('button', { name: 'Save template' })).toBeDisabled()
+
+    resolveDefaults(DEFAULTS)
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Category')).toHaveValue('exp1')
+    })
+    expect(screen.getByLabelText('From account')).toHaveValue('w1')
+    expect(screen.getByRole('button', { name: 'Save template' })).toBeEnabled()
+  })
+})
