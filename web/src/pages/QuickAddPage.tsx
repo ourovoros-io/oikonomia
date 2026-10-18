@@ -893,7 +893,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
             }}
           >
             {(kind === 'expense' || kind === 'bill') && (
-              <AccountSelect
+              <AccountPill
                 value={categoryId}
                 onChange={setCategoryId}
                 options={expenseAccounts}
@@ -903,7 +903,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
               />
             )}
             {kind === 'income' && (
-              <AccountSelect
+              <AccountPill
                 value={categoryId}
                 onChange={setCategoryId}
                 options={incomeAccounts}
@@ -915,7 +915,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
             {(kind === 'expense' ||
               (kind === 'income' && entryStatus === 'paid') ||
               (kind === 'bill' && billStatus === 'paid')) && (
-              <AccountSelect
+              <AccountPill
                 value={walletId}
                 onChange={setWalletId}
                 options={kind === 'income' ? assetWallets : walletAccounts}
@@ -925,7 +925,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
               />
             )}
             {kind === 'bill' && billStatus === 'unpaid' && (
-              <AccountSelect
+              <AccountPill
                 value={payableId}
                 onChange={setPayableId}
                 options={payableAccounts}
@@ -936,7 +936,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
             )}
             {kind === 'transfer' && (
               <>
-                <AccountSelect
+                <AccountPill
                   value={fromId}
                   onChange={setFromId}
                   options={transferAccounts}
@@ -944,7 +944,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                   label={t('quickAdd.from')}
                   prefix={t('quickAdd.fromPrefix')}
                 />
-                <AccountSelect
+                <AccountPill
                   value={toId}
                   onChange={setToId}
                   options={transferAccounts}
@@ -1119,7 +1119,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
   )
 }
 
-function AccountSelect({
+function AccountPill({
   value,
   onChange,
   options,

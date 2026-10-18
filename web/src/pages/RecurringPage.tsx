@@ -26,11 +26,14 @@ import { amountProblemKey, bookCurrency, minorToInputText } from '../lib/money'
 import { beginExclusive } from '../lib/guards'
 import { useDialogError } from '../lib/useDialogError'
 import {
-  accountsOf,
+  accountChoices,
   formBillStatus,
+  holdsUnusableAccount,
   kindDefaultAccounts,
+  type AccountFieldName,
   type BillStatus,
 } from '../lib/simpleEntry'
+import { AccountSelect, type AccountField } from '../components/AccountSelect'
 import { BillStatusFields, IncomeStatusFields } from '../components/StatusFields'
 import {
   cadenceLabelKey,
@@ -116,9 +119,15 @@ function Pill({
   )
 }
 
+/** A template's default accounts. A recurring expense is booked like a bill: the same category. */
+function templateDefaults(kind: RecurringKind, roles: AccountDefaults | null) {
+  return kindDefaultAccounts(kind === 'expense' ? 'bill' : kind, roles)
+}
+
 export function RecurringPage({ entity, onBack }: Props) {
   const { t } = useI18n()
   const payExistingHintId = useId()
+  const saveBlockedReasonId = useId()
   const [templates, setTemplates] = useState<RecurringTemplate[]>([])
   const [accounts, setAccounts] = useState<Account[]>([])
   // Which account plays which role by default; Rust decides, this only holds it.
@@ -166,22 +175,32 @@ export function RecurringPage({ entity, onBack }: Props) {
   const accountMap = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts])
   const dueCount = templates.filter((row) => row.due).length
 
-  const expenseAccounts = useMemo(() => accountsOf(accounts, ['expense']), [accounts])
-  const incomeAccounts = useMemo(() => accountsOf(accounts, ['income']), [accounts])
-  const walletAccounts = useMemo(() => accountsOf(accounts, ['asset', 'liability']), [accounts])
-  const payableAccounts = useMemo(() => accountsOf(accounts, ['liability']), [accounts])
-  const assetAccounts = useMemo(() => accountsOf(accounts, ['asset']), [accounts])
+  /** One account field of the form for the kind on screen, as its select takes it. */
+  function accountField(
+    name: AccountFieldName,
+    value: string,
+    onChange: (id: string) => void,
+  ): AccountField {
+    return { value, onChange, options: accountChoices(accounts, kind, name, value) }
+  }
+
+  // Core refuses a template whose shown account is missing or archived, so
+  // Save waits for it rather than fail on a field that looks filled.
+  const accountUnusable = holdsUnusableAccount(accounts, {
+    kind,
+    billStatus,
+    incomeUnpaid,
+    held: { category: categoryId, wallet: walletId, payable: payableId, from: fromId, to: toId },
+  })
 
   function applyKindDefaults(nextKind: RecurringKind, roles: AccountDefaults | null) {
+    const picked = templateDefaults(nextKind, roles)
     if (nextKind === 'transfer') {
-      const picked = kindDefaultAccounts('transfer', roles)
       setFromId(picked.fromId)
       setToId(picked.toId)
       return
     }
 
-    // A recurring expense is booked like a bill: the same category default.
-    const picked = kindDefaultAccounts(nextKind === 'income' ? 'income' : 'bill', roles)
     setCategoryId(picked.categoryId)
     setWalletId(picked.walletId)
     setPayableId(picked.payableId)
@@ -216,6 +235,19 @@ export function RecurringPage({ entity, onBack }: Props) {
     setAccounts(list)
     setDefaults(roles)
   }
+
+  // Defaults can arrive after the form opens (or change on a reload), so they
+  // fill only the fields still empty, never one the user or a template has set.
+  useEffect(() => {
+    const picked = templateDefaults(kind, defaults)
+    setCategoryId((id) => id || picked.categoryId)
+    setWalletId((id) => id || picked.walletId)
+    setPayableId((id) => id || picked.payableId)
+    setFromId((id) => id || picked.fromId)
+    setToId((id) => id || picked.toId)
+    // A change of kind refills through applyKindDefaults; this runs for new defaults only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaults])
 
   useEffect(() => {
     void reload().catch((err) => setError(commandFailure(err)))
@@ -309,9 +341,11 @@ export function RecurringPage({ entity, onBack }: Props) {
     const minor = parseMajorToMinor(amount, currency)
     const problem = !name.trim()
       ? 'form.fieldRequired'
-      : !nextDate
-        ? 'date.invalid'
-        : amountProblemKey(minor, 'tx.invalidAmount')
+      : accountUnusable
+        ? 'error.accountRequiredGeneric'
+        : !nextDate
+          ? 'date.invalid'
+          : amountProblemKey(minor, 'tx.invalidAmount')
     // minor is only null alongside a problem; the check narrows its type.
     if (problem || minor === null) {
       formBusyRef.current = false
@@ -525,55 +559,32 @@ export function RecurringPage({ entity, onBack }: Props) {
           />
           {kind === 'transfer' ? (
             <>
-              <Field label={t('recurring.form.fromAccount')}>
-                <Select value={fromId} onChange={(e) => setFromId(e.target.value)} required>
-                  {walletAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} · {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <Field label={t('tx.to')}>
-                <Select value={toId} onChange={(e) => setToId(e.target.value)} required>
-                  {walletAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} · {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
+              <AccountSelect
+                label={t('recurring.form.fromAccount')}
+                field={accountField('from', fromId, setFromId)}
+              />
+              <AccountSelect label={t('tx.to')} field={accountField('to', toId, setToId)} />
             </>
           ) : null}
           {kind === 'expense' ? (
             <>
-              <Field label={t('recurring.form.category')}>
-                <Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} required>
-                  {expenseAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} · {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <Field label={t('recurring.form.fromAccount')}>
-                <Select value={walletId} onChange={(e) => setWalletId(e.target.value)} required>
-                  {walletAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} · {a.name}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
+              <AccountSelect
+                label={t('recurring.form.category')}
+                field={accountField('category', categoryId, setCategoryId)}
+              />
+              <AccountSelect
+                label={t('recurring.form.fromAccount')}
+                field={accountField('wallet', walletId, setWalletId)}
+              />
             </>
           ) : null}
           {kind === 'income' ? (
             <IncomeStatusFields
               unpaid={incomeUnpaid}
               onUnpaid={setIncomeUnpaid}
-              category={{ value: categoryId, onChange: setCategoryId, options: incomeAccounts }}
-              receivable={{ value: payableId, onChange: setPayableId, options: assetAccounts }}
-              wallet={{ value: walletId, onChange: setWalletId, options: assetAccounts }}
+              category={accountField('category', categoryId, setCategoryId)}
+              receivable={accountField('payable', payableId, setPayableId)}
+              wallet={accountField('wallet', walletId, setWalletId)}
               wide="sm:col-span-2"
             />
           ) : null}
@@ -582,9 +593,9 @@ export function RecurringPage({ entity, onBack }: Props) {
               status={billStatus}
               onStatus={setBillStatus}
               statusDescribedBy={billStatus === 'pay_existing' ? payExistingHintId : undefined}
-              category={{ value: categoryId, onChange: setCategoryId, options: expenseAccounts }}
-              wallet={{ value: walletId, onChange: setWalletId, options: walletAccounts }}
-              payable={{ value: payableId, onChange: setPayableId, options: payableAccounts }}
+              category={accountField('category', categoryId, setCategoryId)}
+              wallet={accountField('wallet', walletId, setWalletId)}
+              payable={accountField('payable', payableId, setPayableId)}
               payment={
                 <p
                   id={payExistingHintId}
@@ -603,7 +614,7 @@ export function RecurringPage({ entity, onBack }: Props) {
               placeholder={t('recurring.form.memoPlaceholder')}
             />
           </Field>
-          <div className="flex justify-end gap-2 border-t border-[var(--color-border)] pt-4 sm:col-span-2">
+          <div className="flex flex-wrap justify-end gap-2 border-t border-[var(--color-border)] pt-4 sm:col-span-2">
             {editId ? (
               <Button
                 type="button"
@@ -618,10 +629,25 @@ export function RecurringPage({ entity, onBack }: Props) {
                 {t('recurring.delete.confirm')}
               </Button>
             ) : null}
+            {/* A disabled Save cannot take focus, so the reason is a live region, kept
+                mounted so a screen reader announces it when it appears. */}
+            <p
+              id={saveBlockedReasonId}
+              role="status"
+              // The Delete button holds the left edge when it is there.
+              className={cn('self-center text-sm text-[var(--color-danger)]', !editId && 'mr-auto')}
+            >
+              {accountUnusable ? t('error.accountRequiredGeneric') : null}
+            </p>
             <Button type="button" variant="secondary" disabled={formBusy} onClick={closeForm}>
               {t('recurring.form.cancel')}
             </Button>
-            <Button type="submit" busy={formBusy}>
+            <Button
+              type="submit"
+              busy={formBusy}
+              disabled={accountUnusable}
+              aria-describedby={accountUnusable ? saveBlockedReasonId : undefined}
+            >
               {formBusy ? t('recurring.form.busy') : t('recurring.form.save')}
             </Button>
           </div>

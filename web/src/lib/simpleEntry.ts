@@ -32,6 +32,79 @@ export function accountsOf<A extends AccountLike>(
   return accounts.filter((a) => a.is_active && types.includes(a.account_type))
 }
 
+/** An account field of the entry forms; `payable` holds the receivable of an income. */
+export type AccountFieldName = 'category' | 'wallet' | 'payable' | 'from' | 'to'
+
+type AccountType = AccountLike['account_type']
+
+const WALLET_TYPES: readonly AccountType[] = ['asset', 'liability']
+
+/** The account types each field of a kind lists. Core checks the type again on save. */
+const FIELD_TYPES: Record<EntryKind, Partial<Record<AccountFieldName, readonly AccountType[]>>> = {
+  expense: { category: ['expense'], wallet: WALLET_TYPES },
+  income: { category: ['income'], wallet: ['asset'], payable: ['asset'] },
+  bill: { category: ['expense'], wallet: WALLET_TYPES, payable: ['liability'] },
+  transfer: { from: WALLET_TYPES, to: WALLET_TYPES },
+}
+
+function fieldTypes(kind: EntryKind, field: AccountFieldName): readonly AccountType[] {
+  return FIELD_TYPES[kind][field] ?? []
+}
+
+/**
+ * The account fields a form shows for this kind and status, the ones core
+ * posts to. Every other field is hidden and its value ignored.
+ */
+export function shownAccountFields(
+  kind: EntryKind,
+  billStatus: BillStatus,
+  incomeUnpaid: boolean,
+): readonly AccountFieldName[] {
+  if (kind === 'expense') return ['category', 'wallet']
+  if (kind === 'income') return ['category', incomeUnpaid ? 'payable' : 'wallet']
+  if (kind === 'transfer') return ['from', 'to']
+  if (billStatus === 'paid') return ['category', 'wallet']
+  if (billStatus === 'unpaid') return ['category', 'payable']
+  return ['wallet', 'payable']
+}
+
+/**
+ * What a field's select lists: the active accounts of its types, and the
+ * account it holds when that one is archived, so the select can show it as
+ * held rather than fall back to its first option.
+ */
+export function accountChoices<A extends AccountLike>(
+  accounts: readonly A[],
+  kind: EntryKind,
+  field: AccountFieldName,
+  heldId: string,
+): A[] {
+  const types = fieldTypes(kind, field)
+
+  return accounts.filter((a) => types.includes(a.account_type) && (a.is_active || a.id === heldId))
+}
+
+/**
+ * True when a shown field holds no account it can post to: none picked, an
+ * archived one, or one of the wrong type. Core would refuse the save, so the
+ * form holds it back until the field is picked again.
+ */
+export function holdsUnusableAccount<A extends AccountLike>(
+  accounts: readonly A[],
+  form: {
+    kind: EntryKind
+    billStatus: BillStatus
+    incomeUnpaid: boolean
+    held: Record<AccountFieldName, string>
+  },
+): boolean {
+  return shownAccountFields(form.kind, form.billStatus, form.incomeUnpaid).some((field) => {
+    const id = form.held[field]
+    const types = fieldTypes(form.kind, field)
+    return !accounts.some((a) => a.id === id && a.is_active && types.includes(a.account_type))
+  })
+}
+
 /** The form fields a kind's default accounts fill, as ids ('' when unset). */
 export type KindDefaultAccounts = {
   categoryId: string

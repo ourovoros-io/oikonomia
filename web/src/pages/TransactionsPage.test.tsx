@@ -1300,6 +1300,104 @@ describe('TransactionsPage default accounts', () => {
   })
 })
 
+describe('TransactionsPage account selects show what the form holds', () => {
+  const saveReason = 'Choose an account for every field this entry needs.'
+
+  test('editing an entry on an archived account shows it as archived and holds Save', async () => {
+    vi.mocked(api.accountList).mockResolvedValue([
+      account({ id: 'w1', name: 'Checking', account_type: 'asset', code: '1000' }),
+      account({
+        id: 'exp1',
+        name: 'Meals & dining',
+        account_type: 'expense',
+        code: '5000',
+        is_active: false,
+      }),
+      account({ id: 'exp2', name: 'Groceries', account_type: 'expense', code: '5100' }),
+    ])
+    await renderReady()
+    await userEvent.click(screen.getByText('Alpha supermarket'))
+    await userEvent.click(await screen.findByRole('button', { name: 'Edit entry' }))
+    await screen.findByRole('heading', { name: 'Edit entry' })
+
+    const category = screen.getByLabelText('Category (what for)')
+    expect(category).toHaveValue('exp1')
+    expect(category).toHaveDisplayValue('5000 · Meals & dining (archived)')
+    const save = screen.getByRole('button', { name: 'Save changes' })
+    expect(save).toBeDisabled()
+    expect(save).toHaveAccessibleDescription(saveReason)
+
+    await userEvent.selectOptions(category, 'exp2')
+
+    expect(save).toBeEnabled()
+    expect(screen.queryByText(saveReason)).toBeNull()
+  })
+
+  test('a bill with no bills payable default shows a placeholder and holds Save', async () => {
+    vi.mocked(api.accountList).mockResolvedValue([
+      ...accounts,
+      account({ id: 'bp1', name: 'Bills payable', account_type: 'liability', code: '2050' }),
+    ])
+    render(<TransactionsPage entity={entity} newEntryIntent={1} onNewEntryIntentHandled={vi.fn()} />)
+    await screen.findByRole('heading', { name: 'New entry' })
+    await userEvent.click(screen.getByRole('button', { name: 'Bill' }))
+    await userEvent.selectOptions(screen.getByLabelText('Bill status'), 'unpaid')
+
+    const payable = screen.getByLabelText('Bills payable account')
+    expect(payable).toHaveValue('')
+    expect(payable).toHaveDisplayValue('Choose an account…')
+    expect(screen.getByRole('button', { name: 'Save entry' })).toBeDisabled()
+    expect(screen.getByText(saveReason)).toBeInTheDocument()
+
+    await userEvent.selectOptions(payable, 'bp1')
+
+    expect(screen.getByRole('button', { name: 'Save entry' })).toBeEnabled()
+  })
+
+  test('a field the status hides never holds Save, even when it is empty', async () => {
+    vi.mocked(api.accountList).mockResolvedValue([
+      ...accounts,
+      account({ id: 'bp1', name: 'Bills payable', account_type: 'liability', code: '2050' }),
+    ])
+    vi.mocked(api.accountDefaults).mockResolvedValue({
+      ...DEFAULTS,
+      payment: null,
+      bills_payable: 'bp1',
+    })
+    render(<TransactionsPage entity={entity} newEntryIntent={1} onNewEntryIntentHandled={vi.fn()} />)
+    await screen.findByRole('heading', { name: 'New entry' })
+    await userEvent.click(screen.getByRole('button', { name: 'Bill' }))
+    expect(screen.getByRole('button', { name: 'Save entry' })).toBeDisabled()
+
+    await userEvent.selectOptions(screen.getByLabelText('Bill status'), 'unpaid')
+
+    expect(screen.queryByLabelText('Paid from')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Save entry' })).toBeEnabled()
+  })
+
+  test('defaults that arrive after New entry opens fill its empty fields', async () => {
+    let resolveDefaults: (roles: AccountDefaults) => void = () => {}
+    vi.mocked(api.accountDefaults).mockReturnValue(
+      new Promise((resolve) => {
+        resolveDefaults = resolve
+      }),
+    )
+    render(<TransactionsPage entity={entity} newEntryIntent={1} onNewEntryIntentHandled={vi.fn()} />)
+    await screen.findByRole('heading', { name: 'New entry' })
+
+    expect(screen.getByLabelText('Category (what for)')).toHaveDisplayValue('Choose an account…')
+    expect(screen.getByRole('button', { name: 'Save entry' })).toBeDisabled()
+
+    resolveDefaults(DEFAULTS)
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Category (what for)')).toHaveValue('exp1')
+    })
+    expect(screen.getByLabelText('Paid from')).toHaveValue('w1')
+    expect(screen.getByRole('button', { name: 'Save entry' })).toBeEnabled()
+  })
+})
+
 describe('TransactionsPage Quick add intent', () => {
   test('opens New entry once and reports the intent handled', async () => {
     const handled = vi.fn()
@@ -1769,6 +1867,7 @@ describe('TransactionsPage paying an existing bill', () => {
     const save = screen.getByRole('button', { name: 'Save entry' })
     expect(save).toBeDisabled()
     expect(save).toHaveAccessibleDescription(reason)
+    expect(picker).toHaveAccessibleDescription(reason)
 
     await userEvent.selectOptions(picker, 'unlinked')
 
