@@ -613,7 +613,7 @@ mod tests {
         assert_eq!(reading.category_hint(), "ΔΕΗ ΔΕΗ — Electricity bill");
         assert_eq!(
             reading.description_in(crate::prefs::Locale::El).as_deref(),
-            Some("ΔΕΗ — Λογαριασμός ρεύματος"),
+            Some("ΔΕΗ — Τιμολόγιο ρεύματος"),
             "the description itself follows the language"
         );
     }
