@@ -96,9 +96,7 @@ describe('Writer el catalog', () => {
     expect(flat['app.nav.dashboard']).toBe('Επισκόπηση')
     expect(flat['unlock.title.unlock']).toBe('Καλωσορίσατε')
     expect(flat['tx.header.title']).toBe('Κινήσεις')
-    expect(flat['dropzone.title.idle']).toBe(
-      'Σύρετε εδώ τιμολόγιο, οφειλή, απόδειξη ή τραπεζικό αντίγραφο',
-    )
+    expect(flat['dropzone.title.idle']).toBe('Σύρετε εδώ τιμολόγιο, απόδειξη ή τραπεζικό αντίγραφο')
     expect(flat['accounts.add.label']).toBe('Προσθήκη λογαριασμού')
     expect(flat['tx.form.billStatus.label']).toBe('Κατάσταση τιμολογίου')
     expect(flat['tx.hidden.badge']).toBe('Κρυφή')
@@ -142,7 +140,7 @@ describe('Writer el catalog', () => {
     expect(t('rpt.title')).toBe('Αναφορές')
     expect(t('rpt.pnl')).toBe('Αποτελέσματα')
     expect(t('docs.title')).toBe('Έγγραφα')
-    expect(t('drop.title')).toBe('Σύρετε εδώ τιμολόγιο, οφειλή, απόδειξη ή τραπεζικό αντίγραφο')
+    expect(t('drop.title')).toBe('Σύρετε εδώ τιμολόγιο, απόδειξη ή τραπεζικό αντίγραφο')
     expect(t('tx.billStatus')).toBe('Κατάσταση τιμολογίου')
     expect(t('tx.hidden.badge')).toBe('Κρυφή')
     expect(t('tx.form.hidden.label')).toBe('Απόκρυψη')

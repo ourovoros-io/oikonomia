@@ -13,7 +13,7 @@ The earlier reviewer flagged these as doubtful.
 
 | Please check | Key path | English source | Current Greek | Question |
 | --- | --- | --- | --- | --- |
-| Bill | `tx.form.kind.bill`, `quickAdd.kind.bill`, `tx.csv.kind.bill`, and the "Bill wording" table below | Bill | Τιμολόγιο | Settled (#260): a bill is "τιμολόγιο" everywhere and "λογαριασμός" means only an account. The seeded account name «Πληρωτέοι λογαριασμοί» is unchanged. Please check the strings in the Bill wording table read naturally. |
+| Bill | `tx.form.kind.bill`, `quickAdd.kind.bill`, `tx.csv.kind.bill`, and the "Bill wording" table below | Bill | Τιμολόγιο | Settled (#260): a bill is "τιμολόγιο" in every web string and in the bill titles core suggests, and "λογαριασμός" means an account. Three seeded account names still use "λογαριασμοί" in the bill sense and are unchanged, because core writes them into books: «Πληρωτέοι λογαριασμοί», 5300 «Λογαριασμοί κοινής ωφέλειας» and 5350 «Λογαριασμοί και υπηρεσίες». Please check the strings in the Bill wording table read naturally. |
 | Debit/credit indicator | `tx.csv.field.direction`, `tx.csv.field.directionOptional` | Debit/credit indicator | Ένδειξη Χ/Π | Will a Greek user recognise "Χ/Π" (Χρέωση/Πίστωση) as the debit/credit column of a bank export? |
 | Due count | `recurring.dueCount.one`, `recurring.dueCount.other`, `recurring.due` | {n} due | {n} οφειλή / {n} οφειλές | "Οφειλή" reads as a debt owed; the English means "due to be posted". |
 | Other | `entry.kind.other`, `entry.kind.openingBalance` | Journal entry / Opening balance | Εγγραφή ημερολογίου / Υπόλοιπο έναρξης | Opening balances now have their own label; `entry.kind.other` is the neutral label for any other entry posted line by line, such as an owner's contribution. Please check both, and the similar "Άλλα…" (`moreOption`). |
@@ -58,7 +58,7 @@ The earlier reviewer flagged these as doubtful.
 
 ### Bill wording (#260)
 
-A bill is "τιμολόγιο" in every string; "λογαριασμός" is kept only where the string means an account.
+A bill is "τιμολόγιο" in every web string and in the bill titles core suggests for a scanned document; "λογαριασμός" is kept only where the string means an account. The seeded account names listed under "Please check" are not changed. In `dropzone.body` invoice and bill are now the same word, so the list names it once.
 
 | Key path | English source | Previous Greek | Current Greek | Your edit |
 | --- | --- | --- | --- | --- |
@@ -69,9 +69,11 @@ A bill is "τιμολόγιο" in every string; "λογαριασμός" is kept
 | `error.billStatusRequired` | Choose a status for this bill: paid, unpaid, or paying an existing bill. | Επιλέξτε κατάσταση για αυτόν τον λογαριασμό: εξοφλημένο, ανεξόφλητο ή εξόφληση υπάρχοντος. | Επιλέξτε κατάσταση για αυτό το τιμολόγιο: εξοφλημένο, ανεξόφλητο ή εξόφληση υπάρχοντος τιμολογίου. | |
 | `tx.empty.body` | Use Expense for spending, Income for money in, and Bill for utilities or invoices you need to track. | Χρησιμοποιήστε Έξοδο για δαπάνες, Έσοδο για εισροές και Λογαριασμό για υπηρεσίες κοινής ωφέλειας ή τιμολόγια που πρέπει να παρακολουθείτε. | Χρησιμοποιήστε Έξοδο για δαπάνες, Έσοδο για εισροές και Τιμολόγιο για υπηρεσίες κοινής ωφέλειας ή άλλα τιμολόγια που πρέπει να παρακολουθείτε. | |
 | `recurring.emptyBody` | Save rent, payroll, utilities, or a subscription as a template. You post each occurrence when it is due. | Αποθηκεύστε ενοίκιο, μισθοδοσία, λογαριασμούς κοινής ωφέλειας ή μια συνδρομή ως πρότυπο. Καταχωρίζετε κάθε εμφάνιση όταν οφείλεται. | Αποθηκεύστε ενοίκιο, μισθοδοσία, υπηρεσίες κοινής ωφέλειας ή μια συνδρομή ως πρότυπο. Καταχωρίζετε κάθε εμφάνιση όταν οφείλεται. | |
-| `dropzone.body` | PDF (invoices, bills, bank statements), photos of receipts (PNG/JPEG/WebP), or text. ... | PDF (τιμολόγια, λογαριασμοί, κινήσεις τραπέζης), ... | PDF (τιμολόγια, κινήσεις τραπέζης), ... (invoice and bill are now the same word) | |
+| `dropzone.body` | PDF (invoices, bills, bank statements), photos of receipts (PNG/JPEG/WebP), or text. ... | PDF (τιμολόγια, λογαριασμοί, κινήσεις τραπέζης), ... | PDF (τιμολόγια, κινήσεις τραπέζης), ... | |
 | `analyze.notes.addPayable` | Add a Bills Payable liability account to track unpaid bills. | Προσθέστε λογαριασμό παθητικού «Πληρωτέοι λογαριασμοί» για ανεξόφλητους λογαριασμούς. | Προσθέστε λογαριασμό παθητικού «Πληρωτέοι λογαριασμοί» για ανεξόφλητα τιμολόγια. | |
-| `analyze.invoice.notes.utility` | Detected a utility / electricity bill (expense). | Εντοπίστηκε λογαριασμός κοινής ωφέλειας / ρεύματος (έξοδο). | Εντοπίστηκε τιμολόγιο κοινής ωφέλειας / ρεύματος (έξοδο). | |
+| `analyze.invoice.notes.utility` | Detected a utility / electricity bill (expense). | Εντοπίστηκε λογαριασμός κοινής ωφέλειας / ρεύματος (έξοδο). | Εντοπίστηκε τιμολόγιο παρόχου κοινής ωφέλειας / ρεύματος (έξοδο). | |
+| `dropzone.title.idle` | Drop a bill, invoice, receipt, or bank statement here | Σύρετε εδώ τιμολόγιο, οφειλή, απόδειξη ή τραπεζικό αντίγραφο | Σύρετε εδώ τιμολόγιο, απόδειξη ή τραπεζικό αντίγραφο | |
+| Core: suggested bill titles (`BillKind::title` in `crates/oikonomia-core/src/text.rs`, not in `el.json`) | Electricity / Gas / Telecom / Water / Utility bill | Λογαριασμός ρεύματος / φυσικού αερίου / τηλεπικοινωνιών / νερού / κοινής ωφέλειας | Τιμολόγιο ρεύματος / φυσικού αερίου / τηλεπικοινωνιών / νερού / παρόχου κοινής ωφέλειας | |
 
 ### Common
 

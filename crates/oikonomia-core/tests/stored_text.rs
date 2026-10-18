@@ -416,11 +416,7 @@ fn suggested_invoice_and_utility_descriptions_follow_the_language() {
 
     let expected = [
         (Locale::En, "Invoice", "Volton — Gas bill"),
-        (
-            Locale::El,
-            "Τιμολόγιο",
-            "Volton — Λογαριασμός φυσικού αερίου",
-        ),
+        (Locale::El, "Τιμολόγιο", "Volton — Τιμολόγιο φυσικού αερίου"),
         (Locale::Fr, "Facture", "Volton — Facture de gaz"),
         (Locale::De, "Rechnung", "Volton — Gasrechnung"),
     ];
