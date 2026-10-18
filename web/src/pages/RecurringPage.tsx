@@ -33,12 +33,8 @@ import {
   type AccountFieldName,
   type BillStatus,
 } from '../lib/simpleEntry'
-import {
-  AccountSelect,
-  BillStatusFields,
-  IncomeStatusFields,
-  type AccountField,
-} from '../components/StatusFields'
+import { AccountSelect, type AccountField } from '../components/AccountSelect'
+import { BillStatusFields, IncomeStatusFields } from '../components/StatusFields'
 import {
   cadenceLabelKey,
   dayOfMonthForCadence,
@@ -123,6 +119,11 @@ function Pill({
   )
 }
 
+/** A template's default accounts. A recurring expense is booked like a bill: the same category. */
+function templateDefaults(kind: RecurringKind, roles: AccountDefaults | null) {
+  return kindDefaultAccounts(kind === 'expense' ? 'bill' : kind, roles)
+}
+
 export function RecurringPage({ entity, onBack }: Props) {
   const { t } = useI18n()
   const payExistingHintId = useId()
@@ -193,15 +194,13 @@ export function RecurringPage({ entity, onBack }: Props) {
   })
 
   function applyKindDefaults(nextKind: RecurringKind, roles: AccountDefaults | null) {
+    const picked = templateDefaults(nextKind, roles)
     if (nextKind === 'transfer') {
-      const picked = kindDefaultAccounts('transfer', roles)
       setFromId(picked.fromId)
       setToId(picked.toId)
       return
     }
 
-    // A recurring expense is booked like a bill: the same category default.
-    const picked = kindDefaultAccounts(nextKind === 'income' ? 'income' : 'bill', roles)
     setCategoryId(picked.categoryId)
     setWalletId(picked.walletId)
     setPayableId(picked.payableId)
@@ -240,12 +239,13 @@ export function RecurringPage({ entity, onBack }: Props) {
   // Defaults can arrive after the form opens (or change on a reload), so they
   // fill only the fields still empty, never one the user or a template has set.
   useEffect(() => {
-    const picked = kindDefaultAccounts(kind, defaults)
+    const picked = templateDefaults(kind, defaults)
     setCategoryId((id) => id || picked.categoryId)
     setWalletId((id) => id || picked.walletId)
     setPayableId((id) => id || picked.payableId)
     setFromId((id) => id || picked.fromId)
     setToId((id) => id || picked.toId)
+    // A change of kind refills through applyKindDefaults; this runs for new defaults only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaults])
 
@@ -614,7 +614,7 @@ export function RecurringPage({ entity, onBack }: Props) {
               placeholder={t('recurring.form.memoPlaceholder')}
             />
           </Field>
-          <div className="flex justify-end gap-2 border-t border-[var(--color-border)] pt-4 sm:col-span-2">
+          <div className="flex flex-wrap justify-end gap-2 border-t border-[var(--color-border)] pt-4 sm:col-span-2">
             {editId ? (
               <Button
                 type="button"
@@ -629,18 +629,16 @@ export function RecurringPage({ entity, onBack }: Props) {
                 {t('recurring.delete.confirm')}
               </Button>
             ) : null}
-            {accountUnusable ? (
-              <p
-                id={saveBlockedReasonId}
-                // The Delete button holds the left edge when it is there.
-                className={cn(
-                  'self-center text-sm text-[var(--color-danger)]',
-                  !editId && 'mr-auto',
-                )}
-              >
-                {t('error.accountRequiredGeneric')}
-              </p>
-            ) : null}
+            {/* A disabled Save cannot take focus, so the reason is a live region, kept
+                mounted so a screen reader announces it when it appears. */}
+            <p
+              id={saveBlockedReasonId}
+              role="status"
+              // The Delete button holds the left edge when it is there.
+              className={cn('self-center text-sm text-[var(--color-danger)]', !editId && 'mr-auto')}
+            >
+              {accountUnusable ? t('error.accountRequiredGeneric') : null}
+            </p>
             <Button type="button" variant="secondary" disabled={formBusy} onClick={closeForm}>
               {t('recurring.form.cancel')}
             </Button>

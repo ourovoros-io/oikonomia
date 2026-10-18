@@ -1354,6 +1354,27 @@ describe('TransactionsPage account selects show what the form holds', () => {
     expect(screen.getByRole('button', { name: 'Save entry' })).toBeEnabled()
   })
 
+  test('a field the status hides never holds Save, even when it is empty', async () => {
+    vi.mocked(api.accountList).mockResolvedValue([
+      ...accounts,
+      account({ id: 'bp1', name: 'Bills payable', account_type: 'liability', code: '2050' }),
+    ])
+    vi.mocked(api.accountDefaults).mockResolvedValue({
+      ...DEFAULTS,
+      payment: null,
+      bills_payable: 'bp1',
+    })
+    render(<TransactionsPage entity={entity} newEntryIntent={1} onNewEntryIntentHandled={vi.fn()} />)
+    await screen.findByRole('heading', { name: 'New entry' })
+    await userEvent.click(screen.getByRole('button', { name: 'Bill' }))
+    expect(screen.getByRole('button', { name: 'Save entry' })).toBeDisabled()
+
+    await userEvent.selectOptions(screen.getByLabelText('Bill status'), 'unpaid')
+
+    expect(screen.queryByLabelText('Paid from')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Save entry' })).toBeEnabled()
+  })
+
   test('defaults that arrive after New entry opens fill its empty fields', async () => {
     let resolveDefaults: (roles: AccountDefaults) => void = () => {}
     vi.mocked(api.accountDefaults).mockReturnValue(
@@ -1846,6 +1867,7 @@ describe('TransactionsPage paying an existing bill', () => {
     const save = screen.getByRole('button', { name: 'Save entry' })
     expect(save).toBeDisabled()
     expect(save).toHaveAccessibleDescription(reason)
+    expect(picker).toHaveAccessibleDescription(reason)
 
     await userEvent.selectOptions(picker, 'unlinked')
 

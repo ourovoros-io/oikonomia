@@ -803,16 +803,21 @@ describe('RecurringPage account selects show what the form holds', () => {
         resolveDefaults = resolve
       }),
     )
+    vi.mocked(api.accountList).mockResolvedValue([
+      ...accounts,
+      account({ id: 'exp2', name: 'Utilities', account_type: 'expense', code: '5300' }),
+    ])
     await renderPage()
     await userEvent.click(screen.getAllByRole('button', { name: 'New template' })[0])
 
     expect(screen.getByLabelText('Category')).toHaveDisplayValue('Choose an account…')
     expect(screen.getByRole('button', { name: 'Save template' })).toBeDisabled()
 
-    resolveDefaults(DEFAULTS)
+    // A recurring expense takes the bill category, as it does when defaults came first.
+    resolveDefaults({ ...DEFAULTS, bill_category: 'exp2' })
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Category')).toHaveValue('exp1')
+      expect(screen.getByLabelText('Category')).toHaveValue('exp2')
     })
     expect(screen.getByLabelText('From account')).toHaveValue('w1')
     expect(screen.getByRole('button', { name: 'Save template' })).toBeEnabled()

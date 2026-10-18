@@ -52,7 +52,6 @@ import { TopBar } from '../components/TopBar'
 import { csvImportAccountDefaults, mappingsEqual } from '../lib/csvImport'
 import {
   accountChoices,
-  accountsOf,
   formBillStatus,
   holdsUnusableAccount,
   kindDefaultAccounts,
@@ -61,12 +60,8 @@ import {
   type BillStatus,
   type EntryKind,
 } from '../lib/simpleEntry'
-import {
-  AccountSelect,
-  BillStatusFields,
-  IncomeStatusFields,
-  type AccountField,
-} from '../components/StatusFields'
+import { AccountSelect, type AccountField } from '../components/AccountSelect'
+import { BillStatusFields, IncomeStatusFields } from '../components/StatusFields'
 import {
   AmountPill,
   Button,
@@ -280,9 +275,19 @@ export function TransactionsPage({
   // strings.
   const datesInverted = Boolean(fromDate && toDate && fromDate > toDate)
 
-  const expenseAccounts = useMemo(() => accountsOf(accounts, ['expense']), [accounts])
-  const incomeAccounts = useMemo(() => accountsOf(accounts, ['income']), [accounts])
-  const walletAccounts = useMemo(() => accountsOf(accounts, ['asset', 'liability']), [accounts])
+  // The CSV import offers what New entry offers for the same roles, from the same table.
+  const expenseAccounts = useMemo(
+    () => accountChoices(accounts, 'expense', 'category', ''),
+    [accounts],
+  )
+  const incomeAccounts = useMemo(
+    () => accountChoices(accounts, 'income', 'category', ''),
+    [accounts],
+  )
+  const walletAccounts = useMemo(
+    () => accountChoices(accounts, 'expense', 'wallet', ''),
+    [accounts],
+  )
 
   /** One account field of the form for the kind on screen, as its select takes it. */
   function accountField(
@@ -337,6 +342,7 @@ export function TransactionsPage({
     setPayableId((id) => id || picked.payableId)
     setFromId((id) => id || picked.fromId)
     setToId((id) => id || picked.toId)
+    // A change of kind refills through applyKindDefaults; this runs for new defaults only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaults])
 
@@ -1203,11 +1209,15 @@ export function TransactionsPage({
           )}
 
           <div className="flex justify-end gap-2 border-t border-[var(--color-border)] pt-4 sm:col-span-2 lg:col-span-3">
-            {saveBlockedKey ? (
-              <p id={saveBlockedReasonId} className="mr-auto text-sm text-[var(--color-danger)]">
-                {t(saveBlockedKey)}
-              </p>
-            ) : null}
+            {/* A disabled Save cannot take focus, so the reason is a live region, kept
+                mounted so a screen reader announces it when it appears. */}
+            <p
+              id={saveBlockedReasonId}
+              role="status"
+              className="mr-auto text-sm text-[var(--color-danger)]"
+            >
+              {saveBlockedKey ? t(saveBlockedKey) : null}
+            </p>
             <Button
               type="button"
               variant="secondary"
