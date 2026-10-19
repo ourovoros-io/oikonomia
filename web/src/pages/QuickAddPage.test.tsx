@@ -270,6 +270,54 @@ describe('QuickAddPage default accounts', () => {
   })
 })
 
+describe('QuickAddPage transfers', () => {
+  const card: Account = {
+    ...accounts[0]!,
+    id: 'c1',
+    code: '2100',
+    name: 'Credit card',
+    account_type: 'liability',
+    sort_order: 2,
+  }
+
+  async function reachTransferAccounts() {
+    render(<QuickAddPage onPosted={() => {}} />)
+    await userEvent.click(await screen.findByRole('radio', { name: 'Transfer' }))
+    await afterRoll()
+    await userEvent.type(await screen.findByLabelText('Amount (EUR)'), '40')
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await screen.findByLabelText('From')
+    await afterRoll()
+  }
+
+  function optionNames(label: string): string[] {
+    const select = screen.getByLabelText(label)
+    return Array.from(select.querySelectorAll('option'), (o) => o.textContent ?? '')
+  }
+
+  // Core accepts a liability on either side of a transfer, so a card payment
+  // is a transfer from the checking account to the card.
+  test('both sides offer liabilities, and a card payment posts', async () => {
+    vi.mocked(api.accountList).mockResolvedValue([...accounts, card])
+    await reachTransferAccounts()
+
+    expect(optionNames('From')).toEqual(['Checking', 'Credit card'])
+    expect(optionNames('To')).toEqual(['Checking', 'Credit card'])
+
+    await userEvent.selectOptions(screen.getByLabelText('To'), 'c1')
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await afterRoll()
+    await userEvent.click(await screen.findByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(api.entryPostSimple).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(api.entryPostSimple).mock.calls[0]![0]).toMatchObject({
+      kind: 'transfer',
+      from_account_id: 'w1',
+      to_account_id: 'c1',
+    })
+  })
+})
+
 describe('QuickAddPage remembering the accounts', () => {
   // Rust refuses to save over a preferences file it could not read. The entry
   // is already posted by then, so the refusal must not look like a failed post.

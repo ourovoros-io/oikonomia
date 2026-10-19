@@ -24,14 +24,6 @@ export function lastAccountsMapKey(entityId: string, kind: EntryKind | string): 
   return `${entityId}:${kind}`
 }
 
-/** The active accounts of `types`, in the order given. */
-export function accountsOf<A extends AccountLike>(
-  accounts: readonly A[],
-  types: readonly AccountLike['account_type'][],
-): A[] {
-  return accounts.filter((a) => a.is_active && types.includes(a.account_type))
-}
-
 /** An account field of the entry forms; `payable` holds the receivable of an income. */
 export type AccountFieldName = 'category' | 'wallet' | 'payable' | 'from' | 'to'
 
