@@ -1131,6 +1131,12 @@ function AccountPill({
   /** Quiet in-row role marker inside the pill field. */
   prefix: string
 }) {
+  const { t } = useI18n()
+  // A value the pill does not offer (none picked, or an account it does not
+  // list) gets its own option, or the browser would show the first account
+  // while the form holds another.
+  const listed = options.some((a) => a.id === value)
+
   return (
     <label className={cn(pillField, 'cursor-pointer')}>
       <span className="shrink-0 text-[11px] font-medium leading-none text-[var(--color-muted)]">
@@ -1143,8 +1149,13 @@ function AccountPill({
         disabled={disabled}
         required
         aria-label={label}
+        aria-invalid={listed ? undefined : true}
       >
-        {options.length === 0 ? <option value="">—</option> : null}
+        {listed ? null : (
+          <option value={value} disabled>
+            {t('tx.accountChoose')}
+          </option>
+        )}
         {options.map((a) => (
           <option key={a.id} value={a.id}>
             {a.name}
