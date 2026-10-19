@@ -212,14 +212,8 @@ export function validateTrayAccounts(args: {
   toId: string
 }): MessageKey | null {
   const { kind, billStatus, categoryId, walletId, payableId, fromId, toId } = args
-  if (kind === 'expense' && (!categoryId || !walletId)) {
-    return 'quickAdd.pickAccounts'
-  }
-  if (kind === 'income') {
-    // An unpaid income is debited to the receivable account, not a wallet.
-    const holder = billStatus === 'unpaid' ? payableId : walletId
-    if (!categoryId || !holder) return 'quickAdd.pickAccounts'
-  }
+  // A bill and a transfer name what is missing; every other gap gets the
+  // generic key below.
   if (kind === 'bill') {
     if (!categoryId) return 'quickAdd.pickCategory'
     if (billStatus === 'paid' && !walletId) return 'quickAdd.pickWallet'
@@ -229,9 +223,9 @@ export function validateTrayAccounts(args: {
     if (!fromId || !toId || fromId === toId) return 'quickAdd.pickDifferentAccounts'
   }
 
-  // A held account its pill does not list (archived, or of a type the field
-  // does not take, as when a dropped document switches the kind) shows as
-  // unpicked, and core would refuse it.
+  // A shown field that is empty or holds an account its pill does not list
+  // (archived, or of a type the field does not take, as a dropped document
+  // can leave when it switches the kind). Core would refuse the post.
   const held = {
     category: categoryId,
     wallet: walletId,

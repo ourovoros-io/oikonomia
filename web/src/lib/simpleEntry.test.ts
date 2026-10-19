@@ -193,6 +193,13 @@ describe('validateTrayAccounts', () => {
     )
     // A field the kind does not show is never checked.
     expect(validateTrayAccounts({ ...expense, payableId: 'gone', toId: 'gone' })).toBeNull()
+
+    const owed = { ...base, kind: 'income' as const, categoryId: 'i1', payableId: 'l1' }
+    expect(validateTrayAccounts(owed)).toBe('quickAdd.pickAccounts')
+    const bill = { ...base, kind: 'bill' as const, billStatus: 'unpaid' as const }
+    expect(validateTrayAccounts({ ...bill, payableId: 'a1' })).toBe('quickAdd.pickAccounts')
+    const transfer = { ...base, kind: 'transfer' as const }
+    expect(validateTrayAccounts({ ...transfer, toId: 'e1' })).toBe('quickAdd.pickAccounts')
   })
 
   test('a received income requires a category and a wallet', () => {
