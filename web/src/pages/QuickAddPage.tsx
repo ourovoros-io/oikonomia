@@ -282,8 +282,9 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
     }
   }, [])
 
-  // The same lists New entry offers, so Quick Add posts whatever core accepts:
-  // a transfer may take a liability on either side, as a card payment does.
+  // The lists New entry offers, so Quick Add offers whatever core accepts.
+  // Active accounts only, no held id: a pill has no way to mark an archived
+  // account as New entry's select does.
   const offered = (field: AccountFieldName) => accountChoices(accounts, kind, field, '')
 
   const loadAccountsFor = useCallback(
