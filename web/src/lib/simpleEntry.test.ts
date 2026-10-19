@@ -149,7 +149,17 @@ describe('buildSimpleEntryInput income status', () => {
 })
 
 describe('validateTrayAccounts', () => {
+  const accounts: AccountLike[] = [
+    { id: 'e1', name: 'Meals', account_type: 'expense', is_active: true },
+    { id: 'e0', name: 'Old meals', account_type: 'expense', is_active: false },
+    { id: 'i1', name: 'Salary', account_type: 'income', is_active: true },
+    { id: 'a1', name: 'Checking', account_type: 'asset', is_active: true },
+    { id: 'a2', name: 'Savings', account_type: 'asset', is_active: true },
+    { id: 'r1', name: 'Receivables', account_type: 'asset', is_active: true },
+    { id: 'l1', name: 'Payable', account_type: 'liability', is_active: true },
+  ]
   const base = {
+    accounts,
     billStatus: 'unpaid' as const,
     categoryId: 'e1',
     walletId: 'a1',
@@ -171,14 +181,46 @@ describe('validateTrayAccounts', () => {
     )
   })
 
-  test('a received income requires a category and a wallet', () => {
+  test('a held account its pill does not list asks for accounts', () => {
+    const expense = { ...base, kind: 'expense' as const }
+    expect(validateTrayAccounts({ ...expense, categoryId: 'e0' })).toBe('quickAdd.pickAccounts')
+    expect(validateTrayAccounts({ ...expense, categoryId: 'a1' })).toBe('quickAdd.pickAccounts')
+    expect(validateTrayAccounts({ ...expense, walletId: 'gone' })).toBe('quickAdd.pickAccounts')
+
     const received = { ...base, kind: 'income' as const, billStatus: 'paid' as const }
+    expect(validateTrayAccounts({ ...received, categoryId: 'i1', walletId: 'l1' })).toBe(
+      'quickAdd.pickAccounts',
+    )
+    // A field the kind does not show is never checked.
+    expect(validateTrayAccounts({ ...expense, payableId: 'gone', toId: 'gone' })).toBeNull()
+
+    const owed = { ...base, kind: 'income' as const, categoryId: 'i1', payableId: 'l1' }
+    expect(validateTrayAccounts(owed)).toBe('quickAdd.pickAccounts')
+    const bill = { ...base, kind: 'bill' as const, billStatus: 'unpaid' as const }
+    expect(validateTrayAccounts({ ...bill, payableId: 'a1' })).toBe('quickAdd.pickAccounts')
+    const transfer = { ...base, kind: 'transfer' as const }
+    expect(validateTrayAccounts({ ...transfer, toId: 'e1' })).toBe('quickAdd.pickAccounts')
+  })
+
+  test('a received income requires a category and a wallet', () => {
+    const received = {
+      ...base,
+      kind: 'income' as const,
+      billStatus: 'paid' as const,
+      categoryId: 'i1',
+    }
     expect(validateTrayAccounts(received)).toBeNull()
     expect(validateTrayAccounts({ ...received, walletId: '' })).toBe('quickAdd.pickAccounts')
   })
 
   test('an unpaid income requires a category and a receivable, not a wallet', () => {
-    const unpaid = { ...base, kind: 'income' as const, billStatus: 'unpaid' as const }
+    const unpaid = {
+      ...base,
+      kind: 'income' as const,
+      billStatus: 'unpaid' as const,
+      categoryId: 'i1',
+      payableId: 'r1',
+    }
     expect(validateTrayAccounts({ ...unpaid, walletId: '' })).toBeNull()
     expect(validateTrayAccounts({ ...unpaid, payableId: '' })).toBe('quickAdd.pickAccounts')
   })

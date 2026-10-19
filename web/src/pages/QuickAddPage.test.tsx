@@ -552,4 +552,52 @@ describe('QuickAddPage unpaid income', () => {
       bill_status: null,
     })
   })
+
+  // The last expense was paid by card; the invoice turns the entry into an
+  // income, whose wallet pill lists assets only. Core's reading names a wallet
+  // whenever the book has an asset, so one without stands in for any reading
+  // that leaves a held account the new kind does not take.
+  test('a dropped invoice that leaves an unlisted wallet asks for accounts', async () => {
+    const card: Account = {
+      ...accounts[0]!,
+      id: 'c1',
+      code: '2100',
+      name: 'Credit card',
+      account_type: 'liability',
+      sort_order: 4,
+    }
+    bookWith([...accounts, salary, receivable, card], withReceivable)
+    vi.mocked(api.getUiPrefs).mockResolvedValue({
+      ...prefs,
+      last_accounts_by_entity_kind: {
+        'e1:expense': {
+          category_account_id: 'exp1',
+          wallet_account_id: 'c1',
+          payable_account_id: null,
+          from_account_id: null,
+          to_account_id: null,
+        },
+      },
+    })
+    await dropInvoice({ bill_unpaid: false, wallet_account_id: null })
+    await afterRoll()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Pick accounts')
+    expect(api.entryPostSimpleWithDocument).not.toHaveBeenCalled()
+    const wallet = await screen.findByLabelText('Wallet')
+    expect(wallet).toHaveValue('c1')
+
+    // Next refuses it too, and stays on the accounts step.
+    await afterRoll()
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('Pick accounts')
+    await afterRoll()
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
+
+    await userEvent.selectOptions(wallet, 'w1')
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(await screen.findByRole('button', { name: 'Save' })).toBeTruthy()
+  })
 })

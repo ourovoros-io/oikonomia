@@ -198,9 +198,11 @@ export function buildSimpleEntryInput(args: {
 
 /**
  * Validate role-account selections for the tray quick-add form: the catalog key
- * of what is missing, or null. A key, not a sentence, so the banner words it.
+ * of what is missing or unusable, or null. A key, not a sentence, so the
+ * banner words it.
  */
 export function validateTrayAccounts(args: {
+  accounts: readonly AccountLike[]
   kind: EntryKind
   billStatus: BillStatusTray
   categoryId: string
@@ -210,14 +212,8 @@ export function validateTrayAccounts(args: {
   toId: string
 }): MessageKey | null {
   const { kind, billStatus, categoryId, walletId, payableId, fromId, toId } = args
-  if (kind === 'expense' && (!categoryId || !walletId)) {
-    return 'quickAdd.pickAccounts'
-  }
-  if (kind === 'income') {
-    // An unpaid income is debited to the receivable account, not a wallet.
-    const holder = billStatus === 'unpaid' ? payableId : walletId
-    if (!categoryId || !holder) return 'quickAdd.pickAccounts'
-  }
+  // A bill and a transfer name what is missing; every other gap gets the
+  // generic key below.
   if (kind === 'bill') {
     if (!categoryId) return 'quickAdd.pickCategory'
     if (billStatus === 'paid' && !walletId) return 'quickAdd.pickWallet'
@@ -225,6 +221,21 @@ export function validateTrayAccounts(args: {
   }
   if (kind === 'transfer') {
     if (!fromId || !toId || fromId === toId) return 'quickAdd.pickDifferentAccounts'
+  }
+
+  // A shown field that is empty or holds an account its pill does not list
+  // (archived, or of a type the field does not take, as a dropped document
+  // can leave when it switches the kind). Core would refuse the post.
+  const held = {
+    category: categoryId,
+    wallet: walletId,
+    payable: payableId,
+    from: fromId,
+    to: toId,
+  }
+  const incomeUnpaid = kind === 'income' && billStatus === 'unpaid'
+  if (holdsUnusableAccount(args.accounts, { kind, billStatus, incomeUnpaid, held })) {
+    return 'quickAdd.pickAccounts'
   }
   return null
 }
