@@ -268,6 +268,38 @@ describe('QuickAddPage default accounts', () => {
 
     expect(await categoryAfterChoosingExpense()).toHaveValue('exp1')
   })
+
+  function shownChoice(select: HTMLElement): string | null | undefined {
+    return (select as HTMLSelectElement).selectedOptions[0]?.textContent
+  }
+
+  test('with no default the pill asks for an account and Next stays blocked', async () => {
+    vi.mocked(api.accountList).mockResolvedValue([...accounts, second])
+    vi.mocked(api.accountDefaults).mockResolvedValue({ ...DEFAULTS, category: null })
+
+    const category = await categoryAfterChoosingExpense()
+    expect(shownChoice(category)).toBe('Choose an account…')
+    expect(category).toHaveAttribute('aria-invalid', 'true')
+
+    await afterRoll()
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('Pick accounts')
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
+
+    await userEvent.selectOptions(category, 'exp2')
+    expect(shownChoice(category)).toBe('Λογαριασμός 5100')
+    expect(category).not.toHaveAttribute('aria-invalid')
+  })
+
+  test('a held account the pill does not offer is not shown as the first one', async () => {
+    const archived: Account = { ...second, id: 'exp0', name: 'Old dining', is_active: false }
+    vi.mocked(api.accountList).mockResolvedValue([...accounts, archived])
+    vi.mocked(api.accountDefaults).mockResolvedValue({ ...DEFAULTS, category: 'exp0' })
+
+    const category = await categoryAfterChoosingExpense()
+    expect(category).toHaveValue('exp0')
+    expect(shownChoice(category)).toBe('Choose an account…')
+  })
 })
 
 describe('QuickAddPage remembering the accounts', () => {
