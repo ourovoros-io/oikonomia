@@ -552,4 +552,26 @@ describe('QuickAddPage unpaid income', () => {
       bill_status: null,
     })
   })
+
+  // The expense default pays from a card; the invoice turns the entry into an
+  // income, whose wallet pill lists assets only, and names no wallet itself.
+  test('a dropped invoice that leaves an unlisted wallet asks for accounts', async () => {
+    const card: Account = {
+      ...accounts[0]!,
+      id: 'c1',
+      code: '2100',
+      name: 'Credit card',
+      account_type: 'liability',
+      sort_order: 4,
+    }
+    bookWith([...accounts, salary, receivable, card], { ...withReceivable, payment: 'c1' })
+    await dropInvoice({ bill_unpaid: false, wallet_account_id: null })
+    await afterRoll()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Pick accounts')
+    expect(api.entryPostSimpleWithDocument).not.toHaveBeenCalled()
+    expect(await screen.findByLabelText('Wallet')).toHaveValue('c1')
+  })
 })

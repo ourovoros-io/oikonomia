@@ -198,9 +198,11 @@ export function buildSimpleEntryInput(args: {
 
 /**
  * Validate role-account selections for the tray quick-add form: the catalog key
- * of what is missing, or null. A key, not a sentence, so the banner words it.
+ * of what is missing or unusable, or null. A key, not a sentence, so the
+ * banner words it.
  */
 export function validateTrayAccounts(args: {
+  accounts: readonly AccountLike[]
   kind: EntryKind
   billStatus: BillStatusTray
   categoryId: string
@@ -225,6 +227,21 @@ export function validateTrayAccounts(args: {
   }
   if (kind === 'transfer') {
     if (!fromId || !toId || fromId === toId) return 'quickAdd.pickDifferentAccounts'
+  }
+
+  // A held account its pill does not list (archived, or of a type the field
+  // does not take, as when a dropped document switches the kind) shows as
+  // unpicked, and core would refuse it.
+  const held = {
+    category: categoryId,
+    wallet: walletId,
+    payable: payableId,
+    from: fromId,
+    to: toId,
+  }
+  const incomeUnpaid = kind === 'income' && billStatus === 'unpaid'
+  if (holdsUnusableAccount(args.accounts, { kind, billStatus, incomeUnpaid, held })) {
+    return 'quickAdd.pickAccounts'
   }
   return null
 }

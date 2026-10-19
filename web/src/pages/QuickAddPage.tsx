@@ -592,6 +592,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
       return
     }
     const accountProblem = validateTrayAccounts({
+      accounts,
       kind,
       billStatus: entryStatus,
       categoryId,
@@ -602,8 +603,9 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
     })
     if (accountProblem) {
       busyRef.current = false
-      setError(copyError(accountProblem))
       if (step === 'save') rollTo('accounts', -1)
+      // After the roll, which clears the error of the step it leaves.
+      setError(copyError(accountProblem))
       return
     }
     setBusy(true)
@@ -701,6 +703,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
 
   function advanceFromAccounts() {
     const accountProblem = validateTrayAccounts({
+      accounts,
       kind,
       billStatus: entryStatus,
       categoryId,
