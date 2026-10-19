@@ -289,8 +289,12 @@ describe('QuickAddPage default accounts', () => {
     await userEvent.selectOptions(category, 'exp2')
     expect(shownChoice(category)).toBe('Λογαριασμός 5100')
     expect(category).not.toHaveAttribute('aria-invalid')
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(await screen.findByRole('button', { name: 'Save' })).toBeTruthy()
   })
 
+  // Core never picks an archived default; this stands in for any held account
+  // the pill does not list, to pin what the pill draws for one.
   test('a held account the pill does not offer is not shown as the first one', async () => {
     const archived: Account = { ...second, id: 'exp0', name: 'Old dining', is_active: false }
     vi.mocked(api.accountList).mockResolvedValue([...accounts, archived])

@@ -1139,7 +1139,7 @@ function AccountPill({
   // A value the pill does not offer (none picked, or an account it does not
   // list) gets its own option, or the browser would show the first account
   // while the form holds another.
-  const held = options.some((a) => a.id === value)
+  const listed = options.some((a) => a.id === value)
 
   return (
     <label className={cn(pillField, 'cursor-pointer')}>
@@ -1153,9 +1153,9 @@ function AccountPill({
         disabled={disabled}
         required
         aria-label={label}
-        aria-invalid={held ? undefined : true}
+        aria-invalid={listed ? undefined : true}
       >
-        {held ? null : (
+        {listed ? null : (
           <option value={value} disabled>
             {t('tx.accountChoose')}
           </option>
