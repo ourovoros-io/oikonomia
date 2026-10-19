@@ -3,6 +3,15 @@ import type { MessageKey } from './i18n'
 
 export type EntryKind = 'expense' | 'income' | 'bill' | 'transfer'
 export type BillStatusTray = 'paid' | 'unpaid'
+/** The payment state of a bill as Rust names it; an unpaid income uses `unpaid` too. */
+export type BillStatus = NonNullable<SimpleEntryInput['bill_status']>
+
+const BILL_STATUSES: readonly string[] = ['paid', 'unpaid', 'pay_existing'] satisfies BillStatus[]
+
+/** Narrows a select's value to a bill status. */
+export function isBillStatus(value: string): value is BillStatus {
+  return BILL_STATUSES.includes(value)
+}
 
 export type AccountLike = {
   id: string
@@ -15,11 +24,77 @@ export function lastAccountsMapKey(entityId: string, kind: EntryKind | string): 
   return `${entityId}:${kind}`
 }
 
-export function accountsOf(
-  accounts: AccountLike[],
-  types: AccountLike['account_type'][],
-): AccountLike[] {
-  return accounts.filter((a) => a.is_active && types.includes(a.account_type))
+/** An account field of the entry forms; `payable` holds the receivable of an income. */
+export type AccountFieldName = 'category' | 'wallet' | 'payable' | 'from' | 'to'
+
+type AccountType = AccountLike['account_type']
+
+const WALLET_TYPES: readonly AccountType[] = ['asset', 'liability']
+
+/** The account types each field of a kind lists. Core checks the type again on save. */
+const FIELD_TYPES: Record<EntryKind, Partial<Record<AccountFieldName, readonly AccountType[]>>> = {
+  expense: { category: ['expense'], wallet: WALLET_TYPES },
+  income: { category: ['income'], wallet: ['asset'], payable: ['asset'] },
+  bill: { category: ['expense'], wallet: WALLET_TYPES, payable: ['liability'] },
+  transfer: { from: WALLET_TYPES, to: WALLET_TYPES },
+}
+
+function fieldTypes(kind: EntryKind, field: AccountFieldName): readonly AccountType[] {
+  return FIELD_TYPES[kind][field] ?? []
+}
+
+/**
+ * The account fields a form shows for this kind and status, the ones core
+ * posts to. Every other field is hidden and its value ignored.
+ */
+export function shownAccountFields(
+  kind: EntryKind,
+  billStatus: BillStatus,
+  incomeUnpaid: boolean,
+): readonly AccountFieldName[] {
+  if (kind === 'expense') return ['category', 'wallet']
+  if (kind === 'income') return ['category', incomeUnpaid ? 'payable' : 'wallet']
+  if (kind === 'transfer') return ['from', 'to']
+  if (billStatus === 'paid') return ['category', 'wallet']
+  if (billStatus === 'unpaid') return ['category', 'payable']
+  return ['wallet', 'payable']
+}
+
+/**
+ * What a field's select lists: the active accounts of its types, and the
+ * account it holds when that one is archived, so the select can show it as
+ * held rather than fall back to its first option.
+ */
+export function accountChoices<A extends AccountLike>(
+  accounts: readonly A[],
+  kind: EntryKind,
+  field: AccountFieldName,
+  heldId: string,
+): A[] {
+  const types = fieldTypes(kind, field)
+
+  return accounts.filter((a) => types.includes(a.account_type) && (a.is_active || a.id === heldId))
+}
+
+/**
+ * True when a shown field holds no account it can post to: none picked, an
+ * archived one, or one of the wrong type. Core would refuse the save, so the
+ * form holds it back until the field is picked again.
+ */
+export function holdsUnusableAccount<A extends AccountLike>(
+  accounts: readonly A[],
+  form: {
+    kind: EntryKind
+    billStatus: BillStatus
+    incomeUnpaid: boolean
+    held: Record<AccountFieldName, string>
+  },
+): boolean {
+  return shownAccountFields(form.kind, form.billStatus, form.incomeUnpaid).some((field) => {
+    const id = form.held[field]
+    const types = fieldTypes(form.kind, field)
+    return !accounts.some((a) => a.id === id && a.is_active && types.includes(a.account_type))
+  })
 }
 
 /** The form fields a kind's default accounts fill, as ids ('' when unset). */
@@ -78,12 +153,17 @@ export function kindDefaultAccounts(
 }
 
 /**
- * The status Rust reads: a bill always has one, an income only when it is
- * unpaid (owed on the receivable account), and nothing else has any.
+ * What a form with a bill status field and an income "received or owed"
+ * field tells Rust: the bill's status, `unpaid` for an income owed to the
+ * book, and nothing for any other kind. Rust decides what each pair posts.
  */
-function postedBillStatus(kind: EntryKind, status: BillStatusTray): BillStatusTray | null {
-  if (kind === 'bill') return status
-  return kind === 'income' && status === 'unpaid' ? 'unpaid' : null
+export function formBillStatus(
+  kind: EntryKind,
+  billStatus: BillStatus,
+  incomeUnpaid: boolean,
+): BillStatus | null {
+  if (kind === 'bill') return billStatus
+  return kind === 'income' && incomeUnpaid ? 'unpaid' : null
 }
 
 export function buildSimpleEntryInput(args: {
@@ -102,7 +182,7 @@ export function buildSimpleEntryInput(args: {
   return {
     entity_id: args.entityId,
     kind: args.kind,
-    bill_status: postedBillStatus(args.kind, args.billStatus),
+    bill_status: formBillStatus(args.kind, args.billStatus, args.billStatus === 'unpaid'),
     entry_date: args.entryDate,
     description: args.description.trim(),
     reference: null,
@@ -118,9 +198,11 @@ export function buildSimpleEntryInput(args: {
 
 /**
  * Validate role-account selections for the tray quick-add form: the catalog key
- * of what is missing, or null. A key, not a sentence, so the banner words it.
+ * of what is missing or unusable, or null. A key, not a sentence, so the
+ * banner words it.
  */
 export function validateTrayAccounts(args: {
+  accounts: readonly AccountLike[]
   kind: EntryKind
   billStatus: BillStatusTray
   categoryId: string
@@ -130,14 +212,8 @@ export function validateTrayAccounts(args: {
   toId: string
 }): MessageKey | null {
   const { kind, billStatus, categoryId, walletId, payableId, fromId, toId } = args
-  if (kind === 'expense' && (!categoryId || !walletId)) {
-    return 'quickAdd.pickAccounts'
-  }
-  if (kind === 'income') {
-    // An unpaid income is debited to the receivable account, not a wallet.
-    const holder = billStatus === 'unpaid' ? payableId : walletId
-    if (!categoryId || !holder) return 'quickAdd.pickAccounts'
-  }
+  // A bill and a transfer name what is missing; every other gap gets the
+  // generic key below.
   if (kind === 'bill') {
     if (!categoryId) return 'quickAdd.pickCategory'
     if (billStatus === 'paid' && !walletId) return 'quickAdd.pickWallet'
@@ -145,6 +221,21 @@ export function validateTrayAccounts(args: {
   }
   if (kind === 'transfer') {
     if (!fromId || !toId || fromId === toId) return 'quickAdd.pickDifferentAccounts'
+  }
+
+  // A shown field that is empty or holds an account its pill does not list
+  // (archived, or of a type the field does not take, as a dropped document
+  // can leave when it switches the kind). Core would refuse the post.
+  const held = {
+    category: categoryId,
+    wallet: walletId,
+    payable: payableId,
+    from: fromId,
+    to: toId,
+  }
+  const incomeUnpaid = kind === 'income' && billStatus === 'unpaid'
+  if (holdsUnusableAccount(args.accounts, { kind, billStatus, incomeUnpaid, held })) {
+    return 'quickAdd.pickAccounts'
   }
   return null
 }

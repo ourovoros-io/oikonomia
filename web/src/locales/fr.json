@@ -1023,7 +1023,9 @@
     "billToPay": "Facture à payer",
     "billToPayNone": "Liée à aucune facture",
     "billToPayChoose": "Choisir une facture…",
-    "billToPayRequired": "Choisissez la facture que ce paiement règle, ou « Liée à aucune facture »."
+    "billToPayRequired": "Choisissez la facture que ce paiement règle, ou « Liée à aucune facture ».",
+    "accountChoose": "Choisir un compte…",
+    "accountArchived": "{code} · {name} (archivé)"
   },
   "recurring": {
     "title": "Récurrents",
@@ -1048,7 +1050,8 @@
       "title": "Comptabiliser « {name} » ?",
       "body": "Une écriture sera passée d’après le modèle. Rien d’autre n’est programmé.",
       "confirm": "Comptabiliser",
-      "cancel": "Annuler"
+      "cancel": "Annuler",
+      "accounts": "Comptes"
     },
     "form": {
       "titleNew": "Nouveau modèle",
@@ -1073,7 +1076,8 @@
       "cadenceYearly": "Annuel",
       "dayOfWeek": "Jour de la semaine",
       "month": "Mois",
-      "nextDate": "Prochaine date : {date}"
+      "nextDate": "Prochaine date : {date}",
+      "payExistingHint": "À chaque écriture, la plus ancienne facture en attente sur le compte Factures à payer dont le montant est exactement le montant comptabilisé est réglée. S’il n’y en a aucune, l’écriture est passée sans régler de facture."
     },
     "delete": {
       "title": "Supprimer le modèle ?",

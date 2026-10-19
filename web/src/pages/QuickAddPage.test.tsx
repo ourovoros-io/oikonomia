@@ -268,6 +268,90 @@ describe('QuickAddPage default accounts', () => {
 
     expect(await categoryAfterChoosingExpense()).toHaveValue('exp1')
   })
+
+  function shownChoice(select: HTMLElement): string | null | undefined {
+    return (select as HTMLSelectElement).selectedOptions[0]?.textContent
+  }
+
+  test('with no default the pill asks for an account and Next stays blocked', async () => {
+    vi.mocked(api.accountList).mockResolvedValue([...accounts, second])
+    vi.mocked(api.accountDefaults).mockResolvedValue({ ...DEFAULTS, category: null })
+
+    const category = await categoryAfterChoosingExpense()
+    expect(shownChoice(category)).toBe('Choose an account…')
+    expect(category).toHaveAttribute('aria-invalid', 'true')
+
+    await afterRoll()
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('Pick accounts')
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
+
+    await userEvent.selectOptions(category, 'exp2')
+    expect(shownChoice(category)).toBe('Λογαριασμός 5100')
+    expect(category).not.toHaveAttribute('aria-invalid')
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(await screen.findByRole('button', { name: 'Save' })).toBeTruthy()
+  })
+
+  // Core never picks an archived default; this stands in for any held account
+  // the pill does not list, to pin what the pill draws for one.
+  test('a held account the pill does not offer is not shown as the first one', async () => {
+    const archived: Account = { ...second, id: 'exp0', name: 'Old dining', is_active: false }
+    vi.mocked(api.accountList).mockResolvedValue([...accounts, archived])
+    vi.mocked(api.accountDefaults).mockResolvedValue({ ...DEFAULTS, category: 'exp0' })
+
+    const category = await categoryAfterChoosingExpense()
+    expect(category).toHaveValue('exp0')
+    expect(shownChoice(category)).toBe('Choose an account…')
+  })
+})
+
+describe('QuickAddPage transfers', () => {
+  const card: Account = {
+    ...accounts[0]!,
+    id: 'c1',
+    code: '2100',
+    name: 'Credit card',
+    account_type: 'liability',
+    sort_order: 2,
+  }
+
+  async function reachTransferAccounts() {
+    render(<QuickAddPage onPosted={() => {}} />)
+    await userEvent.click(await screen.findByRole('radio', { name: 'Transfer' }))
+    await afterRoll()
+    await userEvent.type(await screen.findByLabelText('Amount (EUR)'), '40')
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await screen.findByLabelText('From')
+    await afterRoll()
+  }
+
+  function optionNames(label: string): string[] {
+    const select = screen.getByLabelText(label)
+    return Array.from(select.querySelectorAll('option'), (o) => o.textContent ?? '')
+  }
+
+  // Core accepts a liability on either side of a transfer, so a card payment
+  // is a transfer from the checking account to the card.
+  test('both sides offer liabilities, and a card payment posts', async () => {
+    vi.mocked(api.accountList).mockResolvedValue([...accounts, card])
+    await reachTransferAccounts()
+
+    expect(optionNames('From')).toEqual(['Checking', 'Credit card'])
+    expect(optionNames('To')).toEqual(['Checking', 'Credit card'])
+
+    await userEvent.selectOptions(screen.getByLabelText('To'), 'c1')
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    await afterRoll()
+    await userEvent.click(await screen.findByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(api.entryPostSimple).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(api.entryPostSimple).mock.calls[0]![0]).toMatchObject({
+      kind: 'transfer',
+      from_account_id: 'w1',
+      to_account_id: 'c1',
+    })
+  })
 })
 
 describe('QuickAddPage remembering the accounts', () => {
@@ -467,5 +551,53 @@ describe('QuickAddPage unpaid income', () => {
       kind: 'income',
       bill_status: null,
     })
+  })
+
+  // The last expense was paid by card; the invoice turns the entry into an
+  // income, whose wallet pill lists assets only. Core's reading names a wallet
+  // whenever the book has an asset, so one without stands in for any reading
+  // that leaves a held account the new kind does not take.
+  test('a dropped invoice that leaves an unlisted wallet asks for accounts', async () => {
+    const card: Account = {
+      ...accounts[0]!,
+      id: 'c1',
+      code: '2100',
+      name: 'Credit card',
+      account_type: 'liability',
+      sort_order: 4,
+    }
+    bookWith([...accounts, salary, receivable, card], withReceivable)
+    vi.mocked(api.getUiPrefs).mockResolvedValue({
+      ...prefs,
+      last_accounts_by_entity_kind: {
+        'e1:expense': {
+          category_account_id: 'exp1',
+          wallet_account_id: 'c1',
+          payable_account_id: null,
+          from_account_id: null,
+          to_account_id: null,
+        },
+      },
+    })
+    await dropInvoice({ bill_unpaid: false, wallet_account_id: null })
+    await afterRoll()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Pick accounts')
+    expect(api.entryPostSimpleWithDocument).not.toHaveBeenCalled()
+    const wallet = await screen.findByLabelText('Wallet')
+    expect(wallet).toHaveValue('c1')
+
+    // Next refuses it too, and stays on the accounts step.
+    await afterRoll()
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(screen.getByRole('alert')).toHaveTextContent('Pick accounts')
+    await afterRoll()
+    expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
+
+    await userEvent.selectOptions(wallet, 'w1')
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(await screen.findByRole('button', { name: 'Save' })).toBeTruthy()
   })
 })

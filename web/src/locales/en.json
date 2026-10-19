@@ -787,7 +787,11 @@
   "tx.billToPayNone": "Not linked to a bill",
   "tx.billToPayChoose": "Choose a bill…",
   "tx.billToPayRequired": "Choose the bill this payment settles, or “Not linked to a bill”.",
+  "tx.accountChoose": "Choose an account…",
+  "tx.accountArchived": "{code} · {name} (archived)",
   "error.billNotOpen": "That bill is already paid or no longer open. Pick another bill.",
   "error.paymentDoesNotMatchBill": "A bill payment pays the whole bill from the account it is owed on. Pick the bill again to fill in its amount and account.",
-  "error.billSettled": "This bill has a payment. Delete the payment first, then change or delete the bill."
+  "error.billSettled": "This bill has a payment. Delete the payment first, then change or delete the bill.",
+  "recurring.form.payExistingHint": "Each time it posts, it settles the oldest open bill on the bills payable account whose amount is exactly the amount posted. If there is none, it posts without settling a bill.",
+  "recurring.postConfirm.accounts": "Accounts"
 }

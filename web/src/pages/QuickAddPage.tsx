@@ -42,11 +42,12 @@ import { HideFromExportControl } from '../components/hiddenUi'
 import { Button } from '../components/ui'
 import { cn } from '../lib/cn'
 import {
-  accountsOf,
+  accountChoices,
   buildSimpleEntryInput,
   kindDefaultAccounts,
   lastAccountsMapKey,
   validateTrayAccounts,
+  type AccountFieldName,
   type AccountLike,
   type BillStatusTray,
   type EntryKind,
@@ -281,15 +282,10 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
     }
   }, [])
 
-  const expenseAccounts = useMemo(() => accountsOf(accounts, ['expense']), [accounts])
-  const incomeAccounts = useMemo(() => accountsOf(accounts, ['income']), [accounts])
-  const walletAccounts = useMemo(() => accountsOf(accounts, ['asset', 'liability']), [accounts])
-  const assetWallets = useMemo(
-    () => walletAccounts.filter((a) => a.account_type === 'asset'),
-    [walletAccounts],
-  )
-  const payableAccounts = useMemo(() => accountsOf(accounts, ['liability']), [accounts])
-  const transferAccounts = useMemo(() => accountsOf(accounts, ['asset']), [accounts])
+  // The lists New entry offers, so Quick Add offers whatever core accepts.
+  // Active accounts only, no held id: a pill has no way to mark an archived
+  // account as New entry's select does.
+  const offered = (field: AccountFieldName) => accountChoices(accounts, kind, field, '')
 
   const loadAccountsFor = useCallback(
     async (entId: string, nextKind: EntryKind, uiPrefs: UiPrefs | null) => {
@@ -596,6 +592,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
       return
     }
     const accountProblem = validateTrayAccounts({
+      accounts,
       kind,
       billStatus: entryStatus,
       categoryId,
@@ -606,8 +603,9 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
     })
     if (accountProblem) {
       busyRef.current = false
-      setError(copyError(accountProblem))
       if (step === 'save') rollTo('accounts', -1)
+      // After the roll, which clears the error of the step it leaves.
+      setError(copyError(accountProblem))
       return
     }
     setBusy(true)
@@ -705,6 +703,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
 
   function advanceFromAccounts() {
     const accountProblem = validateTrayAccounts({
+      accounts,
       kind,
       billStatus: entryStatus,
       categoryId,
@@ -893,20 +892,20 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
             }}
           >
             {(kind === 'expense' || kind === 'bill') && (
-              <AccountSelect
+              <AccountPill
                 value={categoryId}
                 onChange={setCategoryId}
-                options={expenseAccounts}
+                options={offered('category')}
                 disabled={formDisabled}
                 label={t('quickAdd.category')}
                 prefix={t('quickAdd.catPrefix')}
               />
             )}
             {kind === 'income' && (
-              <AccountSelect
+              <AccountPill
                 value={categoryId}
                 onChange={setCategoryId}
-                options={incomeAccounts}
+                options={offered('category')}
                 disabled={formDisabled}
                 label={t('quickAdd.income')}
                 prefix={t('quickAdd.incPrefix')}
@@ -915,20 +914,20 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
             {(kind === 'expense' ||
               (kind === 'income' && entryStatus === 'paid') ||
               (kind === 'bill' && billStatus === 'paid')) && (
-              <AccountSelect
+              <AccountPill
                 value={walletId}
                 onChange={setWalletId}
-                options={kind === 'income' ? assetWallets : walletAccounts}
+                options={offered('wallet')}
                 disabled={formDisabled}
                 label={t('quickAdd.wallet')}
                 prefix={t('quickAdd.walletPrefix')}
               />
             )}
             {kind === 'bill' && billStatus === 'unpaid' && (
-              <AccountSelect
+              <AccountPill
                 value={payableId}
                 onChange={setPayableId}
-                options={payableAccounts}
+                options={offered('payable')}
                 disabled={formDisabled}
                 label={t('quickAdd.payable')}
                 prefix={t('quickAdd.payablePrefix')}
@@ -936,18 +935,18 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
             )}
             {kind === 'transfer' && (
               <>
-                <AccountSelect
+                <AccountPill
                   value={fromId}
                   onChange={setFromId}
-                  options={transferAccounts}
+                  options={offered('from')}
                   disabled={formDisabled}
                   label={t('quickAdd.from')}
                   prefix={t('quickAdd.fromPrefix')}
                 />
-                <AccountSelect
+                <AccountPill
                   value={toId}
                   onChange={setToId}
-                  options={transferAccounts}
+                  options={offered('to')}
                   disabled={formDisabled}
                   label={t('quickAdd.to')}
                   prefix={t('quickAdd.toPrefix')}
@@ -1119,7 +1118,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
   )
 }
 
-function AccountSelect({
+function AccountPill({
   value,
   onChange,
   options,
@@ -1135,6 +1134,12 @@ function AccountSelect({
   /** Quiet in-row role marker inside the pill field. */
   prefix: string
 }) {
+  const { t } = useI18n()
+  // A value the pill does not offer (none picked, or an account it does not
+  // list) gets its own option, or the browser would show the first account
+  // while the form holds another.
+  const listed = options.some((a) => a.id === value)
+
   return (
     <label className={cn(pillField, 'cursor-pointer')}>
       <span className="shrink-0 text-[11px] font-medium leading-none text-[var(--color-muted)]">
@@ -1147,8 +1152,13 @@ function AccountSelect({
         disabled={disabled}
         required
         aria-label={label}
+        aria-invalid={listed ? undefined : true}
       >
-        {options.length === 0 ? <option value="">—</option> : null}
+        {listed ? null : (
+          <option value={value} disabled>
+            {t('tx.accountChoose')}
+          </option>
+        )}
         {options.map((a) => (
           <option key={a.id} value={a.id}>
             {a.name}
