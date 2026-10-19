@@ -42,11 +42,12 @@ import { HideFromExportControl } from '../components/hiddenUi'
 import { Button } from '../components/ui'
 import { cn } from '../lib/cn'
 import {
-  accountsOf,
+  accountChoices,
   buildSimpleEntryInput,
   kindDefaultAccounts,
   lastAccountsMapKey,
   validateTrayAccounts,
+  type AccountFieldName,
   type AccountLike,
   type BillStatusTray,
   type EntryKind,
@@ -281,15 +282,9 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
     }
   }, [])
 
-  const expenseAccounts = useMemo(() => accountsOf(accounts, ['expense']), [accounts])
-  const incomeAccounts = useMemo(() => accountsOf(accounts, ['income']), [accounts])
-  const walletAccounts = useMemo(() => accountsOf(accounts, ['asset', 'liability']), [accounts])
-  const assetWallets = useMemo(
-    () => walletAccounts.filter((a) => a.account_type === 'asset'),
-    [walletAccounts],
-  )
-  const payableAccounts = useMemo(() => accountsOf(accounts, ['liability']), [accounts])
-  const transferAccounts = useMemo(() => accountsOf(accounts, ['asset']), [accounts])
+  // The same lists New entry offers, so Quick Add posts whatever core accepts:
+  // a transfer may take a liability on either side, as a card payment does.
+  const offered = (field: AccountFieldName) => accountChoices(accounts, kind, field, '')
 
   const loadAccountsFor = useCallback(
     async (entId: string, nextKind: EntryKind, uiPrefs: UiPrefs | null) => {
@@ -896,7 +891,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
               <AccountPill
                 value={categoryId}
                 onChange={setCategoryId}
-                options={expenseAccounts}
+                options={offered('category')}
                 disabled={formDisabled}
                 label={t('quickAdd.category')}
                 prefix={t('quickAdd.catPrefix')}
@@ -906,7 +901,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
               <AccountPill
                 value={categoryId}
                 onChange={setCategoryId}
-                options={incomeAccounts}
+                options={offered('category')}
                 disabled={formDisabled}
                 label={t('quickAdd.income')}
                 prefix={t('quickAdd.incPrefix')}
@@ -918,7 +913,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
               <AccountPill
                 value={walletId}
                 onChange={setWalletId}
-                options={kind === 'income' ? assetWallets : walletAccounts}
+                options={offered('wallet')}
                 disabled={formDisabled}
                 label={t('quickAdd.wallet')}
                 prefix={t('quickAdd.walletPrefix')}
@@ -928,7 +923,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
               <AccountPill
                 value={payableId}
                 onChange={setPayableId}
-                options={payableAccounts}
+                options={offered('payable')}
                 disabled={formDisabled}
                 label={t('quickAdd.payable')}
                 prefix={t('quickAdd.payablePrefix')}
@@ -939,7 +934,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                 <AccountPill
                   value={fromId}
                   onChange={setFromId}
-                  options={transferAccounts}
+                  options={offered('from')}
                   disabled={formDisabled}
                   label={t('quickAdd.from')}
                   prefix={t('quickAdd.fromPrefix')}
@@ -947,7 +942,7 @@ export function QuickAddPage({ onPosted, onBusyChange, onDismiss }: Props) {
                 <AccountPill
                   value={toId}
                   onChange={setToId}
-                  options={transferAccounts}
+                  options={offered('to')}
                   disabled={formDisabled}
                   label={t('quickAdd.to')}
                   prefix={t('quickAdd.toPrefix')}
