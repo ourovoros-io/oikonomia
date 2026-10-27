@@ -3,9 +3,9 @@ name: CI
 on:
   push:
     branches: [main]
-  # Drafts stay skipped until marked Ready, so a pull request burns CI once,
-  # after review and fixes (owner t1370u waste rule). `ready_for_review` starts
-  # the first run; each job's `if:` skips the others while it is a draft.
+  # A pull request runs CI only once it is ready for review. ready_for_review is
+  # not in GitHub's default pull_request types; every job skips while the PR is a
+  # draft so review and fixes land before burning Actions.
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
