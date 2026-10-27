@@ -3,7 +3,11 @@ name: CI
 on:
   push:
     branches: [main]
+  # Drafts stay skipped until marked Ready, so a pull request burns CI once,
+  # after review and fixes (owner t1370u waste rule). `ready_for_review` starts
+  # the first run; each job's `if:` skips the others while it is a draft.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
@@ -14,6 +18,7 @@ jobs:
     # Every published platform lints, tests and builds on its own runner: the
     # platform-specific code (vault file modes, tray, update install) is
     # compiled out everywhere else, so one runner cannot vouch for another.
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     strategy:
       fail-fast: false
       matrix:
@@ -137,6 +142,7 @@ jobs:
   # too, because most of the workspace's docs are on private items and a
   # link in them is checked only when they are built.
   docs:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -180,6 +186,7 @@ jobs:
   # red, and the job must not be made a required status check.
   clippy-beta:
     name: clippy (beta)
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 30
     continue-on-error: true
@@ -224,6 +231,7 @@ jobs:
   # the same vault, or a window that never comes back.
   bundle:
     name: bundle (${{ matrix.os }})
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     strategy:
       fail-fast: false
       matrix:
@@ -376,7 +384,9 @@ jobs:
     needs: bundle
     # `bundle` is a matrix; a red Windows leg must not skip the Linux smoke.
     # If the Linux leg itself failed, the download step below fails instead.
-    if: ${{ !cancelled() }}
+    # The draft guard is repeated here: `!cancelled()` alone would still run
+    # this job after a draft skipped `bundle`.
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     strategy:
       fail-fast: false
       matrix:
@@ -424,6 +434,7 @@ jobs:
   # job, not hold a runner for hours.
   smoke-macos:
     name: smoke (macos-latest)
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
@@ -459,6 +470,7 @@ jobs:
           if-no-files-found: warn
 
   web:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -488,6 +500,7 @@ jobs:
   # Translated labels that overflow only show with real layout, which jsdom
   # does not do: this measures the marketing fixture in Chromium.
   layout:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -529,6 +542,7 @@ jobs:
       - run: npm run check:layout
 
   audit:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -558,6 +572,7 @@ jobs:
   # The workflows hold the signing and publishing lanes, so they are linted
   # like code: actionlint for syntax and shell, zizmor for security findings.
   workflows:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
