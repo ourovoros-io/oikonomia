@@ -71,15 +71,17 @@
 //!
 //! The two files are opened independently. If the directory cannot be
 //! created or made owner-only, or the error log cannot be opened, nothing is
-//! logged. If only the updater trail cannot be opened, the error log is kept
-//! and trail records are dropped: a broken trail must not cost the record of
-//! a failed start.
+//! logged. If only the updater trail cannot be opened, the error log is kept,
+//! says so in one warning, and trail records are dropped: a broken trail must
+//! not cost the record of a failed start. The warning holds the operating
+//! system's error text, which names no path.
 //!
 //! # Failures of the log itself
 //!
 //! A log that cannot be opened is not a reason to refuse to start, and a line
-//! that cannot be written has nowhere to be reported. Both are dropped: the
-//! app runs without the logs, or without that line.
+//! that cannot be written has nowhere to be reported. An error log that cannot
+//! be opened and a line that cannot be written are dropped: the app runs
+//! without the logs, or without that line.
 //!
 //! # Debug builds
 //!
@@ -183,7 +185,8 @@ pub(crate) enum InstallError {
 /// be created or made owner-only, and [`InstallError::AlreadyInstalled`] when
 /// a logger was installed before this call. In both cases the process is
 /// left without these logs. An updater trail that cannot be opened is not an
-/// error: the logger runs without it ([`ReleaseLog::open`]).
+/// error: the logger runs without it and says so in the error log
+/// ([`ReleaseLog::open`]).
 pub(crate) fn install(directory: &Path) -> Result<(), InstallError> {
     let release_log = ReleaseLog::open(directory).map_err(InstallError::Open)?;
 
@@ -234,17 +237,35 @@ struct ReleaseLog {
 
 impl ReleaseLog {
     /// Opens the error log and the updater trail in `directory`, each with
-    /// its own names and cap. A trail that cannot be opened is left out, and
-    /// its records are then dropped.
+    /// its own names and cap. A trail that cannot be opened is left out, its
+    /// records are then dropped, and the error log gets a warning with the
+    /// error it failed on.
     ///
     /// # Errors
     ///
     /// Returns the error of [`CappedFile::open`] for the error log.
     fn open(directory: &Path) -> io::Result<Self> {
-        Ok(Self {
+        let mut release_log = Self {
             errors: Mutex::new(CappedFile::open(directory, &ERRORS)?),
-            updates: CappedFile::open(directory, &UPDATES).ok().map(Mutex::new),
-        })
+            updates: None,
+        };
+
+        match CappedFile::open(directory, &UPDATES) {
+            Ok(updates) => release_log.updates = Some(Mutex::new(updates)),
+            // Logged through this logger rather than the `log` macros, which
+            // reach it only once `install` has made it the process's logger.
+            // The error comes from the operating system, whose text names no
+            // path.
+            Err(error) => log::Log::log(
+                &release_log,
+                &log::Record::builder()
+                    .level(log::Level::Warn)
+                    .target(module_path!())
+                    .args(format_args!("cannot open the updater trail: {error}"))
+                    .build(),
+            ),
+        }
+        Ok(release_log)
     }
 
     /// Returns the file a record bound for `destination` is written to, or
@@ -735,11 +756,26 @@ mod tests {
 
         assert!(release_log.updates.is_none());
         let errors = std::fs::read_to_string(directory.join(FILE_NAME)).expect("read");
+        let lines: Vec<&str> = errors.lines().collect();
+        assert_eq!(
+            lines.len(),
+            2,
+            "the two warnings and no trail record: {errors}"
+        );
         assert!(
-            errors.ends_with("WARN oikonomia_lib: a warning\n"),
+            lines[0].contains(" WARN oikonomia_lib::error_log: cannot open the updater trail: "),
             "{errors}"
         );
-        assert_eq!(errors.lines().count(), 1, "the trail record went nowhere");
+        // std's error for a failed open is the operating system's, which
+        // names no path. Undocumented, so pinned here.
+        assert!(
+            !lines[0].contains(&*directory.to_string_lossy()),
+            "{errors}"
+        );
+        assert!(
+            lines[1].ends_with("WARN oikonomia_lib: a warning"),
+            "{errors}"
+        );
         assert!(directory.join(UPDATES_FILE_NAME).is_dir());
         remove(&directory);
     }
