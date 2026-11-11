@@ -10,10 +10,15 @@
 //! As a `log` record at the info level with the target [`TARGET`]. Nothing
 //! else may write to that target, and the API is built so that nothing
 //! else needs to: [`record`] takes an [`Event`], and the steps only this
-//! crate sees go through the crate-private `record_step`. Neither takes
-//! runtime text: the one string an event holds is an error code, a
-//! `&'static str`, so the set of things a line can say is fixed at compile
-//! time.
+//! crate sees go through the crate-private `record_step`. Both take typed
+//! values, not text, and their `Display` writes the line: the fixed parts
+//! are phrases written here at compile time, around an error code, a parsed
+//! version, a number or a host. The one free-form runtime text a line can
+//! hold is a failure's message and the message of each error in its source
+//! chain, such as the `io::Error` under [`UpdateError::CacheIo`] or the text
+//! an [`UpdateError::InvalidVersion`] did not parse. That text always goes
+//! through `write_redacted`, which cuts it at its first path.
+//!
 //! [`TARGET`] is not a Rust module path, so no `log::` call writes to it
 //! unless it names it, and it names no crate of the workspace. The desktop
 //! crate's release logger writes this target, and only this target, to its
@@ -61,9 +66,11 @@
 //!   resolver, a file the user picked from a native dialog), and every
 //!   absolute form is caught: Unix, home-relative, drive, UNC, and a
 //!   `file:` URL. What is not caught is a relative path (`Documents/books`,
-//!   `./books`), a bare file name, and an absolute path that follows, in
-//!   the same word, a character other than an opening quote or bracket,
-//!   `=`, `:` or a quote (`x,/home/alice`).
+//!   `./books`), a bare file name, and an absolute path joined to the text
+//!   before it in the same word by anything but `=`, `:` or, for a `/`
+//!   path, a quote (`x,/home/alice`, `open(/home/alice)`,
+//!   `open"\\server\share`). Opening quotes and brackets at the start of a
+//!   word are skipped, so `('/home/alice')` is caught.
 //! - **Ledger data or amounts.** This crate has none: it never opens the
 //!   vault, and a check or install reads nothing the user typed.
 //! - **The release notes**, which are the feed's to say and can be long.
