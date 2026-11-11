@@ -73,10 +73,16 @@ fn a_refused_connection_records_the_host_and_the_transport_failure() {
     let _outcome = perform_check(&config);
 
     let trail = log.trail_of_this_thread();
-    assert_eq!(
-        trail,
-        ["fetch feed: host 127.0.0.1, 0 redirects, no response: \
-          Connection Failed: connection refused"]
+    assert_eq!(trail.len(), 1, "{trail:?}");
+    // Only the I/O kind after the prefix is left unchecked: Linux and macOS
+    // refuse a closed loopback port, but Windows retries the SYN after the
+    // reset and may report a timeout instead. Any error from the connect is
+    // `Connection Failed` in ureq, whatever its kind.
+    assert!(
+        trail[0].starts_with(
+            "fetch feed: host 127.0.0.1, 0 redirects, no response: Connection Failed: "
+        ),
+        "{trail:?}"
     );
     assert_no_url_in(&trail, address.port());
 }
