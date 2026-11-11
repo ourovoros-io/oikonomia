@@ -7,9 +7,8 @@ use crate::client::{
 };
 use crate::machine::UpdateMachine;
 use crate::tests::support::{
-    available_offer, cache_dir, captured_warnings, config, install, leftover_files,
-    serve_newer_release, serve_signed_manifest, server_url, sign, spy, spy_with_handoff,
-    static_manifest, test_keys,
+    available_offer, cache_dir, captured_log, config, install, leftover_files, serve_newer_release,
+    serve_signed_manifest, server_url, sign, spy, spy_with_handoff, static_manifest, test_keys,
 };
 use crate::verify::sha256_hex;
 use httptest::matchers::request;
@@ -355,7 +354,7 @@ fn delete_artifact_removes_the_file() {
 
 #[test]
 fn delete_artifact_says_nothing_about_a_file_that_is_already_gone() {
-    let warnings = captured_warnings();
+    let warnings = captured_log();
     let cache = cache_dir();
     let missing = cache.path().join("never-written.AppImage");
 
@@ -366,7 +365,7 @@ fn delete_artifact_says_nothing_about_a_file_that_is_already_gone() {
 
 #[test]
 fn delete_artifact_logs_a_removal_that_fails() {
-    let warnings = captured_warnings();
+    let warnings = captured_log();
     let cache = cache_dir();
     // `remove_file` refuses a directory, with an error other than `NotFound`.
     let directory = cache.path().join("not-a-file");
@@ -406,7 +405,7 @@ fn a_cache_directory_that_cannot_be_created_fails_as_a_cache_error() {
 fn purging_the_cache_logs_a_file_it_cannot_remove() {
     use std::os::unix::fs::PermissionsExt;
 
-    let warnings = captured_warnings();
+    let warnings = captured_log();
     let cache = cache_dir();
     let stuck = cache.path().join("stuck-installer.AppImage");
     std::fs::write(&stuck, b"old").expect("leftover file");
@@ -428,7 +427,7 @@ fn purging_the_cache_logs_a_file_it_cannot_remove() {
 
 #[test]
 fn purging_the_cache_removes_files_and_says_nothing() {
-    let warnings = captured_warnings();
+    let warnings = captured_log();
     let cache = cache_dir();
     let leftover = cache.path().join("leftover.AppImage");
     std::fs::write(&leftover, b"old").expect("leftover file");

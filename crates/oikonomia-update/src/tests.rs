@@ -21,3 +21,4 @@ mod progress;
 mod redirects;
 mod signatures;
 mod support;
+mod trail;
