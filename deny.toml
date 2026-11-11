@@ -45,6 +45,13 @@ allow = [
     "Zlib",
 ]
 
+# libsqlite3-sys 0.39 vendors SQLCipher through sqlcipher-src: SQLite's
+# public-domain blessing plus libtomcrypt's WTFPL. Both are permissive and
+# GPL-3.0 compatible; scope them to this crate so the global list stays tight.
+[[licenses.exceptions]]
+crate = "sqlcipher-src"
+allow = ["blessing", "WTFPL"]
+
 [licenses.private]
 # Workspace crates are GPL-3.0-or-later and `publish = false`. Ignoring them
 # here keeps GPL out of the dependency allow list above: every dependency
