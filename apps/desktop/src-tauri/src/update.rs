@@ -22,17 +22,30 @@
 //! the downloaded and verified file to
 //! [`crate::update_exec::VerifiedPathInstaller`], which replaces the running
 //! copy.
+//!
+//! # What is recorded
+//!
+//! Each check and each install the user starts is recorded on the updater
+//! trail ([`oikonomia_update::trail`]): here its start and its end, with the
+//! code of whatever stopped it, in the update crate the requests, sizes and
+//! verdicts in between. A check the machine refuses because an install is
+//! in flight never starts and leaves no line. A blocking task that panics
+//! (`task_failed`) leaves its start without an end. A release build
+//! writes the trail to `updates.log` beside the error log
+//! ([`crate::error_log`]). A failure is also logged as a warning with its
+//! cause ([`log_failure`]), which goes to the error log.
 
 use crate::commands::run_blocking;
 use crate::error::{CommandError, CommandResult, DesktopError};
 use crate::state::AppState;
 use crate::update_exec::{InstallKind, VerifiedPathInstaller};
 use crate::update_key::UPDATER_PUBLIC_KEY;
+use oikonomia_update::trail::{self, Event};
 use oikonomia_update::{
     ArtifactInstaller, CheckOutcome, CheckStart, ClientConfig, InstallControl, InstallHandoff,
-    InstallOutcome, InstallProgress, UpdateError, UpdateMachine, UpdateNotice, UpdateStatus,
-    VerifiedOffer, install_offer_reporting, perform_check, record_last_run, remove_pending_marker,
-    take_notice, write_pending_marker,
+    InstallOutcome, InstallProgress, InstallRoute, UpdateError, UpdateMachine, UpdateNotice,
+    UpdateStatus, VerifiedOffer, install_offer_reporting, perform_check, record_last_run,
+    remove_pending_marker, take_notice, write_pending_marker,
 };
 use semver::Version;
 use std::path::{Path, PathBuf};
@@ -161,7 +174,9 @@ fn updater_cache_dir(app_cache_dir: tauri::Result<PathBuf>) -> CommandResult<Pat
 /// compiled-in minisign key, and checks the artifact URL against the
 /// allow-list. Does not download the artifact. A check that cannot complete
 /// is the status `Failed` with the code of what stopped it, not an error. The
-/// cause is logged here.
+/// check and its outcome are recorded here ([`check_and_record`]), and so is
+/// a check stopped by a missing cache directory. A check the machine refuses
+/// because an install is in flight does not run, and is not recorded.
 ///
 /// HTTP is `ureq` on the blocking pool, so the async runtime is not stalled.
 ///
@@ -174,34 +189,63 @@ pub(crate) async fn update_check(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> CommandResult<UpdateStatus> {
-    let cache = updater_cache_dir(app.path().app_cache_dir())?;
+    let cache = updater_cache_dir(app.path().app_cache_dir()).inspect_err(|_| {
+        trail::record(&Event::CheckStarted);
+        trail::record(&Event::CheckStopped(
+            DesktopError::CacheDirUnavailable.code(),
+        ));
+    })?;
     let version = env!("CARGO_PKG_VERSION").to_owned();
 
     run_check(state.update_machine(), move || {
         let route = InstallKind::detect().route();
-        let outcome = match ClientConfig::production(UPDATER_PUBLIC_KEY, &version, cache, route) {
-            Ok(config) => perform_check(&config),
-            Err(error) => CheckOutcome::Failed(error),
-        };
-        if let CheckOutcome::Failed(error) = &outcome {
-            log_failure("update check failed", error);
-        }
-
-        outcome
+        check_and_record(UPDATER_PUBLIC_KEY, &version, cache, route)
     })
     .await
 }
 
-/// Logs `error` under `context`, with its cause when it has one.
+/// Runs one check with the production configuration and returns its
+/// outcome, recording its start and its outcome on the trail and logging a
+/// failure.
 ///
-/// The update crate does not log how a check or an install ended; this is
-/// where a failure is recorded. The message of an [`UpdateError`] leaves the cause out, and the
-/// webview is sent only the code, so without the cause here a cache failure
-/// would nowhere say which operation the system refused.
+/// A configuration that cannot be built ends the check as a failure with
+/// its code, before any request. The arguments are those of
+/// [`ClientConfig::production`].
+fn check_and_record(
+    public_key: &str,
+    version: &str,
+    cache: PathBuf,
+    route: InstallRoute,
+) -> CheckOutcome {
+    trail::record(&Event::CheckStarted);
+
+    let outcome = match ClientConfig::production(public_key, version, cache, route) {
+        Ok(config) => perform_check(&config),
+        Err(error) => CheckOutcome::Failed(error),
+    };
+
+    trail::record(&Event::CheckFinished(&outcome));
+    if let CheckOutcome::Failed(error) = &outcome {
+        log_failure("update check failed", error);
+    }
+    outcome
+}
+
+/// Logs `error` under `context` as a warning, with its code and its cause
+/// when it has one, for the error log.
+///
+/// The update crate does not log how a check or an install ended; this and
+/// the trail's [`Event::CheckFinished`] and [`Event::InstallFinished`] are
+/// where a failure is recorded. The message of an [`UpdateError`] leaves the
+/// cause out, and the webview is sent only the code, so without the cause
+/// here a cache failure would nowhere say which operation the system refused.
+/// No [`UpdateError`] holds a URL, so neither does this line; a cause can
+/// name a path of the update cache, which the error log allows.
 fn log_failure(context: &str, error: &UpdateError) {
+    let code = error.code();
     match std::error::Error::source(error) {
-        Some(cause) => log::warn!("{context}: {error}: {cause}"),
-        None => log::warn!("{context}: {error}"),
+        Some(cause) => log::warn!("{context}: {code}: {error}: {cause}"),
+        None => log::warn!("{context}: {code}: {error}"),
     }
 }
 
@@ -356,7 +400,8 @@ impl Drop for PendingInstall<'_> {
 /// `update_cache_io` for the disk, `update_install_failed` for the
 /// installer, among others. The cause is logged here. An install stopped by
 /// [`update_cancel`] returns [`UpdateStatus::Cancelled`], and the update is
-/// available to install again.
+/// available to install again. Every install is recorded on the trail with
+/// its start and its end, an error included ([`install_and_record`]).
 ///
 /// # Errors
 ///
@@ -372,20 +417,17 @@ pub(crate) async fn update_install<R: tauri::Runtime>(
     updater: State<'_, UpdaterState>,
     on_progress: Channel<InstallProgress>,
 ) -> CommandResult<UpdateStatus> {
-    let cache = updater_cache_dir(app.path().app_cache_dir())?;
+    let app_cache_dir = app.path().app_cache_dir();
     let machine = state.update_machine();
-    let version = env!("CARGO_PKG_VERSION").to_owned();
     let config_dir = updater.config_dir.clone();
     let control = InstallControl::new();
     let _registered = RegisteredInstall::new(&updater, control.clone());
 
     let outcome = run_blocking(move || {
-        let kind = InstallKind::detect();
-        let config = ClientConfig::production(UPDATER_PUBLIC_KEY, &version, cache, kind.route())?;
-        let outcome = install_available_update(
+        install_and_record(
             &machine,
-            &config,
-            &VerifiedPathInstaller::new(kind),
+            app_cache_dir,
+            InstallKind::detect(),
             &Handoff {
                 config_dir: config_dir.as_deref(),
                 hold: INSTALLING_HOLD,
@@ -394,12 +436,57 @@ pub(crate) async fn update_install<R: tauri::Runtime>(
                 control: &control,
                 progress: &mut |report| forward_progress(&on_progress, report),
             },
-        )?;
-        Ok(outcome)
+        )
     })
     .await?;
 
     Ok(answer_install(&app, outcome))
+}
+
+/// Sets up the install the user asked for with the production
+/// configuration and runs it ([`install_available_update`]), recording its
+/// start on the trail and its end, whatever stops it.
+///
+/// `app_cache_dir` is the app's cache directory as Tauri resolves it, and
+/// `kind` how the running copy was installed.
+///
+/// # Errors
+///
+/// Returns `cache_dir_unavailable` when `app_cache_dir` is an error, the
+/// code of the [`UpdateError`] when the client configuration cannot be
+/// built, and the errors of [`install_available_update`]. Each is recorded
+/// on the trail as the end of the install.
+fn install_and_record(
+    machine: &Mutex<UpdateMachine>,
+    app_cache_dir: tauri::Result<PathBuf>,
+    kind: InstallKind,
+    handoff: &Handoff<'_>,
+    watch: Watch<'_>,
+) -> CommandResult<InstallOutcome> {
+    trail::record(&Event::InstallStarted);
+
+    let cache = updater_cache_dir(app_cache_dir).inspect_err(|_| {
+        trail::record(&Event::InstallStopped(
+            DesktopError::CacheDirUnavailable.code(),
+        ));
+    })?;
+    let route = kind.route();
+    let installed =
+        ClientConfig::production(UPDATER_PUBLIC_KEY, env!("CARGO_PKG_VERSION"), cache, route)
+            .and_then(|config| {
+                install_available_update(
+                    machine,
+                    &config,
+                    &VerifiedPathInstaller::new(kind),
+                    handoff,
+                    watch,
+                )
+            });
+
+    installed.map_err(|error| {
+        trail::record(&Event::InstallStopped(error.code()));
+        error.into()
+    })
 }
 
 /// Returns the status that answers the install that ended in `outcome`,
@@ -566,8 +653,9 @@ impl<I: ArtifactInstaller> ArtifactInstaller for MarkingInstaller<'_, I> {
 /// check, so neither can run against the same cache file. A cancelled
 /// install gives the offer back to the machine.
 ///
-/// A failed install is logged here with its cause and returned as
-/// [`InstallOutcome::Failed`].
+/// The outcome is recorded on the trail (its start and an error are the
+/// caller's, [`install_and_record`]). A failed install is also logged here
+/// with its cause, and returned as [`InstallOutcome::Failed`].
 ///
 /// # Errors
 ///
@@ -593,30 +681,39 @@ fn install_available_update(
         to: offer.version().clone(),
     };
     let outcome = install_offer_reporting(config, &offer, &marking, control, progress);
-    if let InstallOutcome::Failed(error) = &outcome {
-        log_failure("update install failed", error);
-    }
+    record_install_end(&outcome);
     pending.finish(&outcome, offer);
 
     Ok(outcome)
+}
+
+/// Records how an install ended on the trail, and logs a failure with its
+/// cause for the error log.
+fn record_install_end(outcome: &InstallOutcome) {
+    trail::record(&Event::InstallFinished(outcome));
+    if let InstallOutcome::Failed(error) = outcome {
+        log_failure("update install failed", error);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
         Handoff, MarkingInstaller, RegisteredInstall, UpdaterState, Watch, cancel_install,
-        install_available_update, run_check, updater_cache_dir,
+        check_and_record, install_and_record, install_available_update, record_install_end,
+        run_check, updater_cache_dir,
     };
+    use crate::update_exec::InstallKind;
     use crate::update_key::UPDATER_PUBLIC_KEY;
     use oikonomia_update::{
         ArtifactInstaller, CheckOutcome, ClientConfig, InstallControl, InstallHandoff,
-        InstallRoute, InstallStep, LAST_RUN_FILE, PENDING_MARKER_FILE, UpdateError, UpdateMachine,
-        UpdateStatus,
+        InstallOutcome, InstallRoute, InstallStep, LAST_RUN_FILE, PENDING_MARKER_FILE, UpdateError,
+        UpdateMachine, UpdateStatus,
     };
     use semver::Version;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, OnceLock};
     use std::time::{Duration, Instant};
 
     /// An installer that records whether the update marker was on disk
@@ -883,6 +980,166 @@ mod tests {
             forged,
             serde_json::json!({ "kind": "failed", "code": "update_manifest_signature" })
         );
+    }
+
+    /// Installs the release logger of `crate::error_log` as this test
+    /// binary's logger, once, in a directory of its own, and returns the
+    /// directory.
+    ///
+    /// Every test in the binary logs to it from then on, so a test reads
+    /// only the lines it can tell are its own. The directory is kept after
+    /// the run: a static is never dropped, so a `TempDir` would not remove it
+    /// either, and a fixed shared directory emptied here would break a
+    /// second test run going on at the same time.
+    fn release_log_directory() -> &'static Path {
+        static DIRECTORY: OnceLock<PathBuf> = OnceLock::new();
+
+        DIRECTORY.get_or_init(|| {
+            let directory = tempfile::tempdir()
+                .expect("temporary directory")
+                .keep()
+                .join("logs");
+            crate::error_log::install(&directory)
+                .expect("this test binary installs no other logger");
+            directory
+        })
+    }
+
+    /// Returns the lines of the release log `name` that contain `needle`.
+    fn release_log_lines(name: &str, needle: &str) -> Vec<String> {
+        let text = std::fs::read_to_string(release_log_directory().join(name))
+            .expect("the release log exists");
+        text.lines()
+            .filter(|line| line.contains(needle))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[test]
+    fn a_failure_with_a_path_in_its_cause_reaches_both_logs_without_a_url() {
+        let _directory = release_log_directory();
+        let marker = format!(
+            "path-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |since_epoch| since_epoch.as_nanos())
+        );
+        let cause = std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!(
+                "{marker} cannot write /home/trail-alice/.cache/io.ourovoros.oikonomia/\
+                 updater/0123.AppImage"
+            ),
+        );
+
+        // The pair the install path writes: the trail's end of the install,
+        // and the warning with the cause for the error log.
+        record_install_end(&InstallOutcome::Failed(UpdateError::CacheIo(cause)));
+
+        let trail = release_log_lines(crate::error_log::UPDATES_FILE_NAME, &marker);
+        assert_eq!(trail.len(), 1, "{trail:?}");
+        assert!(
+            trail[0].ends_with(&format!(
+                "INFO updater-trail: install finished: failed: update_cache_io: \
+                 update cache could not be written: {marker} cannot write <path>"
+            )),
+            "{trail:?}"
+        );
+        assert!(!trail[0].contains("/home"), "{trail:?}");
+        assert!(!trail[0].contains("trail-alice"), "{trail:?}");
+        let errors = release_log_lines(crate::error_log::FILE_NAME, &marker);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].contains(
+                "WARN oikonomia_lib::update: update install failed: update_cache_io: \
+                 update cache could not be written: "
+            ),
+            "{errors:?}"
+        );
+        for url_part in ["http", "://", "?", "token", "version="] {
+            assert!(!errors[0].contains(url_part), "{url_part} in {errors:?}");
+        }
+        // The cache path is the app's own file, which the error log allows.
+        assert!(!errors[0].contains("updater-trail"), "{errors:?}");
+    }
+
+    #[test]
+    fn an_install_stopped_before_its_download_records_its_start_and_its_code() {
+        let _directory = release_log_directory();
+        let machine = Mutex::new(UpdateMachine::new());
+
+        let stopped = install_and_record(
+            &machine,
+            Err(tauri::Error::UnknownPath),
+            InstallKind::PackageManaged,
+            &Handoff {
+                config_dir: None,
+                hold: Duration::ZERO,
+            },
+            Watch {
+                control: &InstallControl::new(),
+                progress: &mut |_| {},
+            },
+        )
+        .expect_err("no cache directory");
+
+        assert_eq!(stopped.code, "cache_dir_unavailable");
+        let trail = release_log_lines(crate::error_log::UPDATES_FILE_NAME, "updater-trail");
+        let finished = trail
+            .iter()
+            .position(|line| line.ends_with("install finished: failed: cache_dir_unavailable"))
+            .expect("the end of the install is recorded");
+        assert!(
+            trail[..finished]
+                .iter()
+                .any(|line| line.ends_with("INFO updater-trail: install started")),
+            "{trail:?}"
+        );
+        assert_eq!(machine.lock().expect("lock").status(), UpdateStatus::Idle);
+    }
+
+    #[test]
+    fn a_failed_check_writes_its_code_to_the_updater_trail() {
+        let directory = release_log_directory();
+        let cache = tempfile::tempdir().expect("cache directory");
+
+        // A key that does not parse fails the check before any request, so
+        // the real check path runs without a network.
+        let outcome = check_and_record(
+            "not a minisign key",
+            env!("CARGO_PKG_VERSION"),
+            cache.path().join("updater"),
+            InstallRoute::InApp,
+        );
+
+        assert!(
+            matches!(&outcome, CheckOutcome::Failed(error) if error.code() == "update_missing_public_key"),
+            "{outcome:?}"
+        );
+        let trail = std::fs::read_to_string(directory.join(crate::error_log::UPDATES_FILE_NAME))
+            .expect("the trail exists");
+        let finished = "INFO updater-trail: check finished: failed: update_missing_public_key: \
+                        updater public key is missing or invalid";
+        assert!(
+            trail.lines().any(|line| line.ends_with(finished)),
+            "{trail}"
+        );
+        assert!(
+            trail
+                .lines()
+                .any(|line| line.ends_with("INFO updater-trail: check started")),
+            "{trail}"
+        );
+        let errors = std::fs::read_to_string(directory.join(crate::error_log::FILE_NAME))
+            .expect("the error log exists");
+        assert!(
+            errors.lines().any(|line| line.ends_with(
+                "WARN oikonomia_lib::update: update check failed: update_missing_public_key: \
+                 updater public key is missing or invalid"
+            )),
+            "the error log keeps its warning: {errors}"
+        );
+        assert!(!errors.contains("updater-trail"), "{errors}");
     }
 
     #[test]

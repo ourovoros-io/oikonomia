@@ -1,4 +1,4 @@
-//! The local error log of a release build.
+//! The local logs of a release build: the error log and the updater trail.
 //!
 //! A release build that kept no log left nothing to go on after a failed
 //! start or a failed update install on someone else's machine. It now keeps a
@@ -7,10 +7,25 @@
 //!
 //! # What is written
 //!
-//! Warnings and errors from this workspace's crates, one line each:
-//! the time in UTC, the level, the module that logged, and the message.
-//! Everything else is dropped by [`is_logged`]: lower levels, and every
-//! record from a third-party crate, whose messages nobody here has audited.
+//! One line per record: the time in UTC, the level, the target, and the
+//! message. [`destination`] sends a record to one of two files or drops it:
+//!
+//! - [`FILE_NAME`], the error log: warnings and errors from this
+//!   workspace's crates, the target being the module that logged. No URL:
+//!   the update crate never logs a transport error, whose text starts with
+//!   the URL it failed on.
+//! - [`UPDATES_FILE_NAME`], the updater trail: info and above whose target
+//!   is exactly [`oikonomia_update::trail::TARGET`]. The update crate's
+//!   `trail` module is its one writer, and it states what a line holds: the
+//!   step of a check or an install, the host of the last URL a request
+//!   asked for or refused, the artifact's size, a verification's verdict,
+//!   and a failure's code and cause chain with its paths cut out. Never a
+//!   URL, a path, an amount, or anything of the vault. The target is not a
+//!   module path and not the name of a workspace crate, so no other record
+//!   reaches this file and no trail record reaches the error log.
+//!
+//! Everything else is dropped: lower levels, and every record from a
+//! third-party crate, whose messages nobody here has audited.
 //!
 //! A message holds no ledger data. That is decided where the message is
 //! formatted, not here: a log line interpolates fixed phrases, numbers, the
@@ -29,7 +44,7 @@
 //!
 //! # Where, and how much
 //!
-//! [`FILE_NAME`] in the directory Tauri names for the app's logs
+//! Both files are in the directory Tauri names for the app's logs
 //! (`PathResolver::app_log_dir`, Tauri 2.12):
 //!
 //! | Platform | Directory |
@@ -40,30 +55,33 @@
 //!
 //! On Linux `$XDG_DATA_HOME` is `~/.local/share` unless the user set it.
 //!
-//! The file is capped at [`MAX_FILE_BYTES`]. A line that would take it past
-//! the cap first renames it to [`PREVIOUS_FILE_NAME`], replacing the file of
-//! that name, and starts a new one. So there are at most two files and at
-//! most twice the cap on disk, and the newest lines are always kept. A
-//! message is cut at [`MAX_MESSAGE_BYTES`], so one runaway message cannot
-//! fill the file.
+//! The error log is capped at [`MAX_FILE_BYTES`], the trail at
+//! [`UPDATES_MAX_FILE_BYTES`]. A line that would take a file past its cap
+//! first renames it to its previous name ([`PREVIOUS_FILE_NAME`],
+//! [`UPDATES_PREVIOUS_FILE_NAME`]), replacing the file of that name, and
+//! starts a new one. So there are at most two files of each and at most
+//! twice each cap on disk, and the newest lines are always kept. A message is
+//! cut at [`MAX_MESSAGE_BYTES`], so one runaway message cannot fill a file.
 //!
 //! On Unix the directory is created `0700` and each file `0600`, the modes of
 //! the vault's own directory and files, and an existing directory or file is
 //! set to that mode before it is used. The modes are set here directly:
 //! core's helpers for them (`vault/permissions.rs`) are private to core. If
-//! the mode cannot be set, nothing is logged. Windows relies on the per-user
+//! the mode cannot be set, or either file cannot be opened, nothing is
+//! logged. Windows relies on the per-user
 //! ACL of `AppData`, as the vault does.
 //!
 //! # Failures of the log itself
 //!
 //! A log that cannot be opened is not a reason to refuse to start, and a line
 //! that cannot be written has nowhere to be reported. Both are dropped: the
-//! app runs without a log, or without that line.
+//! app runs without the logs, or without that line.
 //!
 //! # Debug builds
 //!
 //! A debug build does not use this module. It registers `tauri-plugin-log`
-//! at the info level, as it always has (`register_logger` in the crate root).
+//! at the info level, as it always has (`register_logger` in the crate root),
+//! so the trail goes to the plugin's targets with every other record.
 
 use std::fs::{DirBuilder, File, OpenOptions};
 use std::io::{self, Write};
@@ -71,21 +89,54 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Name of the log file.
+/// Name of the error log.
 pub(crate) const FILE_NAME: &str = "errors.log";
 
-/// Name the log file is given when it reaches the cap. At most one such file
-/// exists.
+/// Name the error log is given when it reaches the cap. At most one such
+/// file exists.
 pub(crate) const PREVIOUS_FILE_NAME: &str = "errors.previous.log";
 
-/// Largest size of one log file, in bytes: 1 MiB.
+/// Largest size of one error log file, in bytes: 1 MiB.
 pub(crate) const MAX_FILE_BYTES: u64 = 1024 * 1024;
+
+/// Name of the updater trail.
+pub(crate) const UPDATES_FILE_NAME: &str = "updates.log";
+
+/// Name the updater trail is given when it reaches the cap. At most one
+/// such file exists.
+pub(crate) const UPDATES_PREVIOUS_FILE_NAME: &str = "updates.previous.log";
+
+/// Largest size of one updater trail file, in bytes: 256 KiB, the size
+/// issue #126 asked for. A check that finds an update writes five lines
+/// (started, feed, feed signature, verdict, finished) and an install six
+/// (started, artifact, size, verdict, handoff, finished). Each of those
+/// lines is under 200 bytes, so one file holds over a hundred such pairs; a
+/// failure's line, with its cause chain, can be up to [`MAX_MESSAGE_BYTES`].
+pub(crate) const UPDATES_MAX_FILE_BYTES: u64 = 256 * 1024;
 
 /// Longest message written, in bytes. The rest of a longer one is cut.
 const MAX_MESSAGE_BYTES: usize = 2048;
 
-/// The least severe level that is written.
-const MAX_LEVEL: log::LevelFilter = log::LevelFilter::Warn;
+/// The least severe level written to the error log.
+const ERRORS_LEVEL: log::LevelFilter = log::LevelFilter::Warn;
+
+/// The least severe level written to the updater trail. Every trail record
+/// is at the info level.
+const UPDATES_LEVEL: log::LevelFilter = log::LevelFilter::Info;
+
+/// The error log's files and cap.
+const ERRORS: LogFiles = LogFiles {
+    name: FILE_NAME,
+    previous_name: PREVIOUS_FILE_NAME,
+    max_bytes: MAX_FILE_BYTES,
+};
+
+/// The updater trail's files and cap.
+const UPDATES: LogFiles = LogFiles {
+    name: UPDATES_FILE_NAME,
+    previous_name: UPDATES_PREVIOUS_FILE_NAME,
+    max_bytes: UPDATES_MAX_FILE_BYTES,
+};
 
 /// The crates whose records are written: the first segment of a record's
 /// target, which is the module path of the `log::` call unless the call
@@ -107,91 +158,118 @@ const DIRECTORY_MODE: u32 = 0o700;
 #[cfg(unix)]
 const FILE_MODE: u32 = 0o600;
 
-/// Why the error log could not be installed.
+/// Why the release logs could not be installed.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum InstallError {
-    /// The log directory or the log file could not be created, opened or
+    /// The log directory or a log file could not be created, opened or
     /// restricted to its owner.
-    #[error("cannot open the error log")]
+    #[error("cannot open the release logs")]
     Open(#[source] io::Error),
     /// The process already has a logger.
     #[error("a logger is already installed")]
     AlreadyInstalled(#[source] log::SetLoggerError),
 }
 
-/// Opens the log file in `directory` and makes it the process's logger.
+/// Opens the error log and the updater trail in `directory` and makes them
+/// the process's logger.
 ///
 /// # Errors
 ///
-/// Returns [`InstallError::Open`] when the directory or the file cannot be
+/// Returns [`InstallError::Open`] when the directory or a file cannot be
 /// created or made owner-only, and [`InstallError::AlreadyInstalled`] when a
 /// logger was installed before this call. In both cases the process is left
-/// without this log.
+/// without these logs.
 pub(crate) fn install(directory: &Path) -> Result<(), InstallError> {
-    let error_log = ErrorLog::open(directory).map_err(InstallError::Open)?;
+    let release_log = ReleaseLog::open(directory).map_err(InstallError::Open)?;
 
-    log::set_boxed_logger(Box::new(error_log)).map_err(InstallError::AlreadyInstalled)?;
-    // Lets `log::info!` and below return before they format anything.
-    log::set_max_level(MAX_LEVEL);
+    log::set_boxed_logger(Box::new(release_log)).map_err(InstallError::AlreadyInstalled)?;
+    // Lets `log::debug!` and below return before they format anything. Info
+    // records of other targets still reach `ReleaseLog::log`, which drops
+    // them without formatting their message.
+    log::set_max_level(ERRORS_LEVEL.max(UPDATES_LEVEL));
     Ok(())
 }
 
-/// Returns whether a record of `level` from `target` is written to the log:
-/// a warning or an error, from one of [`LOGGED_CRATES`].
-fn is_logged(level: log::Level, target: &str) -> bool {
+/// The file a record is written to.
+#[derive(Debug, Clone, Copy)]
+enum Destination {
+    /// The error log, [`FILE_NAME`].
+    Errors,
+    /// The updater trail, [`UPDATES_FILE_NAME`].
+    Updates,
+}
+
+/// Returns the file a record of `level` from `target` is written to, or
+/// `None` when it is dropped.
+///
+/// The error log takes a warning or an error from one of
+/// [`LOGGED_CRATES`]. The updater trail takes info and above whose target is
+/// [`oikonomia_update::trail::TARGET`], compared whole: a target that only
+/// starts with it is not the trail's. The trail's target names no crate, so
+/// no record could be taken by both.
+fn destination(level: log::Level, target: &str) -> Option<Destination> {
+    if target == oikonomia_update::trail::TARGET {
+        return (level <= UPDATES_LEVEL).then_some(Destination::Updates);
+    }
+
     let crate_name = target.split("::").next().unwrap_or(target);
-
-    level <= MAX_LEVEL && LOGGED_CRATES.contains(&crate_name)
+    (level <= ERRORS_LEVEL && LOGGED_CRATES.contains(&crate_name)).then_some(Destination::Errors)
 }
 
-/// The logger of a release build: writes the records [`is_logged`] accepts
-/// to a [`CappedFile`].
+/// The logger of a release build: writes each record to the file
+/// [`destination`] names for it.
 #[derive(Debug)]
-struct ErrorLog {
-    /// The file, behind a lock because any thread may log.
-    file: Mutex<CappedFile>,
+struct ReleaseLog {
+    /// The error log, behind a lock because any thread may log.
+    errors: Mutex<CappedFile>,
+    /// The updater trail, behind its own lock.
+    updates: Mutex<CappedFile>,
 }
 
-impl ErrorLog {
-    /// Opens the log in `directory` with the cap of [`MAX_FILE_BYTES`].
+impl ReleaseLog {
+    /// Opens the error log and the updater trail in `directory`, each with
+    /// its own names and cap.
     ///
     /// # Errors
     ///
-    /// Returns the error of [`CappedFile::open`].
+    /// Returns the error of [`CappedFile::open`] for either file.
     fn open(directory: &Path) -> io::Result<Self> {
-        let file = CappedFile::open(directory, MAX_FILE_BYTES)?;
-
         Ok(Self {
-            file: Mutex::new(file),
+            errors: Mutex::new(CappedFile::open(directory, &ERRORS)?),
+            updates: Mutex::new(CappedFile::open(directory, &UPDATES)?),
         })
     }
 }
 
-impl log::Log for ErrorLog {
+impl log::Log for ReleaseLog {
     fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
-        is_logged(metadata.level(), metadata.target())
+        destination(metadata.level(), metadata.target()).is_some()
     }
 
     fn log(&self, record: &log::Record<'_>) {
-        if !self.enabled(record.metadata()) {
+        let Some(destination) = destination(record.level(), record.target()) else {
             return;
-        }
+        };
         let line = render_line(
             &utc_timestamp(SystemTime::now()),
             record.level(),
             record.target(),
             &record.args().to_string(),
         );
+        let file = match destination {
+            Destination::Errors => &self.errors,
+            Destination::Updates => &self.updates,
+        };
 
         // A thread that panicked while holding the lock had finished or not
         // started its one write, so the file is still usable.
-        let mut file = self.file.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut file = file.lock().unwrap_or_else(PoisonError::into_inner);
 
         // The log is the only place a failed write could be reported.
         file.append(&line).ok();
     }
 
-    /// Does nothing: every line is written to the file as it is logged.
+    /// Does nothing: every line is written to its file as it is logged.
     fn flush(&self) {}
 }
 
@@ -283,11 +361,23 @@ fn civil_date(days: u64) -> (u64, u64, u64) {
     (year, month, day)
 }
 
+/// The names of one capped log and its earlier file, and the cap.
+#[derive(Debug)]
+struct LogFiles {
+    /// Name of the file being written.
+    name: &'static str,
+    /// Name the file is renamed to when it reaches the cap.
+    previous_name: &'static str,
+    /// The cap, in bytes.
+    max_bytes: u64,
+}
+
 /// An append-only file that is set aside before a line would take it past a
 /// cap, with one earlier file kept beside it.
 ///
 /// The file stays within the cap unless a single line is longer than the
-/// cap, which [`MAX_MESSAGE_BYTES`] rules out for [`MAX_FILE_BYTES`].
+/// cap, which [`MAX_MESSAGE_BYTES`] rules out for [`MAX_FILE_BYTES`] and
+/// [`UPDATES_MAX_FILE_BYTES`].
 #[derive(Debug)]
 struct CappedFile {
     /// Path of the file being written.
@@ -303,26 +393,26 @@ struct CappedFile {
 }
 
 impl CappedFile {
-    /// Creates `directory` if it is missing and opens [`FILE_NAME`] in it
-    /// for appending, both owner-only on Unix.
+    /// Creates `directory` if it is missing and opens the file `files`
+    /// names in it for appending, both owner-only on Unix.
     ///
     /// # Errors
     ///
     /// Returns the operating system's error when the directory or the file
     /// cannot be created or opened, or, on Unix, restricted to its owner.
-    fn open(directory: &Path, max_bytes: u64) -> io::Result<Self> {
+    fn open(directory: &Path, files: &LogFiles) -> io::Result<Self> {
         create_private_directory(directory)?;
 
-        let path = directory.join(FILE_NAME);
+        let path = directory.join(files.name);
         let file = open_private_file(&path)?;
         let size = file.metadata()?.len();
 
         Ok(Self {
             path,
-            previous_path: directory.join(PREVIOUS_FILE_NAME),
+            previous_path: directory.join(files.previous_name),
             file,
             size,
-            max_bytes,
+            max_bytes: files.max_bytes,
         })
     }
 
@@ -412,10 +502,13 @@ fn open_private_file(path: &Path) -> io::Result<File> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CappedFile, ErrorLog, FILE_NAME, LOGGED_CRATES, MAX_FILE_BYTES, MAX_LEVEL,
-        MAX_MESSAGE_BYTES, PREVIOUS_FILE_NAME, is_logged, render_line, utc_timestamp,
+        CappedFile, Destination, ERRORS, ERRORS_LEVEL, FILE_NAME, LOGGED_CRATES, LogFiles,
+        MAX_FILE_BYTES, MAX_MESSAGE_BYTES, PREVIOUS_FILE_NAME, ReleaseLog, UPDATES_FILE_NAME,
+        UPDATES_LEVEL, UPDATES_MAX_FILE_BYTES, UPDATES_PREVIOUS_FILE_NAME, destination,
+        render_line, utc_timestamp,
     };
     use log::{Level, Log};
+    use oikonomia_update::trail::TARGET as TRAIL;
     use std::path::{Path, PathBuf};
     use std::time::{Duration, UNIX_EPOCH};
 
@@ -444,9 +537,33 @@ mod tests {
         std::fs::metadata(path).expect("the file exists").len()
     }
 
-    /// Sends one record through `error_log` the way the `log` macros do.
-    fn log_record(error_log: &ErrorLog, level: Level, target: &str, message: &str) {
-        error_log.log(
+    /// Returns the error log's files with a cap of `max_bytes`.
+    fn errors_capped_at(max_bytes: u64) -> LogFiles {
+        LogFiles {
+            max_bytes,
+            ..ERRORS
+        }
+    }
+
+    /// Returns the names of the entries in `directory`, sorted.
+    fn file_names(directory: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(directory)
+            .expect("list")
+            .map(|entry| {
+                entry
+                    .expect("entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        names.sort_unstable();
+        names
+    }
+
+    /// Sends one record through `release_log` the way the `log` macros do.
+    fn log_record(release_log: &ReleaseLog, level: Level, target: &str, message: &str) {
+        release_log.log(
             &log::Record::builder()
                 .level(level)
                 .target(target)
@@ -464,11 +581,13 @@ mod tests {
             "oikonomia_update::client",
             "oikonomia",
         ] {
-            assert!(is_logged(Level::Error, target), "{target}");
-            assert!(is_logged(Level::Warn, target), "{target}");
-            assert!(!is_logged(Level::Info, target), "{target}");
-            assert!(!is_logged(Level::Debug, target), "{target}");
-            assert!(!is_logged(Level::Trace, target), "{target}");
+            for level in [Level::Error, Level::Warn] {
+                let to = destination(level, target);
+                assert!(matches!(to, Some(Destination::Errors)), "{level} {target}");
+            }
+            for level in [Level::Info, Level::Debug, Level::Trace] {
+                assert!(destination(level, target).is_none(), "{level} {target}");
+            }
         }
     }
 
@@ -489,7 +608,7 @@ mod tests {
             "",
         ] {
             for level in [Level::Error, Level::Warn, Level::Info] {
-                assert!(!is_logged(level, target), "{level} {target}");
+                assert!(destination(level, target).is_none(), "{level} {target}");
             }
         }
     }
@@ -511,25 +630,132 @@ mod tests {
     }
 
     #[test]
-    fn the_cap_is_one_mebibyte_and_the_level_is_warn() {
+    fn the_caps_are_one_mebibyte_and_256_kibibytes_and_the_levels_warn_and_info() {
         let directory = log_directory("cap");
 
-        let error_log = ErrorLog::open(&directory).expect("open");
-        let max_bytes = error_log.file.lock().expect("lock").max_bytes;
+        let release_log = ReleaseLog::open(&directory).expect("open");
+        let errors = release_log.errors.lock().expect("lock").max_bytes;
+        let updates = release_log.updates.lock().expect("lock").max_bytes;
 
         assert_eq!(MAX_FILE_BYTES, 1_048_576);
-        assert_eq!(max_bytes, MAX_FILE_BYTES);
-        assert_eq!(MAX_LEVEL, log::LevelFilter::Warn);
+        assert_eq!(errors, MAX_FILE_BYTES);
+        assert_eq!(UPDATES_MAX_FILE_BYTES, 262_144);
+        assert_eq!(updates, UPDATES_MAX_FILE_BYTES);
+        assert_eq!(ERRORS_LEVEL, log::LevelFilter::Warn);
+        assert_eq!(UPDATES_LEVEL, log::LevelFilter::Info);
+        remove(&directory);
+    }
+
+    #[test]
+    fn the_trail_takes_info_and_above_of_its_own_target_only() {
+        for level in [Level::Error, Level::Warn, Level::Info] {
+            let to = destination(level, TRAIL);
+            assert!(matches!(to, Some(Destination::Updates)), "{level}");
+        }
+        for level in [Level::Debug, Level::Trace] {
+            assert!(destination(level, TRAIL).is_none(), "{level}");
+        }
+
+        // Compared whole, never as a prefix, and never by crate.
+        for target in [
+            &format!("{TRAIL}::nested") as &str,
+            &format!("{TRAIL}s"),
+            &format!("x{TRAIL}"),
+            "oikonomia_update",
+            "oikonomia_update::trail",
+            "oikonomia_update::client",
+            "oikonomia_lib::update",
+        ] {
+            for level in [Level::Info, Level::Error] {
+                let to = destination(level, target);
+                assert!(
+                    !matches!(to, Some(Destination::Updates)),
+                    "{level} {target}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_trail_record_goes_to_the_trail_and_nothing_else_does() {
+        let directory = log_directory("trail");
+        let release_log = ReleaseLog::open(&directory).expect("open");
+
+        log_record(&release_log, Level::Info, TRAIL, "check started");
+        log_record(&release_log, Level::Debug, TRAIL, "below info");
+        log_record(
+            &release_log,
+            Level::Warn,
+            "oikonomia_lib::update",
+            "a warning",
+        );
+        log_record(&release_log, Level::Info, "oikonomia_lib", "OCR model dir");
+        log_record(&release_log, Level::Error, "tauri::manager", "third party");
+        log_record(&release_log, Level::Error, "webview", "from the webview");
+
+        let updates = std::fs::read_to_string(directory.join(UPDATES_FILE_NAME)).expect("read");
+        let (_timestamp, rest) = updates.split_once(' ').expect("a timestamp");
+        assert_eq!(rest, format!("INFO {TRAIL}: check started\n"));
+        let errors = std::fs::read_to_string(directory.join(FILE_NAME)).expect("read");
+        assert_eq!(errors.lines().count(), 1, "{errors}");
+        assert!(
+            errors.ends_with("WARN oikonomia_lib::update: a warning\n"),
+            "{errors}"
+        );
+        remove(&directory);
+    }
+
+    #[test]
+    fn the_trail_is_set_aside_at_256_kibibytes_and_keeps_its_newest_lines() {
+        let directory = log_directory("trail-rotation");
+        let release_log = ReleaseLog::open(&directory).expect("open");
+        let current = directory.join(UPDATES_FILE_NAME);
+        let previous = directory.join(UPDATES_PREVIOUS_FILE_NAME);
+
+        // About 1 KiB a line, so about 256 lines fill a file and 700 fill
+        // two and start a third.
+        let message = |number: u32| format!("line {number:04} {}", "x".repeat(1000));
+        let lines = 700;
+        for number in 0..lines {
+            log_record(&release_log, Level::Info, TRAIL, &message(number));
+            assert!(size_of(&current) <= UPDATES_MAX_FILE_BYTES, "line {number}");
+        }
+
+        assert!(size_of(&previous) <= UPDATES_MAX_FILE_BYTES);
+        assert!(
+            size_of(&previous) > UPDATES_MAX_FILE_BYTES - 2048,
+            "the previous file was full"
+        );
+        assert_eq!(
+            file_names(&directory),
+            ["errors.log", "updates.log", "updates.previous.log"],
+            "one previous trail, and the error log untouched"
+        );
+        assert_eq!(size_of(&directory.join(FILE_NAME)), 0);
+        let newest = std::fs::read_to_string(&current).expect("current");
+        assert!(
+            newest
+                .lines()
+                .last()
+                .is_some_and(|line| line.ends_with(&message(lines - 1))),
+            "the newest line is the last one written"
+        );
+        let older = std::fs::read_to_string(&previous).expect("previous");
+        let first_kept = older.lines().next().expect("a line");
+        assert!(
+            !first_kept.contains("line 0000 "),
+            "the first file was dropped"
+        );
         remove(&directory);
     }
 
     #[test]
     fn a_logged_record_is_one_line_with_time_level_and_module() {
         let directory = log_directory("line");
-        let error_log = ErrorLog::open(&directory).expect("open");
+        let release_log = ReleaseLog::open(&directory).expect("open");
 
         log_record(
-            &error_log,
+            &release_log,
             Level::Warn,
             "oikonomia_lib::update_exec",
             "macos app replace failed: denied",
@@ -548,13 +774,14 @@ mod tests {
     #[test]
     fn records_that_are_not_logged_leave_the_file_empty() {
         let directory = log_directory("dropped");
-        let error_log = ErrorLog::open(&directory).expect("open");
+        let release_log = ReleaseLog::open(&directory).expect("open");
 
-        log_record(&error_log, Level::Info, "oikonomia_lib", "OCR model dir");
-        log_record(&error_log, Level::Error, "tauri::manager", "third party");
-        log_record(&error_log, Level::Error, "webview", "from the webview");
+        log_record(&release_log, Level::Info, "oikonomia_lib", "OCR model dir");
+        log_record(&release_log, Level::Error, "tauri::manager", "third party");
+        log_record(&release_log, Level::Error, "webview", "from the webview");
 
         assert_eq!(size_of(&directory.join(FILE_NAME)), 0);
+        assert_eq!(size_of(&directory.join(UPDATES_FILE_NAME)), 0);
         remove(&directory);
     }
 
@@ -597,7 +824,7 @@ mod tests {
     fn the_file_is_set_aside_at_the_cap_and_only_one_earlier_file_is_kept() {
         let directory = log_directory("rotation");
         let cap = 100;
-        let mut file = CappedFile::open(&directory, cap).expect("open");
+        let mut file = CappedFile::open(&directory, &errors_capped_at(cap)).expect("open");
         let current = directory.join(FILE_NAME);
         let previous = directory.join(PREVIOUS_FILE_NAME);
 
@@ -630,10 +857,10 @@ mod tests {
         let cap = 100;
         let line = "x".repeat(59) + "\n";
 
-        let mut first = CappedFile::open(&directory, cap).expect("open");
+        let mut first = CappedFile::open(&directory, &errors_capped_at(cap)).expect("open");
         first.append(&line).expect("append");
         drop(first);
-        let mut second = CappedFile::open(&directory, cap).expect("reopen");
+        let mut second = CappedFile::open(&directory, &errors_capped_at(cap)).expect("reopen");
         second.append(&line).expect("append");
 
         // 60 + 60 is over the cap, so the second session's line rotated.
@@ -647,7 +874,7 @@ mod tests {
         let directory = log_directory("deleted");
         let current = directory.join(FILE_NAME);
         let line = "x".repeat(59) + "\n";
-        let mut file = CappedFile::open(&directory, 100).expect("open");
+        let mut file = CappedFile::open(&directory, &errors_capped_at(100)).expect("open");
         file.append(&line).expect("append");
 
         std::fs::remove_file(&current).expect("delete");
@@ -665,7 +892,7 @@ mod tests {
     #[test]
     fn a_line_longer_than_the_cap_is_written_to_an_empty_file() {
         let directory = log_directory("oversize");
-        let mut file = CappedFile::open(&directory, 10).expect("open");
+        let mut file = CappedFile::open(&directory, &errors_capped_at(10)).expect("open");
 
         file.append("a line of more than ten bytes\n")
             .expect("append");
@@ -696,8 +923,8 @@ mod tests {
 
     #[cfg(unix)]
     mod modes {
-        use crate::error_log::tests::{log_directory, remove};
-        use crate::error_log::{CappedFile, FILE_NAME, PREVIOUS_FILE_NAME};
+        use crate::error_log::tests::{errors_capped_at, log_directory, remove};
+        use crate::error_log::{CappedFile, FILE_NAME, PREVIOUS_FILE_NAME, ReleaseLog};
         use std::fs::Permissions;
         use std::os::unix::fs::PermissionsExt;
         use std::path::Path;
@@ -711,7 +938,7 @@ mod tests {
         #[test]
         fn the_directory_and_both_files_are_owner_only() {
             let directory = log_directory("modes");
-            let mut file = CappedFile::open(&directory, 10).expect("open");
+            let mut file = CappedFile::open(&directory, &errors_capped_at(10)).expect("open");
 
             file.append("first line\n").expect("append");
             file.append("second line\n").expect("append");
@@ -719,6 +946,19 @@ mod tests {
             assert_eq!(mode_of(&directory), 0o700);
             assert_eq!(mode_of(&directory.join(FILE_NAME)), 0o600);
             assert_eq!(mode_of(&directory.join(PREVIOUS_FILE_NAME)), 0o600);
+            remove(&directory);
+        }
+
+        #[test]
+        fn the_updater_trail_is_owner_only_too() {
+            let directory = log_directory("trail-modes");
+
+            let _release_log = ReleaseLog::open(&directory).expect("open");
+
+            assert_eq!(
+                mode_of(&directory.join(crate::error_log::UPDATES_FILE_NAME)),
+                0o600
+            );
             remove(&directory);
         }
 
@@ -731,7 +971,7 @@ mod tests {
             std::fs::set_permissions(&directory, Permissions::from_mode(0o755)).expect("loosen");
             std::fs::set_permissions(&path, Permissions::from_mode(0o644)).expect("loosen");
 
-            let file = CappedFile::open(&directory, 1000).expect("open");
+            let file = CappedFile::open(&directory, &errors_capped_at(1000)).expect("open");
 
             assert_eq!(mode_of(&directory), 0o700);
             assert_eq!(mode_of(&path), 0o600);
