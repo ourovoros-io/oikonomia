@@ -66,10 +66,14 @@
 //! On Unix the directory is created `0700` and each file `0600`, the modes of
 //! the vault's own directory and files, and an existing directory or file is
 //! set to that mode before it is used. The modes are set here directly:
-//! core's helpers for them (`vault/permissions.rs`) are private to core. If
-//! the mode cannot be set, or either file cannot be opened, nothing is
-//! logged. Windows relies on the per-user
-//! ACL of `AppData`, as the vault does.
+//! core's helpers for them (`vault/permissions.rs`) are private to core.
+//! Windows relies on the per-user ACL of `AppData`, as the vault does.
+//!
+//! The two files are opened independently. If the directory cannot be
+//! created or made owner-only, or the error log cannot be opened, nothing is
+//! logged. If only the updater trail cannot be opened, the error log is kept
+//! and trail records are dropped: a broken trail must not cost the record of
+//! a failed start.
 //!
 //! # Failures of the log itself
 //!
@@ -161,7 +165,7 @@ const FILE_MODE: u32 = 0o600;
 /// Why the release logs could not be installed.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum InstallError {
-    /// The log directory or a log file could not be created, opened or
+    /// The log directory or the error log could not be created, opened or
     /// restricted to its owner.
     #[error("cannot open the release logs")]
     Open(#[source] io::Error),
@@ -175,10 +179,11 @@ pub(crate) enum InstallError {
 ///
 /// # Errors
 ///
-/// Returns [`InstallError::Open`] when the directory or a file cannot be
-/// created or made owner-only, and [`InstallError::AlreadyInstalled`] when a
-/// logger was installed before this call. In both cases the process is left
-/// without these logs.
+/// Returns [`InstallError::Open`] when the directory or the error log cannot
+/// be created or made owner-only, and [`InstallError::AlreadyInstalled`] when
+/// a logger was installed before this call. In both cases the process is
+/// left without these logs. An updater trail that cannot be opened is not an
+/// error: the logger runs without it ([`ReleaseLog::open`]).
 pub(crate) fn install(directory: &Path) -> Result<(), InstallError> {
     let release_log = ReleaseLog::open(directory).map_err(InstallError::Open)?;
 
@@ -222,32 +227,47 @@ fn destination(level: log::Level, target: &str) -> Option<Destination> {
 struct ReleaseLog {
     /// The error log, behind a lock because any thread may log.
     errors: Mutex<CappedFile>,
-    /// The updater trail, behind its own lock.
-    updates: Mutex<CappedFile>,
+    /// The updater trail, behind its own lock, or `None` when it could not
+    /// be opened.
+    updates: Option<Mutex<CappedFile>>,
 }
 
 impl ReleaseLog {
     /// Opens the error log and the updater trail in `directory`, each with
-    /// its own names and cap.
+    /// its own names and cap. A trail that cannot be opened is left out, and
+    /// its records are then dropped.
     ///
     /// # Errors
     ///
-    /// Returns the error of [`CappedFile::open`] for either file.
+    /// Returns the error of [`CappedFile::open`] for the error log.
     fn open(directory: &Path) -> io::Result<Self> {
         Ok(Self {
             errors: Mutex::new(CappedFile::open(directory, &ERRORS)?),
-            updates: Mutex::new(CappedFile::open(directory, &UPDATES)?),
+            updates: CappedFile::open(directory, &UPDATES).ok().map(Mutex::new),
         })
+    }
+
+    /// Returns the file a record bound for `destination` is written to, or
+    /// `None` when that file could not be opened.
+    fn file(&self, destination: Destination) -> Option<&Mutex<CappedFile>> {
+        match destination {
+            Destination::Errors => Some(&self.errors),
+            Destination::Updates => self.updates.as_ref(),
+        }
     }
 }
 
 impl log::Log for ReleaseLog {
     fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
-        destination(metadata.level(), metadata.target()).is_some()
+        destination(metadata.level(), metadata.target())
+            .and_then(|destination| self.file(destination))
+            .is_some()
     }
 
     fn log(&self, record: &log::Record<'_>) {
-        let Some(destination) = destination(record.level(), record.target()) else {
+        let Some(file) = destination(record.level(), record.target())
+            .and_then(|destination| self.file(destination))
+        else {
             return;
         };
         let line = render_line(
@@ -256,10 +276,6 @@ impl log::Log for ReleaseLog {
             record.target(),
             &record.args().to_string(),
         );
-        let file = match destination {
-            Destination::Errors => &self.errors,
-            Destination::Updates => &self.updates,
-        };
 
         // A thread that panicked while holding the lock had finished or not
         // started its one write, so the file is still usable.
@@ -635,7 +651,8 @@ mod tests {
 
         let release_log = ReleaseLog::open(&directory).expect("open");
         let errors = release_log.errors.lock().expect("lock").max_bytes;
-        let updates = release_log.updates.lock().expect("lock").max_bytes;
+        let updates = release_log.updates.as_ref().expect("the trail opened");
+        let updates = updates.lock().expect("lock").max_bytes;
 
         assert_eq!(MAX_FILE_BYTES, 1_048_576);
         assert_eq!(errors, MAX_FILE_BYTES);
@@ -702,6 +719,28 @@ mod tests {
             errors.ends_with("WARN oikonomia_lib::update: a warning\n"),
             "{errors}"
         );
+        remove(&directory);
+    }
+
+    #[test]
+    fn an_updater_trail_that_cannot_be_opened_does_not_cost_the_error_log() {
+        let directory = log_directory("no-trail");
+        // A directory where the trail's file should be cannot be opened for
+        // appending.
+        std::fs::create_dir_all(directory.join(UPDATES_FILE_NAME)).expect("blocker");
+
+        let release_log = ReleaseLog::open(&directory).expect("the error log opens");
+        log_record(&release_log, Level::Info, TRAIL, "check started");
+        log_record(&release_log, Level::Warn, "oikonomia_lib", "a warning");
+
+        assert!(release_log.updates.is_none());
+        let errors = std::fs::read_to_string(directory.join(FILE_NAME)).expect("read");
+        assert!(
+            errors.ends_with("WARN oikonomia_lib: a warning\n"),
+            "{errors}"
+        );
+        assert_eq!(errors.lines().count(), 1, "the trail record went nowhere");
+        assert!(directory.join(UPDATES_FILE_NAME).is_dir());
         remove(&directory);
     }
 
