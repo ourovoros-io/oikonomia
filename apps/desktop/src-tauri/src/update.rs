@@ -189,12 +189,21 @@ pub(crate) async fn update_check(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> CommandResult<UpdateStatus> {
-    let cache = updater_cache_dir(app.path().app_cache_dir()).inspect_err(|_| {
-        trail::record(&Event::CheckStarted);
-        trail::record(&Event::CheckStopped(
-            DesktopError::CacheDirUnavailable.code(),
-        ));
-    })?;
+    let cache = match updater_cache_dir(app.path().app_cache_dir()) {
+        Ok(cache) => cache,
+        // The logger takes a lock and writes a file, so the trail is written
+        // on the blocking pool here too.
+        Err(error) => {
+            return run_blocking(move || {
+                trail::record(&Event::CheckStarted);
+                trail::record(&Event::CheckStopped(
+                    DesktopError::CacheDirUnavailable.code(),
+                ));
+                Err(error)
+            })
+            .await;
+        }
+    };
     let version = env!("CARGO_PKG_VERSION").to_owned();
 
     run_check(state.update_machine(), move || {
