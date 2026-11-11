@@ -29,6 +29,9 @@ updates:
     ignore:
       - dependency-name: "rten"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # crates/appindicator-probe pins libloading to =0.7.4 on purpose; that
+      # pin is changed by hand, never by the weekly group.
+      - dependency-name: "libloading"
     # A dependency goes to the first group whose pattern matches it, so the
     # OCR pair is listed before the catch-all.
     groups:
