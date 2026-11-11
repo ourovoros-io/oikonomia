@@ -197,8 +197,10 @@ process has one `log` logger, and it is not a Tauri plugin.
   size, each signature or digest verdict, the handoff to the installer, and
   a failure's code with its cause chain. A line never holds a URL (the
   identity query included) or a path: hosts are kept through `ReleaseHost`,
-  and each cause is cut at its first path-like word. A relative path or a
-  bare file name in an error's text is not caught. Example:
+  and each cause is cut at its first path-like word. Not caught in an
+  error's text: a relative path, a bare file name, and an absolute path
+  joined to the word before it by anything but `=`, `:` or, for a `/`
+  path, a quote (`x,/home/alice`, `open(/home/alice)`). Example:
   `2026-11-11T09:41:05Z INFO updater-trail: fetch feed: host
   release-assets.githubusercontent.com, 2 redirects, ok`.
 - **Debug builds** log as before: `tauri-plugin-log` at the info level, to
