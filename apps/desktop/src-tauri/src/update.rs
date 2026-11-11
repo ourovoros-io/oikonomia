@@ -193,16 +193,7 @@ pub(crate) async fn update_check(
         Ok(cache) => cache,
         // The logger takes a lock and writes a file, so the trail is written
         // on the blocking pool here too.
-        Err(error) => {
-            return run_blocking(move || {
-                trail::record(&Event::CheckStarted);
-                trail::record(&Event::CheckStopped(
-                    DesktopError::CacheDirUnavailable.code(),
-                ));
-                Err(error)
-            })
-            .await;
-        }
+        Err(error) => return run_blocking(move || record_check_stopped(error)).await,
     };
     let version = env!("CARGO_PKG_VERSION").to_owned();
 
@@ -211,6 +202,17 @@ pub(crate) async fn update_check(
         check_and_record(UPDATER_PUBLIC_KEY, &version, cache, route)
     })
     .await
+}
+
+/// Records on the trail a check that stopped before it ran because the
+/// system names no cache directory, and returns `error`, the
+/// `cache_dir_unavailable` that stopped it.
+fn record_check_stopped(error: CommandError) -> CommandResult<UpdateStatus> {
+    trail::record(&Event::CheckStarted);
+    trail::record(&Event::CheckStopped(
+        DesktopError::CacheDirUnavailable.code(),
+    ));
+    Err(error)
 }
 
 /// Runs one check with the production configuration and returns its
@@ -709,8 +711,8 @@ fn record_install_end(outcome: &InstallOutcome) {
 mod tests {
     use super::{
         Handoff, MarkingInstaller, RegisteredInstall, UpdaterState, Watch, cancel_install,
-        check_and_record, install_and_record, install_available_update, record_install_end,
-        run_check, updater_cache_dir,
+        check_and_record, install_and_record, install_available_update, record_check_stopped,
+        record_install_end, run_check, updater_cache_dir,
     };
     use crate::update_exec::InstallKind;
     use crate::update_key::UPDATER_PUBLIC_KEY;
@@ -1105,6 +1107,27 @@ mod tests {
             "{trail:?}"
         );
         assert_eq!(machine.lock().expect("lock").status(), UpdateStatus::Idle);
+    }
+
+    #[test]
+    fn a_check_stopped_for_want_of_a_cache_records_its_start_and_its_code() {
+        let _directory = release_log_directory();
+        let error = updater_cache_dir(Err(tauri::Error::UnknownPath)).expect_err("no cache");
+
+        let stopped = record_check_stopped(error).expect_err("the check stopped");
+
+        assert_eq!(stopped.code, "cache_dir_unavailable");
+        let trail = release_log_lines(crate::error_log::UPDATES_FILE_NAME, "updater-trail");
+        let finished = trail
+            .iter()
+            .position(|line| line.ends_with("check finished: failed: cache_dir_unavailable"))
+            .expect("the end of the check is recorded");
+        assert!(
+            trail[..finished]
+                .iter()
+                .any(|line| line.ends_with("INFO updater-trail: check started")),
+            "{trail:?}"
+        );
     }
 
     #[test]
