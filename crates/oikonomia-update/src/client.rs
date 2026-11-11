@@ -59,6 +59,7 @@ use semver::Version;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::convert::Infallible;
+use std::fmt;
 use std::io::Read;
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
@@ -311,7 +312,9 @@ impl ClientConfig {
 /// The fields are private and there is no public constructor, so a value of
 /// this type always comes from [`perform_check`] and cannot be altered on its
 /// way to [`install_offer`].
-#[derive(Debug)]
+///
+/// `Debug` prints the version only. The artifact URL is left out: its path
+/// and query are not for a log.
 pub struct VerifiedOffer {
     /// The published version, parsed from the manifest. It is newer than the
     /// running one.
@@ -342,7 +345,17 @@ impl VerifiedOffer {
     }
 }
 
-/// The result of [`perform_check`]. It never carries a URL.
+impl fmt::Debug for VerifiedOffer {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("VerifiedOffer")
+            .field("version", &format_args!("{}", self.version))
+            .finish_non_exhaustive()
+    }
+}
+
+/// The result of [`perform_check`]. [`Available`](Self::Available) holds the
+/// offer's artifact URL, but `Debug` never prints it.
 #[derive(Debug)]
 pub enum CheckOutcome {
     /// Nothing newer is published: the signed manifest names this version or
@@ -1678,7 +1691,8 @@ fn byte_count(body: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        check_feed_as_client, read_leftover, replace_with_private_file, write_new_private_file,
+        CheckOutcome, VerifiedOffer, check_feed_as_client, read_leftover,
+        replace_with_private_file, write_new_private_file,
     };
     use crate::artifact_limit::MAX_ARTIFACT_BYTES;
     use crate::error::{FeedRefusal, UpdateError};
@@ -1920,6 +1934,26 @@ mod tests {
             .map(|entry| entry.expect("entry").path())
             .collect();
         assert_eq!(entries, vec![path]);
+    }
+
+    #[test]
+    fn debug_of_an_offer_leaves_out_the_artifact_url() {
+        let offer = VerifiedOffer {
+            version: semver::Version::new(0, 2, 0),
+            notes: "notes".to_owned(),
+            artifact_url: url::Url::parse("https://example.test/private/app.AppImage?token=secret")
+                .expect("URL"),
+            artifact_signature: "signature".to_owned(),
+            sha256: [0; 32],
+        };
+        let offer_debug = format!("{offer:?}");
+        let outcome_debug = format!("{:?}", CheckOutcome::Available(offer));
+
+        for debug in [offer_debug, outcome_debug] {
+            assert!(debug.contains("0.2.0"), "{debug}");
+            assert!(!debug.contains("private/app.AppImage"), "{debug}");
+            assert!(!debug.contains("token=secret"), "{debug}");
+        }
     }
 }
 

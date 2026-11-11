@@ -98,8 +98,8 @@ pub const TARGET: &str = "updater-trail";
 /// A step of a check or an install that the caller records, because the
 /// caller is where it begins or ends.
 ///
-/// `Debug` prints the trail line, never the outcome it holds: an offer's
-/// derived `Debug` would print its artifact URL.
+/// `Debug` prints the trail line, never the outcome it holds, so it says no
+/// more than the trail does.
 pub enum Event<'a> {
     /// The user asked for a check, and it is about to run.
     CheckStarted,
