@@ -193,11 +193,12 @@ process has one `log` logger, and it is not a Tauri plugin.
   above, and those never reach `errors.log`. The update crate's `trail`
   module is the only writer and takes typed events, not strings: a check or
   install starting and ending, each request with the host of the last URL
-  requested or refused, its redirects, and how it ended, the artifact's size, each signature or digest
-  verdict, the handoff to the installer, and a failure's code with its cause
-  chain. A line never holds a URL (the identity query included) or a path:
-  hosts are kept through `ReleaseHost`, and each cause is cut at its first
-  path-like word. Example:
+  requested or refused, its redirects, and how it ended, the artifact's
+  size, each signature or digest verdict, the handoff to the installer, and
+  a failure's code with its cause chain. A line never holds a URL (the
+  identity query included) or a path: hosts are kept through `ReleaseHost`,
+  and each cause is cut at its first path-like word. A relative path or a
+  bare file name in an error's text is not caught. Example:
   `2026-11-11T09:41:05Z INFO updater-trail: fetch feed: host
   release-assets.githubusercontent.com, 2 redirects, ok`.
 - **Debug builds** log as before: `tauri-plugin-log` at the info level, to

@@ -160,10 +160,10 @@ Run `prek install` once to enable the local hooks in `.pre-commit-config.yaml`
 
 ## Error log
 
-Installed builds keep a small error log and an update record on your
-machine, so that a failed start or a failed update leaves something to go on.
-They never leave the machine: the app sends nothing anywhere, and they are
-read only if you open them or decide to send them with a bug report.
+Installed builds keep a small error log and an update record (`updates.log`)
+on your machine, so that a failed start or a failed update leaves something to
+go on. They never leave the machine: the app sends nothing anywhere, and they
+are read only if you open them or decide to send them with a bug report.
 
 | Platform | Folder |
 |----------|--------|
@@ -187,11 +187,12 @@ read only if you open them or decide to send them with a bug report.
 - **Update record.** `updates.log`, at most 256 KB, and
   `updates.previous.log`, in the same folder. One line per step of an update
   check or install: when it started and how it ended (with the error code
-  behind the message the app shows), the server each request ended at, the
-  size of the download, and whether its signature checked out. It names
-  servers, never full addresses, and no path on your machine. Only your user
-  account can read it on macOS and Linux, as with the error log.
-- **Deleting it.** Delete the files, or the folder, whenever you like. Empty
+  behind the message the app shows), the server each request reached last,
+  the size of the download, and whether the download passed its signature
+  and checksum checks. It names servers, never full addresses, and no path on
+  your machine. Only your user account can read it on macOS and Linux, as
+  with the error log.
+- **Deleting them.** Delete the files, or the folder, whenever you like. Empty
   `errors.log` and `updates.log` are created again the next time the app
   starts.
 

@@ -54,10 +54,10 @@ body:
     attributes:
       label: Error messages or logs
       description: |
-        Installed copies keep two logs on your computer: `errors.log` (warnings and errors) and `updates.log` (one line per step of an update check or install). For a failed update, paste `updates.log`. They are in this folder:
+        Installed copies keep two logs on your computer: `errors.log` (warnings and errors) and `updates.log` (one line per step of an update check or install). For a failed update, paste `updates.log`, and `updates.previous.log` if the attempt is not in it. For anything else, paste `errors.log`. They are in this folder:
         - macOS: `~/Library/Logs/io.ourovoros.oikonomia/`
         - Linux: `~/.local/share/io.ourovoros.oikonomia/logs/` (under `$XDG_DATA_HOME` when that is set)
         - Windows: `%LOCALAPPDATA%\io.ourovoros.oikonomia\logs\`
 
-        The `.previous.log` files beside them hold older lines. The logs hold no amounts or other data from your books, but `errors.log` can show paths that include your user name. Remove anything private before pasting.
+        The `.previous.log` files beside them hold older lines. The logs hold no amounts or other data from your books, but `errors.log` can show paths of the app's own files, which include your user name. Remove anything private before pasting.
       render: text
