@@ -160,10 +160,10 @@ Run `prek install` once to enable the local hooks in `.pre-commit-config.yaml`
 
 ## Error log
 
-Installed builds keep a small error log on your machine, so that a failed start
-or a failed update leaves something to go on. It never leaves the machine: the
-app sends nothing anywhere, and the log is read only if you open it or decide
-to send it with a bug report.
+Installed builds keep a small error log and an update record on your
+machine, so that a failed start or a failed update leaves something to go on.
+They never leave the machine: the app sends nothing anywhere, and they are
+read only if you open them or decide to send them with a bug report.
 
 | Platform | Folder |
 |----------|--------|
@@ -181,10 +181,19 @@ to send it with a bug report.
   update cache, where it is installed), and those include your user name.
 - **Does not contain.** Anything from your books: no amounts, descriptions,
   merchants, account or book names, document names or contents, no password
-  or key, and no path of a file you chose (a backup, a statement, a
-  document). Nothing the interface shows or sends is written there.
-- **Deleting it.** Delete the two files, or the folder, whenever you like. An
-  empty `errors.log` is created again the next time the app starts.
+  or key, no path of a file you chose (a backup, a statement, a document),
+  and no web address the updater requested. Nothing the interface shows or
+  sends is written there.
+- **Update record.** `updates.log`, at most 256 KB, and
+  `updates.previous.log`, in the same folder. One line per step of an update
+  check or install: when it started and how it ended (with the error code
+  behind the message the app shows), the server each request ended at, the
+  size of the download, and whether its signature checked out. It names
+  servers, never full addresses, and no path on your machine. Only your user
+  account can read it on macOS and Linux, as with the error log.
+- **Deleting it.** Delete the files, or the folder, whenever you like. Empty
+  `errors.log` and `updates.log` are created again the next time the app
+  starts.
 
 Development builds (`make app`) log more, with full error detail, to the
 terminal and to `Oikonomia.log` in the same folder.
