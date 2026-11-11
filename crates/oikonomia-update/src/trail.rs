@@ -97,7 +97,9 @@ pub const TARGET: &str = "updater-trail";
 
 /// A step of a check or an install that the caller records, because the
 /// caller is where it begins or ends.
-#[derive(Debug)]
+///
+/// `Debug` prints the trail line, never the outcome it holds: an offer's
+/// derived `Debug` would print its artifact URL.
 pub enum Event<'a> {
     /// The user asked for a check, and it is about to run.
     CheckStarted,
@@ -131,6 +133,15 @@ pub(crate) fn record_step(step: &Step) {
 /// Logs `line` under [`TARGET`]. The one `log::` call of the trail.
 fn write(line: &dyn fmt::Display) {
     log::info!(target: TARGET, "{line}");
+}
+
+impl fmt::Debug for Event<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_tuple("Event")
+            .field(&format_args!("{self}"))
+            .finish()
+    }
 }
 
 impl fmt::Display for Event<'_> {

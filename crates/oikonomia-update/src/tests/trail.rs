@@ -1,14 +1,15 @@
 //! The updater trail of real checks and installs against local servers:
 //! which steps are recorded, in which order, and that no line holds a URL.
 
-use crate::client::{ClientConfig, perform_check};
+use crate::client::{CheckOutcome, ClientConfig, perform_check};
 use crate::hosts::HostPolicy;
 use crate::machine::UpdateMachine;
 use crate::status::UpdateStatus;
 use crate::tests::support::{
-    cache_dir, captured_log, config, install, machine_with_an_offer, serve_signed_manifest,
-    server_url, sign, signed_manifest, spy, static_manifest, test_keys,
+    available_offer, cache_dir, captured_log, config, install, machine_with_an_offer,
+    serve_signed_manifest, server_url, sign, signed_manifest, spy, static_manifest, test_keys,
 };
+use crate::trail::Event;
 use crate::verify::sha256_hex;
 use httptest::matchers::request;
 use httptest::responders::status_code;
@@ -308,4 +309,46 @@ fn a_tampered_artifact_records_its_digest_mismatch_and_reaches_no_installer() {
         !trail.iter().any(|line| line.starts_with("install handoff")),
         "{trail:?}"
     );
+}
+
+#[test]
+fn the_debug_of_a_finished_check_holds_no_artifact_url() {
+    let (public_key, secret_key) = test_keys();
+    let server = Server::run();
+    let cache = cache_dir();
+    let artifact = server_url(
+        &server,
+        "/releases/download/v0.2.0/Oikonomia.AppImage?token=artifact-secret",
+    );
+    let payload = b"artifact-bytes";
+    let body = static_manifest(
+        "0.2.0",
+        "notes",
+        artifact.as_str(),
+        &sign(&secret_key, payload),
+        &sha256_hex(payload),
+    );
+    serve_signed_manifest(&server, &body, &sign(&secret_key, body.as_bytes()));
+    let config = config(
+        &server,
+        "/latest.json",
+        &public_key,
+        "0.1.0",
+        cache.path(),
+        Duration::from_secs(2),
+    );
+    let outcome = CheckOutcome::Available(available_offer(&config));
+
+    let debug = format!("{:?}", Event::CheckFinished(&outcome));
+
+    assert_eq!(debug, "Event(check finished: version 0.2.0 available)");
+    for leaked in [
+        artifact.as_str(),
+        "releases/download",
+        "Oikonomia.AppImage",
+        "token",
+        "artifact-secret",
+    ] {
+        assert!(!debug.contains(leaked), "{leaked:?} in {debug:?}");
+    }
 }
