@@ -99,9 +99,16 @@
 //! the [`UpdateError`].
 //!
 //! Neither function logs its outcome. The caller has the error and decides
-//! what to record of it. The one thing logged here is the transport error of
-//! a request that got no response: [`UpdateError::Network`] does not carry
-//! it, so it would be lost where it is dropped.
+//! what to record of it. Each step only this crate sees is recorded on the
+//! updater [`trail`], a fixed set of info-level lines that hold no URL and
+//! no path: a request with the host of the last URL requested or refused
+//! and how it ended (for one that got no response, the kinds of the
+//! transport and I/O errors, which [`UpdateError::Network`] does not carry),
+//! the artifact's size, each signature or digest check, and the handoff to
+//! the installer. The caller records the start and the end of a check or an
+//! install there. A transport error is never logged whole, as a warning or
+//! otherwise: its text starts with the URL, query and redirect tokens
+//! included.
 //!
 //! # Updated notice
 //!
@@ -216,6 +223,7 @@ mod notice;
 mod progress;
 mod release_set;
 mod status;
+pub mod trail;
 mod verify;
 mod version;
 

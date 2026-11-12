@@ -136,21 +136,24 @@ fn start(app: &mut tauri::App) -> Result<(), StartupError> {
 }
 
 /// Registers the logger: the developer's in a debug build, the local error
-/// log in a release build.
+/// log and updater trail in a release build.
 ///
 /// A debug build registers `tauri-plugin-log` at the info level, with the
 /// plugin's default targets (standard output and a file in the app's log
 /// directory), and asks core to write errors in full
 /// (`oikonomia_core::error::enable_log_detail`).
 ///
-/// A release build does neither. It installs [`error_log`], which writes the
-/// warnings and errors of this workspace's crates to one size-capped,
-/// owner-only file in the app's log directory, so that a failed start or a
-/// failed update install leaves a record on the machine it happened on. What
-/// may be in that file is a privacy decision, and the `error_log` module
-/// states it: no ledger data, and nothing the webview sends. The plugin is
-/// not registered there, so its `log` command does not exist in a release
-/// build.
+/// A release build does neither. It installs [`error_log`], which writes two
+/// size-capped, owner-only files in the app's log directory, so that a failed
+/// start or a failed update leaves a record on the machine it happened on:
+/// the warnings and errors of this workspace's crates to `errors.log`, and
+/// the updater trail (`oikonomia_update::trail`) to `updates.log`. What may
+/// be in those files is a privacy decision, and the `error_log` module
+/// states it: no ledger data, no URL or user path in the trail, and nothing
+/// the webview sends. The plugin is not registered there, so its `log`
+/// command does not exist in a release build. Only one `log` logger can
+/// exist per process, which is why the trail is a second file of the same
+/// logger and not a plugin of its own.
 ///
 /// # Errors
 ///

@@ -48,6 +48,10 @@ use crate::error::{FeedRefusal, Result, UpdateError};
 use crate::hosts::HostPolicy;
 use crate::notes::sanitize_notes;
 use crate::progress::{InstallControl, InstallProgress, PROGRESS_INTERVAL, ProgressThrottle};
+use crate::trail::{
+    ArtifactSize, ArtifactSource, FetchEnd, FetchRecord, NetworkFailure, Signed, Step, Verdict,
+    record_step,
+};
 use crate::verify::{parse_public_key, parse_sha256_hex, sha256, to_hex, verify_minisign};
 use crate::version::parse_version;
 use minisign_verify::PublicKey;
@@ -55,6 +59,7 @@ use semver::Version;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::convert::Infallible;
+use std::fmt;
 use std::io::Read;
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
@@ -307,7 +312,9 @@ impl ClientConfig {
 /// The fields are private and there is no public constructor, so a value of
 /// this type always comes from [`perform_check`] and cannot be altered on its
 /// way to [`install_offer`].
-#[derive(Debug)]
+///
+/// `Debug` prints the version only. The artifact URL is left out: its path
+/// and query are not for a log.
 pub struct VerifiedOffer {
     /// The published version, parsed from the manifest. It is newer than the
     /// running one.
@@ -338,7 +345,17 @@ impl VerifiedOffer {
     }
 }
 
-/// The result of [`perform_check`]. It never carries a URL.
+impl fmt::Debug for VerifiedOffer {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("VerifiedOffer")
+            .field("version", &format_args!("{}", self.version))
+            .finish_non_exhaustive()
+    }
+}
+
+/// The result of [`perform_check`]. [`Available`](Self::Available) holds the
+/// offer's artifact URL, but `Debug` never prints it.
 #[derive(Debug)]
 pub enum CheckOutcome {
     /// Nothing newer is published: the signed manifest names this version or
@@ -383,9 +400,11 @@ pub trait ArtifactInstaller {
 /// is an outcome, [`CheckOutcome::Failed`], because the caller's state
 /// machine has to be told of it like any other end of a check. It holds the
 /// error, and the outcome is not logged here; the caller decides what to
-/// record. One thing is logged in this crate: the transport error of a
-/// request that got no response, which [`UpdateError::Network`] does not
-/// carry and which would otherwise be lost where it is dropped.
+/// record. What is logged here is on the [`trail`](crate::trail): each
+/// request with its host and how it ended (for one that got no response,
+/// the kinds of its transport and I/O errors, which [`UpdateError::Network`]
+/// does not carry), and the result of the feed's signature check. The
+/// transport error itself is never logged: its text starts with the URL.
 #[must_use]
 pub fn perform_check(config: &ClientConfig) -> CheckOutcome {
     perform_check_inner(config).unwrap_or_else(CheckOutcome::Failed)
@@ -441,8 +460,10 @@ pub fn install_offer(
 /// artifact is deleted afterwards unless an installer process is still
 /// running from it. A failure is returned in [`InstallOutcome::Failed`] with
 /// its error, whether it came from this crate or from `installer`. As with
-/// [`perform_check`], the outcome is not logged here; only the transport
-/// error of a request that got no response is.
+/// [`perform_check`], the outcome is not logged here; the
+/// [`trail`](crate::trail) records the download's host and how it ended,
+/// the artifact's size, the verdict of its checks and the handoff to
+/// `installer`.
 #[must_use]
 pub fn install_offer_reporting(
     config: &ClientConfig,
@@ -470,6 +491,7 @@ pub fn install_offer_reporting(
     }
     progress(InstallProgress::Installing);
 
+    record_step(&Step::HandedToInstaller);
     match installer.install(&path) {
         Ok(InstallHandoff::Replaced) => {
             delete_artifact(&path);
@@ -604,7 +626,16 @@ pub(crate) fn perform_check_inner(config: &ClientConfig) -> Result<CheckOutcome>
 
     // Over the bytes as they arrived, and before anything reads them: the
     // JSON parser never sees a body the key holder did not sign.
-    verify_minisign(&config.public_key, &body, signature)?;
+    let verified = verify_minisign(&config.public_key, &body, signature);
+    record_step(&Step::Verified {
+        subject: Signed::Feed,
+        verdict: if verified.is_ok() {
+            Verdict::Passed
+        } else {
+            Verdict::SignatureInvalid
+        },
+    });
+    verified?;
 
     // The version is compared before the platform entry is read: a copy that
     // is already current has no use for an artifact, so a feed that lists
@@ -850,7 +881,7 @@ struct CheckedArtifact {
 /// What a fetch is for. That fixes its size cap, its time limits, and whether
 /// the request tells the server which copy of the app is asking.
 #[derive(Debug, Clone, Copy)]
-enum Resource {
+pub(crate) enum Resource {
     /// The `latest.json` feed.
     Manifest,
     /// The detached minisign signature over the feed.
@@ -897,8 +928,8 @@ enum Fetched {
 /// the artifact.
 enum FetchFailure<S> {
     /// No response arrived, a redirect could not be followed, or the body
-    /// could not be read to its end.
-    Network,
+    /// could not be read to its end, as the payload says.
+    Network(NetworkFailure),
     /// The last hop answered with this status, which is not 200, 204 or a
     /// redirect.
     Status(u16),
@@ -914,11 +945,22 @@ impl<S> FetchFailure<S> {
     /// Separates a stop from the failures the HTTP exchange itself had.
     fn into_exchange_failure(self) -> std::result::Result<FetchFailure<Infallible>, S> {
         match self {
-            Self::Network => Ok(FetchFailure::Network),
+            Self::Network(failure) => Ok(FetchFailure::Network(failure)),
             Self::Status(status) => Ok(FetchFailure::Status(status)),
             Self::Denied => Ok(FetchFailure::Denied),
             Self::TooLarge => Ok(FetchFailure::TooLarge),
             Self::Stopped(stop) => Err(stop),
+        }
+    }
+
+    /// Returns how the fetch ended, for the trail.
+    fn trail_end(&self) -> FetchEnd {
+        match self {
+            Self::Network(failure) => FetchEnd::Network(*failure),
+            Self::Status(status) => FetchEnd::Status(*status),
+            Self::Denied => FetchEnd::Refused,
+            Self::TooLarge => FetchEnd::TooLarge,
+            Self::Stopped(_) => FetchEnd::Cancelled,
         }
     }
 }
@@ -1116,8 +1158,13 @@ fn holds_verified_artifact(
     offer: &VerifiedOffer,
     path: &Path,
 ) -> Result<bool> {
-    let held =
-        read_leftover(path)?.is_some_and(|bytes| verify_artifact(config, offer, &bytes).is_ok());
+    let held = read_leftover(path)?.is_some_and(|bytes| {
+        record_step(&Step::ArtifactSize {
+            size: ArtifactSize::of(&bytes),
+            source: ArtifactSource::Cached,
+        });
+        verify_artifact(config, offer, &bytes).is_ok()
+    });
 
     Ok(held)
 }
@@ -1225,12 +1272,22 @@ fn is_private_to_owner_of(_metadata: &std::fs::Metadata, _directory: &std::fs::M
 /// Returns [`UpdateError::ArtifactIntegrity`] when the SHA-256 of `bytes` is
 /// not the offered one or the signature does not verify them.
 fn verify_artifact(config: &ClientConfig, offer: &VerifiedOffer, bytes: &[u8]) -> Result<()> {
-    if sha256(bytes) != offer.sha256 {
-        return Err(UpdateError::ArtifactIntegrity);
-    }
+    let verdict = if sha256(bytes) != offer.sha256 {
+        Verdict::DigestMismatch
+    } else if verify_minisign(&config.public_key, bytes, &offer.artifact_signature).is_err() {
+        Verdict::SignatureInvalid
+    } else {
+        Verdict::Passed
+    };
+    record_step(&Step::Verified {
+        subject: Signed::Artifact,
+        verdict,
+    });
 
-    verify_minisign(&config.public_key, bytes, &offer.artifact_signature)
-        .map_err(|_| UpdateError::ArtifactIntegrity)
+    match verdict {
+        Verdict::Passed => Ok(()),
+        Verdict::DigestMismatch | Verdict::SignatureInvalid => Err(UpdateError::ArtifactIntegrity),
+    }
 }
 
 /// Writes `bytes` to `destination` in place of the file or link there.
@@ -1295,6 +1352,10 @@ fn download_and_verify_into(
         return Err(UpdateError::Network.into());
     };
 
+    record_step(&Step::ArtifactSize {
+        size: ArtifactSize::of(&bytes),
+        source: ArtifactSource::Downloaded,
+    });
     verify_artifact(config, offer, &bytes)?;
 
     replace_with_private_file(destination, &bytes)
@@ -1431,24 +1492,58 @@ fn fetch_error(failure: FetchFailure<Infallible>, resource: Resource) -> UpdateE
         // An oversized manifest or signature is a broken feed and is
         // reported like one that could not be fetched.
         (FetchFailure::TooLarge, Resource::Manifest | Resource::ManifestSignature)
-        | (FetchFailure::Status(_) | FetchFailure::Network, _) => UpdateError::Network,
+        | (FetchFailure::Status(_) | FetchFailure::Network(_), _) => UpdateError::Network,
         (FetchFailure::Stopped(never), _) => match never {},
     }
 }
 
 /// Requests `url` and follows up to [`MAX_REDIRECTS`] redirects, checking
-/// every URL against the host policy before it is requested.
+/// every URL against the host policy before it is requested, and records
+/// how the fetch ended on the trail.
 fn fetch_following_redirects<W: BodyWatch>(
     config: &ClientConfig,
-    mut url: Url,
+    url: Url,
+    resource: Resource,
+    watch: &mut W,
+) -> std::result::Result<Fetched, FetchFailure<W::Stop>> {
+    let mut hop = Hop { url, redirects: 0 };
+    let fetched = follow_redirects(config, &mut hop, resource, watch);
+
+    let end = match &fetched {
+        Ok(Fetched::Body(_)) => FetchEnd::Body,
+        Ok(Fetched::NoContent) => FetchEnd::NoContent,
+        Err(failure) => failure.trail_end(),
+    };
+    record_step(&Step::Fetched(FetchRecord::new(
+        resource,
+        &hop.url,
+        hop.redirects,
+        end,
+    )));
+    fetched
+}
+
+/// Where a fetch has got to: the URL requested next, or last, and the
+/// redirects followed to reach it.
+struct Hop {
+    /// The URL of this hop.
+    url: Url,
+    /// How many redirects led to it.
+    redirects: u8,
+}
+
+/// The loop of [`fetch_following_redirects`], leaving `hop` at the URL the
+/// fetch ended on.
+fn follow_redirects<W: BodyWatch>(
+    config: &ClientConfig,
+    hop: &mut Hop,
     resource: Resource,
     watch: &mut W,
 ) -> std::result::Result<Fetched, FetchFailure<W::Stop>> {
     let agent = agent_for(config, resource);
 
-    let mut redirects_followed = 0_u8;
     loop {
-        if !config.host_policy.is_allowed_fetch_url(&url) {
+        if !config.host_policy.is_allowed_fetch_url(&hop.url) {
             return Err(FetchFailure::Denied);
         }
 
@@ -1456,13 +1551,22 @@ fn fetch_following_redirects<W: BodyWatch>(
         // its `unit.rs`) and reports only a status of 400 or above as
         // `Error::Status` (the docs of that variant), so redirects are
         // followed here, one policy check per hop.
-        let response = agent.get(url.as_str()).call().map_err(|error| {
-            log::warn!("update fetch failed: {error}");
-            match error {
+        // The error is not logged: its `Display` starts with the URL, query
+        // and redirect tokens included. Its kinds go to the trail.
+        let response = agent
+            .get(hop.url.as_str())
+            .call()
+            .map_err(|error| match error {
                 ureq::Error::Status(status, _) => FetchFailure::Status(status),
-                ureq::Error::Transport(_) => FetchFailure::Network,
-            }
-        })?;
+                ureq::Error::Transport(transport) => {
+                    FetchFailure::Network(NetworkFailure::NoResponse {
+                        transport: transport.kind(),
+                        io: std::error::Error::source(&transport)
+                            .and_then(|source| source.downcast_ref::<std::io::Error>())
+                            .map(std::io::Error::kind),
+                    })
+                }
+            })?;
 
         match response.status() {
             200 => {
@@ -1471,17 +1575,20 @@ fn fetch_following_redirects<W: BodyWatch>(
             }
             204 => return Ok(Fetched::NoContent),
             status if is_redirect(status) => {
-                if redirects_followed == MAX_REDIRECTS {
-                    return Err(FetchFailure::Network);
+                if hop.redirects == MAX_REDIRECTS {
+                    return Err(FetchFailure::Network(NetworkFailure::RedirectLimit));
                 }
-                redirects_followed += 1;
 
                 let Some(location) = response.header("Location") else {
-                    return Err(FetchFailure::Network);
+                    return Err(FetchFailure::Network(NetworkFailure::UnusableRedirect));
                 };
                 // A relative `Location` is resolved against the URL that
                 // sent it, as a browser does.
-                url = url.join(location).map_err(|_| FetchFailure::Network)?;
+                hop.url = hop
+                    .url
+                    .join(location)
+                    .map_err(|_| FetchFailure::Network(NetworkFailure::UnusableRedirect))?;
+                hop.redirects += 1;
             }
             status => return Err(FetchFailure::Status(status)),
         }
@@ -1560,7 +1667,11 @@ fn read_capped<W: BodyWatch>(
                 return Ok(body);
             }
             Ok(count) => count,
-            Err(_) => return Err(FetchFailure::Network),
+            Err(error) => {
+                return Err(FetchFailure::Network(NetworkFailure::BodyInterrupted(
+                    error.kind(),
+                )));
+            }
         };
         if body.len().saturating_add(count) > max_bytes {
             return Err(FetchFailure::TooLarge);
@@ -1580,7 +1691,8 @@ fn byte_count(body: &[u8]) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        check_feed_as_client, read_leftover, replace_with_private_file, write_new_private_file,
+        CheckOutcome, VerifiedOffer, check_feed_as_client, read_leftover,
+        replace_with_private_file, write_new_private_file,
     };
     use crate::artifact_limit::MAX_ARTIFACT_BYTES;
     use crate::error::{FeedRefusal, UpdateError};
@@ -1822,6 +1934,26 @@ mod tests {
             .map(|entry| entry.expect("entry").path())
             .collect();
         assert_eq!(entries, vec![path]);
+    }
+
+    #[test]
+    fn debug_of_an_offer_leaves_out_the_artifact_url() {
+        let offer = VerifiedOffer {
+            version: semver::Version::new(0, 2, 0),
+            notes: "notes".to_owned(),
+            artifact_url: url::Url::parse("https://example.test/private/app.AppImage?token=secret")
+                .expect("URL"),
+            artifact_signature: "signature".to_owned(),
+            sha256: [0; 32],
+        };
+        let offer_debug = format!("{offer:?}");
+        let outcome_debug = format!("{:?}", CheckOutcome::Available(offer));
+
+        for debug in [offer_debug, outcome_debug] {
+            assert!(debug.contains("0.2.0"), "{debug}");
+            assert!(!debug.contains("private/app.AppImage"), "{debug}");
+            assert!(!debug.contains("token=secret"), "{debug}");
+        }
     }
 }
 

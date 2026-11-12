@@ -10,7 +10,7 @@ Oikonomia is a local-only desktop app for personal and company finance. It keeps
 double-entry books for several entities in one encrypted vault on the user's
 machine. It has no account system and no telemetry. The only network use is a
 signed update check that the user starts by clicking. Outside the vault it
-writes a small preferences file and a local error log, neither of which holds
+writes a small preferences file and two local logs, none of which holds
 ledger data ([The error log](#the-error-log)). It is a Tauri 2 shell around a
 Rust core, with a React interface in a webview.
 
@@ -157,9 +157,11 @@ the trust root. See [`release.md`](release.md) for how releases are cut.
 
 ## The error log
 
-A release build keeps one local log, so that a failed start or a failed update
-install leaves a record on the machine it happened on. It is never sent
-anywhere; the update path is still the only code that opens a socket.
+A release build keeps two local logs, so that a failed start or a failed update
+leaves a record on the machine it happened on: the error log and the updater
+trail. Neither is ever sent anywhere; the update path is still the only code
+that opens a socket. Both are files of one logger (`error_log.rs`), because a
+process has one `log` logger, and it is not a Tauri plugin.
 
 - **Where.** `errors.log` in the directory Tauri names for the app's logs:
   `~/Library/Logs/io.ourovoros.oikonomia` on macOS,
@@ -172,7 +174,7 @@ anywhere; the update path is still the only code that opens a socket.
   like the vault's.
 - **What passes.** Warnings and errors from this workspace's crates only. Lower
   levels and every record from a third-party crate are dropped
-  (`error_log.rs`, `is_logged`).
+  (`error_log.rs`, `destination`).
 - **What a line may hold.** Fixed phrases, numbers, operating-system error
   text, and paths of the app's own files. Nothing from the ledger: no amount,
   description, merchant, account or entity name, document name or contents,
@@ -185,6 +187,22 @@ anywhere; the update path is still the only code that opens a socket.
 - **The webview has no path to it.** The release logger is not a Tauri plugin
   and registers no command. `CommandError.message`, the full error text, goes
   to the webview console only and is never logged by Rust.
+- **The updater trail.** `updates.log` in the same directory, capped at
+  256 KiB with one `updates.previous.log`, same modes. It takes only records
+  whose target is exactly `oikonomia_update::trail::TARGET`, at info and
+  above, and those never reach `errors.log`. The update crate's `trail`
+  module is the only writer and takes typed events, not strings: a check or
+  install starting and ending, each request with the host of the last URL
+  requested or refused, its redirects, and how it ended, the artifact's
+  size, each signature or digest verdict, the handoff to the installer, and
+  a failure's code with its cause chain. A line never holds a URL (the
+  identity query included) or a path: hosts are kept through `ReleaseHost`,
+  and each cause is cut at its first path-like word. Not caught in an
+  error's text: a relative path, a bare file name, and an absolute path
+  joined to the word before it by anything but `=`, `:` or, for a `/`
+  path, a quote (`x,/home/alice`, `open(/home/alice)`). Example:
+  `2026-11-11T09:41:05Z INFO updater-trail: fetch feed: host
+  release-assets.githubusercontent.com, 2 redirects, ok`.
 - **Debug builds** log as before: `tauri-plugin-log` at the info level, to
   standard output and `Oikonomia.log` in the same directory, with full error
   detail (`enable_log_detail`). The webview holds no `log:` permission, so it

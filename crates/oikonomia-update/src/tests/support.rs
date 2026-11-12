@@ -1,5 +1,5 @@
 //! Fixtures the client tests share: signing keys, a local feed server, a
-//! spy installer and a capture of the warnings the crate logs.
+//! spy installer and a capture of the warnings and the trail the crate logs.
 
 use crate::client::{
     ArtifactInstaller, CheckOutcome, ClientConfig, InstallHandoff, InstallOutcome, VerifiedOffer,
@@ -19,6 +19,7 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread::ThreadId;
 use std::time::Duration;
 use tempfile::TempDir;
 use url::Url;
@@ -423,56 +424,82 @@ pub(super) fn available_offer(config: &ClientConfig) -> VerifiedOffer {
     }
 }
 
-/// Keeps every warning the crate logs while the tests run.
+/// Keeps every warning the crate logs, and every line of the updater
+/// trail, while the tests run.
 ///
-/// `log` takes one logger per process, so all tests share this one and each
-/// looks only for messages that name a path of its own.
-pub(super) struct CapturedWarnings {
+/// `log` takes one logger per process, so all tests share this one. Each
+/// looks only for warnings that name a path of its own, or for trail lines
+/// logged on its own thread: every local server is on the same loopback
+/// address, so a trail line alone does not say which test it came from.
+pub(super) struct CapturedLog {
     /// Every warning logged so far, oldest first.
-    messages: Mutex<Vec<String>>,
+    warnings: Mutex<Vec<String>>,
+    /// Every trail line logged so far, oldest first, with the thread that
+    /// logged it.
+    trail: Mutex<Vec<(ThreadId, String)>>,
 }
 
-impl CapturedWarnings {
+impl CapturedLog {
     /// Returns the captured warnings whose text contains `path`.
     pub(super) fn mentioning(&self, path: &Path) -> Vec<String> {
-        let needle = path.display().to_string();
-        let messages = self.messages.lock().expect("captured warnings");
-        messages
+        self.containing(&path.display().to_string())
+    }
+
+    /// Returns the captured warnings whose text contains `needle`.
+    pub(super) fn containing(&self, needle: &str) -> Vec<String> {
+        let warnings = self.warnings.lock().expect("captured warnings");
+        warnings
             .iter()
-            .filter(|message| message.contains(&needle))
+            .filter(|message| message.contains(needle))
             .cloned()
+            .collect()
+    }
+
+    /// Returns the trail lines the calling thread logged, oldest first.
+    pub(super) fn trail_of_this_thread(&self) -> Vec<String> {
+        let this_thread = std::thread::current().id();
+        let trail = self.trail.lock().expect("captured trail");
+        trail
+            .iter()
+            .filter(|(thread, _)| *thread == this_thread)
+            .map(|(_, line)| line.clone())
             .collect()
     }
 }
 
-impl log::Log for CapturedWarnings {
+impl log::Log for CapturedLog {
     fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
-        metadata.level() <= log::Level::Warn
+        metadata.level() <= log::Level::Warn || metadata.target() == crate::trail::TARGET
     }
 
     fn log(&self, record: &log::Record<'_>) {
-        if self.enabled(record.metadata()) {
-            let mut messages = self.messages.lock().expect("captured warnings");
-            messages.push(record.args().to_string());
+        if record.target() == crate::trail::TARGET {
+            let mut trail = self.trail.lock().expect("captured trail");
+            trail.push((std::thread::current().id(), record.args().to_string()));
+        } else if self.enabled(record.metadata()) {
+            let mut warnings = self.warnings.lock().expect("captured warnings");
+            warnings.push(record.args().to_string());
         }
     }
 
     fn flush(&self) {}
 }
 
-/// Returns the process-wide warning capture, installing it as the logger
-/// on first use.
-pub(super) fn captured_warnings() -> &'static CapturedWarnings {
-    static WARNINGS: CapturedWarnings = CapturedWarnings {
-        messages: Mutex::new(Vec::new()),
+/// Returns the process-wide capture, installing it as the logger on first
+/// use.
+pub(super) fn captured_log() -> &'static CapturedLog {
+    static CAPTURED: CapturedLog = CapturedLog {
+        warnings: Mutex::new(Vec::new()),
+        trail: Mutex::new(Vec::new()),
     };
     static INSTALL: std::sync::Once = std::sync::Once::new();
 
     INSTALL.call_once(|| {
-        log::set_logger(&WARNINGS).expect("this test binary installs no other logger");
-        log::set_max_level(log::LevelFilter::Warn);
+        log::set_logger(&CAPTURED).expect("this test binary installs no other logger");
+        // The trail is at the info level.
+        log::set_max_level(log::LevelFilter::Info);
     });
-    &WARNINGS
+    &CAPTURED
 }
 
 /// Returns a machine that found the 0.2.0 release served on `server`, and

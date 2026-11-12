@@ -53,8 +53,10 @@ fn a_refused_connection_is_a_failed_check_and_writes_nothing() {
     let (public_key, _secret_key) = test_keys();
     let cache = cache_dir();
     // A loopback port that was just bound and released: nothing listens on
-    // it, so the connection is refused at once, with no DNS lookup and no
-    // dependence on the network the test runs in.
+    // it, so the connection fails with no DNS lookup and no dependence on
+    // the network the test runs in. Linux and macOS refuse it at once;
+    // Windows retries the SYN first and may only fail when the connect
+    // timeout below runs out.
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let address = listener.local_addr().expect("address");
     drop(listener);
