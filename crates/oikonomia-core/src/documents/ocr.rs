@@ -474,7 +474,7 @@ const NOISE_LINE_CHARS: usize = 1;
 /// Reads the text of a prepared image, in one pass over the three steps of
 /// the engine: `detect_words`, `find_text_lines`, `recognize_text`.
 ///
-/// These are the steps `OcrEngine::get_text` is made of (`ocrs` 0.13
+/// These are the steps `OcrEngine::get_text` is made of (`ocrs` 0.14
 /// `src/lib.rs`). They are called one by one so that a failure names the
 /// step that failed.
 ///
