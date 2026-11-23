@@ -3,6 +3,12 @@
   "plugins": ["react", "typescript", "oxc"],
   "rules": {
     "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
+    "react/only-export-components": ["warn", { "allowConstantExport": true }],
+    // Off until upstream fixes https://github.com/oxc-project/oxc/issues/28401: since oxlint
+    // 1.91 the rule flags a `let` declared inside a useEffect and reassigned by its own
+    // async or cleanup closure (our `cancelled` / `unlisten` guards), which cannot carry a
+    // value across renders. eslint-plugin-react-hooks 7.1.1 does not report these.
+    // Re-enable once a release with the fix lands and `npm run lint` is clean with it on.
+    "react/immutability": "off"
   }
 }
